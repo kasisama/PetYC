@@ -1,0 +1,2708 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QQ 宠物养成系统 - 终极控制中心</title>
+    <!-- 所有后台资源均随二进制嵌入，支持离线运行。 -->
+    <link rel="stylesheet" href="vendor/fontawesome.min.css">
+    <!-- Tailwind CSS Play CDN -->
+    <script src="vendor/tailwindcss.js"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Outfit', 'Inter', 'system-ui', '-apple-system', 'sans-serif'],
+                    },
+                    colors: {
+                        brand: {
+                            50: '#f5f3ff',
+                            100: '#ede9fe',
+                            200: '#ddd6fe',
+                            300: '#c4b5fd',
+                            400: '#a78bfa',
+                            500: '#8b5cf6',
+                            600: '#7c3aed',
+                            700: '#6d28d9',
+                            800: '#5b21b6',
+                            900: '#4c1d95',
+                            950: '#0f0724',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Vue 3 UMD -->
+    <script src="vendor/vue.global.prod.js"></script>
+    <!-- Chart.js -->
+    <script src="vendor/chart.umd.min.js"></script>
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .glass-panel {
+                @apply bg-slate-900/40 backdrop-blur-xl border border-white/5 shadow-2xl shadow-black/50;
+            }
+            .glass-card {
+                @apply bg-white/[0.02] backdrop-blur-md border border-white/10 rounded-2xl hover:border-brand-500/30 transition-all duration-300 shadow-lg shadow-black/20;
+            }
+            .glass-input {
+                @apply bg-black/20 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-brand-500/50 focus:ring-2 focus:ring-brand-500/20 transition-all placeholder-slate-500;
+            }
+            .glass-btn {
+                @apply relative overflow-hidden transition-all duration-300 font-medium active:scale-95 disabled:opacity-30 disabled:pointer-events-none;
+            }
+            .glass-btn-primary {
+                @apply glass-btn bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-500 hover:to-indigo-500 text-white rounded-xl shadow-lg shadow-brand-500/20;
+            }
+            .glass-btn-secondary {
+                @apply glass-btn bg-white/5 border border-white/10 hover:bg-white/10 text-slate-200 rounded-xl;
+            }
+            .glass-btn-danger {
+                @apply glass-btn bg-rose-600/80 hover:bg-rose-500 text-white rounded-xl;
+            }
+            .glass-btn-success {
+                @apply glass-btn bg-emerald-600/80 hover:bg-emerald-500 text-white rounded-xl;
+            }
+            .text-glow {
+                text-shadow: 0 0 10px rgba(139, 92, 246, 0.4);
+            }
+            ::-webkit-scrollbar {
+                width: 6px;
+                height: 6px;
+            }
+            ::-webkit-scrollbar-track {
+                @apply bg-transparent;
+            }
+            ::-webkit-scrollbar-thumb {
+                @apply bg-white/10 rounded-full hover:bg-white/20 transition-all;
+            }
+        }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-slate-950 via-slate-900 to-brand-950 text-slate-100 min-h-screen">
+    <div id="app" class="flex flex-col min-h-screen">
+
+        <!-- AUTH BOOTSTRAP -->
+        <div v-if="!auth.ready" class="flex min-h-screen items-center justify-center">
+            <div class="text-center">
+                <div class="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl border border-brand-400/20 bg-brand-500/10">
+                    <i class="fa-solid fa-shield-cat animate-pulse text-3xl text-brand-300"></i>
+                </div>
+                <p class="text-sm tracking-wide text-slate-400">正在确认管理员登录状态...</p>
+            </div>
+        </div>
+
+        <!-- ACCOUNT LOGIN -->
+        <main v-else-if="!auth.authenticated" class="relative flex min-h-screen items-center justify-center overflow-hidden p-6">
+            <div class="pointer-events-none absolute inset-0">
+                <div class="absolute left-[12%] top-[14%] h-72 w-72 rounded-full bg-brand-600/10 blur-3xl"></div>
+                <div class="absolute bottom-[10%] right-[10%] h-80 w-80 rounded-full bg-indigo-500/10 blur-3xl"></div>
+            </div>
+            <section class="glass-panel relative z-10 w-full max-w-md overflow-hidden rounded-3xl border border-white/10">
+                <div class="border-b border-white/5 px-8 pb-6 pt-8">
+                    <div class="mb-6 flex items-center gap-4">
+                        <div class="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-500 to-indigo-600 shadow-lg shadow-brand-500/20">
+                            <i class="fa-solid fa-cat text-2xl text-white"></i>
+                        </div>
+                        <div>
+                            <div class="text-xs font-bold uppercase tracking-[0.24em] text-brand-300">QQPET Admin</div>
+                            <h1 class="mt-1 text-2xl font-bold text-white">管理员登录</h1>
+                        </div>
+                    </div>
+                    <p class="text-sm leading-6 text-slate-400">登录后可管理宠物数据、群组开关与系统配置。</p>
+                </div>
+
+                <form @submit.prevent="login" class="space-y-5 px-8 py-7">
+                    <div>
+                        <label for="admin-username" class="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-400">管理员账号</label>
+                        <div class="relative">
+                            <i class="fa-solid fa-user absolute left-4 top-1/2 -translate-y-1/2 text-sm text-slate-500"></i>
+                            <input id="admin-username" v-model.trim="loginForm.username" type="text" autocomplete="username" required
+                                   class="glass-input w-full py-3 pl-11 pr-4" placeholder="请输入账号">
+                        </div>
+                    </div>
+                    <div>
+                        <label for="admin-password" class="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-400">密码</label>
+                        <div class="relative">
+                            <i class="fa-solid fa-lock absolute left-4 top-1/2 -translate-y-1/2 text-sm text-slate-500"></i>
+                            <input id="admin-password" v-model="loginForm.password" type="password" autocomplete="current-password" required
+                                   class="glass-input w-full py-3 pl-11 pr-4" placeholder="请输入密码">
+                        </div>
+                    </div>
+                    <label class="flex cursor-pointer items-center gap-3 text-sm text-slate-300">
+                        <input v-model="loginForm.remember" type="checkbox"
+                               class="h-4 w-4 rounded border-white/20 bg-black/20 text-brand-500 focus:ring-brand-500/30">
+                        <span>记住我</span>
+                        <span class="ml-auto text-xs text-slate-500">保持登录 15 天</span>
+                    </label>
+
+                    <div v-if="auth.loginError" class="rounded-xl border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+                        <i class="fa-solid fa-circle-exclamation mr-2"></i>{{ auth.loginError }}
+                    </div>
+                    <div v-if="auth.loginNotice" class="rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
+                        <i class="fa-solid fa-circle-check mr-2"></i>{{ auth.loginNotice }}
+                    </div>
+
+                    <button type="submit" :disabled="auth.submitting" class="glass-btn-primary flex w-full items-center justify-center gap-2 py-3.5">
+                        <i :class="auth.submitting ? 'fa-solid fa-circle-notch animate-spin' : 'fa-solid fa-right-to-bracket'"></i>
+                        <span>{{ auth.submitting ? '正在登录...' : '登录控制台' }}</span>
+                    </button>
+                </form>
+            </section>
+        </main>
+
+        <template v-else>
+        <!-- Top Navbar -->
+        <header class="glass-panel sticky top-0 z-40 border-b border-white/5 py-4 px-6 md:px-8 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div class="h-10 w-10 rounded-xl bg-gradient-to-br from-brand-500 to-indigo-500 flex items-center justify-center shadow-lg shadow-brand-500/30 animate-pulse">
+                    <i class="fa-solid fa-cat text-white text-xl"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl font-bold tracking-wider text-glow bg-gradient-to-r from-white to-slate-300 bg-clip-text text-transparent">QQPET <span class="text-brand-400 font-extrabold text-sm tracking-widest px-2 py-0.5 rounded-md bg-brand-500/10 border border-brand-500/20 ml-1">ADMIN</span></h1>
+                    <p class="text-xs text-slate-400">群友回忆情怀 - 终极可视化控制台</p>
+                </div>
+            </div>
+            
+            <!-- Navigation -->
+            <nav class="hidden md:flex items-center gap-2">
+                <button @click="activeTab = 'dashboard'" :class="activeTab === 'dashboard' ? 'bg-brand-500/20 text-brand-300 border-brand-500/40' : 'text-slate-400 hover:text-slate-200 border-transparent'" class="px-4 py-2 rounded-xl text-sm font-medium border transition-all flex items-center gap-2">
+                    <i class="fa-solid fa-chart-line"></i>大盘总览
+                </button>
+                <button @click="activeTab = 'pets'" :class="activeTab === 'pets' ? 'bg-brand-500/20 text-brand-300 border-brand-500/40' : 'text-slate-400 hover:text-slate-200 border-transparent'" class="px-4 py-2 rounded-xl text-sm font-medium border transition-all flex items-center gap-2">
+                    <i class="fa-solid fa-paw"></i>宠物管理
+                </button>
+                <button @click="activeTab = 'groups'" :class="activeTab === 'groups' ? 'bg-brand-500/20 text-brand-300 border-brand-500/40' : 'text-slate-400 hover:text-slate-200 border-transparent'" class="px-4 py-2 rounded-xl text-sm font-medium border transition-all flex items-center gap-2">
+                    <i class="fa-solid fa-tower-broadcast"></i>群控开关 & 补偿发放
+                </button>
+                <button @click="activeTab = 'configs'" :class="activeTab === 'configs' ? 'bg-brand-500/20 text-brand-300 border-brand-500/40' : 'text-slate-400 hover:text-slate-200 border-transparent'" class="px-4 py-2 rounded-xl text-sm font-medium border transition-all flex items-center gap-2">
+                    <i class="fa-solid fa-sliders"></i>配置设置
+                </button>
+            </nav>
+            
+            <!-- System Quick Controls -->
+            <div class="flex items-center gap-3">
+                <div class="hidden lg:flex items-center gap-2 border-r border-white/10 pr-3 text-xs text-slate-400">
+                    <i class="fa-solid fa-circle-user text-brand-300"></i>
+                    <span>{{ auth.username }}</span>
+                </div>
+                <button @click="openChangePassword" title="修改管理员密码" class="glass-btn-secondary px-3 py-2 rounded-lg text-sm flex items-center gap-2">
+                    <i class="fa-solid fa-key"></i><span class="hidden xl:inline">修改密码</span>
+                </button>
+                <button @click="logout" title="退出管理员登录" class="glass-btn-secondary px-3 py-2 rounded-lg text-sm flex items-center gap-2 hover:border-rose-500/30 hover:text-rose-300">
+                    <i class="fa-solid fa-arrow-right-from-bracket"></i><span class="hidden xl:inline">退出登录</span>
+                </button>
+                <button @click="reloadConfigs" title="热重载配置到内存" class="glass-btn-secondary px-3 py-2 rounded-lg text-sm flex items-center gap-2 hover:border-emerald-500/30 hover:text-emerald-400">
+                    <i class="fa-solid fa-rotate animate-spin-slow"></i><span class="hidden sm:inline">热重载</span>
+                </button>
+                <button @click="confirmReset" title="配置恢复默认出厂种子数据" class="glass-btn-danger px-3 py-2 rounded-lg text-sm flex items-center gap-2">
+                    <i class="fa-solid fa-trash-arrow-up"></i><span class="hidden sm:inline">出厂重置</span>
+                </button>
+            </div>
+        </header>
+
+        <!-- Mobile Nav Bar -->
+        <div class="md:hidden glass-panel py-2 px-4 flex justify-around border-b border-white/5 text-xs">
+            <button @click="activeTab = 'dashboard'" :class="activeTab === 'dashboard' ? 'text-brand-400' : 'text-slate-400'" class="flex flex-col items-center gap-1">
+                <i class="fa-solid fa-chart-line text-lg"></i>
+                <span>总览</span>
+            </button>
+            <button @click="activeTab = 'pets'" :class="activeTab === 'pets' ? 'text-brand-400' : 'text-slate-400'" class="flex flex-col items-center gap-1">
+                <i class="fa-solid fa-paw text-lg"></i>
+                <span>宠物</span>
+            </button>
+            <button @click="activeTab = 'groups'" :class="activeTab === 'groups' ? 'text-brand-400' : 'text-slate-400'" class="flex flex-col items-center gap-1">
+                <i class="fa-solid fa-tower-broadcast text-lg"></i>
+                <span>群控</span>
+            </button>
+            <button @click="activeTab = 'configs'" :class="activeTab === 'configs' ? 'text-brand-400' : 'text-slate-400'" class="flex flex-col items-center gap-1">
+                <i class="fa-solid fa-sliders text-lg"></i>
+                <span>配置</span>
+            </button>
+        </div>
+
+        <!-- Main Workspace Area -->
+        <main class="flex-grow p-6 md:p-8 max-w-7xl w-full mx-auto">
+            
+            <!-- Global Notification Toast -->
+            <transition name="fade">
+                <div v-if="toast.show" :class="toast.bg" class="fixed top-20 right-6 z-50 px-5 py-3 rounded-xl shadow-xl flex items-center gap-3 border transition-all duration-300 transform scale-100">
+                    <i :class="toast.icon"></i>
+                    <span class="text-sm font-medium">{{ toast.message }}</span>
+                </div>
+            </transition>
+
+            <!-- Loading Mask -->
+            <div v-if="loading" class="flex flex-col items-center justify-center py-20">
+                <i class="fa-solid fa-circle-notch animate-spin text-brand-500 text-5xl mb-4"></i>
+                <p class="text-slate-400 text-sm">正在加载实时数据，请稍候...</p>
+            </div>
+
+            <!-- TABS -->
+            <div v-show="!loading">
+                
+                <!-- TAB 1: DASHBOARD -->
+                <div v-if="activeTab === 'dashboard'" class="space-y-6">
+                    <!-- Stats Grid -->
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div class="glass-card p-6 flex items-center justify-between">
+                            <div>
+                                <p class="text-xs font-semibold tracking-wider text-slate-400 uppercase">总宠物数</p>
+                                <h3 class="text-3xl font-extrabold text-white mt-1">{{ stats.total_pets }}</h3>
+                            </div>
+                            <div class="h-12 w-12 rounded-xl bg-violet-500/10 flex items-center justify-center border border-violet-500/20 text-violet-400">
+                                <i class="fa-solid fa-shield-cat text-2xl"></i>
+                            </div>
+                        </div>
+                        <div class="glass-card p-6 flex items-center justify-between">
+                            <div>
+                                <p class="text-xs font-semibold tracking-wider text-slate-400 uppercase">活跃玩家数</p>
+                                <h3 class="text-3xl font-extrabold text-white mt-1">{{ stats.total_users }}</h3>
+                            </div>
+                            <div class="h-12 w-12 rounded-xl bg-blue-500/10 flex items-center justify-center border border-blue-500/20 text-blue-400">
+                                <i class="fa-solid fa-users text-2xl"></i>
+                            </div>
+                        </div>
+                        <div class="glass-card p-6 flex items-center justify-between">
+                            <div>
+                                <p class="text-xs font-semibold tracking-wider text-slate-400 uppercase">挂机打工中</p>
+                                <h3 class="text-3xl font-extrabold text-white mt-1">{{ stats.status_dist['打工'] || 0 }}</h3>
+                            </div>
+                            <div class="h-12 w-12 rounded-xl bg-amber-500/10 flex items-center justify-center border border-amber-500/20 text-amber-400">
+                                <i class="fa-solid fa-hammer text-2xl"></i>
+                            </div>
+                        </div>
+                        <div class="glass-card p-6 flex items-center justify-between">
+                            <div>
+                                <p class="text-xs font-semibold tracking-wider text-slate-400 uppercase">濒死抢救中</p>
+                                <h3 class="text-3xl font-extrabold text-rose-400 mt-1">{{ stats.status_dist['濒死'] || 0 }}</h3>
+                            </div>
+                            <div class="h-12 w-12 rounded-xl bg-rose-500/10 flex items-center justify-center border border-rose-500/20 text-rose-400 animate-pulse">
+                                <i class="fa-solid fa-heart-pulse text-2xl"></i>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Charts Grid -->
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <!-- Doughnut Chart: Status -->
+                        <div class="glass-card p-6 md:col-span-1 flex flex-col h-[380px]">
+                            <h4 class="text-sm font-semibold tracking-wide text-slate-300 mb-4 flex items-center gap-2">
+                                <i class="fa-solid fa-chart-pie text-brand-400"></i>宠物状态分布
+                            </h4>
+                            <div class="flex-grow flex items-center justify-center relative">
+                                <canvas id="chart-status" class="max-h-[250px]"></canvas>
+                            </div>
+                        </div>
+                        
+                        <!-- Bar Chart: Wealth Top 10 -->
+                        <div class="glass-card p-6 md:col-span-1 flex flex-col h-[380px]">
+                            <h4 class="text-sm font-semibold tracking-wide text-slate-300 mb-4 flex items-center gap-2">
+                                <i class="fa-solid fa-coins text-amber-400"></i>财富神仙榜 (咔币)
+                            </h4>
+                            <div class="flex-grow relative">
+                                <canvas id="chart-wealth" class="h-full"></canvas>
+                            </div>
+                        </div>
+
+                        <!-- Bar Chart: Growth Top 10 -->
+                        <div class="glass-card p-6 md:col-span-1 flex flex-col h-[380px]">
+                            <h4 class="text-sm font-semibold tracking-wide text-slate-300 mb-4 flex items-center gap-2">
+                                <i class="fa-solid fa-arrow-up-right-dots text-emerald-400"></i>成长修为榜
+                            </h4>
+                            <div class="flex-grow relative">
+                                <canvas id="chart-growth" class="h-full"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- TAB 2: PET MANAGEMENT -->
+                <div v-if="activeTab === 'pets'" class="space-y-6">
+                    <!-- Filters Panel -->
+                    <div class="glass-panel p-5 rounded-2xl flex flex-wrap gap-4 items-end">
+                        <div class="flex-grow min-w-[150px]">
+                            <label class="block text-xs font-semibold text-slate-400 mb-2 uppercase">玩家 QQ</label>
+                            <input type="text" v-model="petsFilter.user_id" placeholder="搜索 QQ..." class="glass-input w-full text-sm">
+                        </div>
+                        <div class="flex-grow min-w-[150px]">
+                            <label class="block text-xs font-semibold text-slate-400 mb-2 uppercase">QQ 群号</label>
+                            <input type="text" v-model="petsFilter.group_id" placeholder="搜索群号..." class="glass-input w-full text-sm">
+                        </div>
+                        <div class="flex-grow min-w-[150px]">
+                            <label class="block text-xs font-semibold text-slate-400 mb-2 uppercase">宠物昵称</label>
+                            <input type="text" v-model="petsFilter.name" placeholder="模糊搜索昵称..." class="glass-input w-full text-sm">
+                        </div>
+                        <div class="min-w-[120px]">
+                            <label class="block text-xs font-semibold text-slate-400 mb-2 uppercase">当前状态</label>
+                            <select v-model="petsFilter.status" class="glass-input w-full text-sm">
+                                <option value="">全部状态</option>
+                                <option value="空闲">空闲</option>
+                                <option value="打工">打工</option>
+                                <option value="学习">学习</option>
+                                <option value="锻炼">锻炼</option>
+                                <option value="健身">健身</option>
+                                <option value="濒死">濒死</option>
+                                <option value="逃跑">逃跑</option>
+                                <option value="失去宠物">失去宠物</option>
+                            </select>
+                        </div>
+                        <div class="flex gap-2">
+                            <button @click="fetchPets" class="glass-btn-primary px-6 py-2 rounded-xl text-sm flex items-center gap-2">
+                                <i class="fa-solid fa-magnifying-glass"></i>筛选
+                            </button>
+                            <button @click="clearPetsFilter" class="glass-btn-secondary px-4 py-2 rounded-xl text-sm">
+                                重置
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Pets Table -->
+                    <div class="glass-panel rounded-2xl overflow-hidden shadow-xl">
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left border-collapse">
+                                <thead>
+                                    <tr class="border-b border-white/5 text-slate-400 text-xs font-semibold uppercase tracking-wider bg-white/[0.01]">
+                                        <th class="py-4 px-6">ID / 玩家 / 群</th>
+                                        <th class="py-4 px-6">宠物种类 & 昵称</th>
+                                        <th class="py-4 px-6">基本属性 (血/饱/金)</th>
+                                        <th class="py-4 px-6">修为 (成长/好感/智/力/防)</th>
+                                        <th class="py-4 px-6 text-center">当前状态</th>
+                                        <th class="py-4 px-6 text-right">管理操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-white/5 text-sm text-slate-200">
+                                    <tr v-for="pet in pets.data" :key="pet.ID" class="hover:bg-white/[0.02] transition-colors">
+                                        <td class="py-4 px-6">
+                                            <div class="font-semibold text-slate-100">#{{ pet.ID }}</div>
+                                            <div class="text-xs text-slate-400 mt-1 flex flex-col">
+                                                <span>QQ: {{ pet.UserID }}</span>
+                                                <span>群: {{ pet.GroupID }}</span>
+                                            </div>
+                                        </td>
+                                        <td class="py-4 px-6">
+                                            <div class="flex items-center gap-3">
+                                                <div v-if="pet.Image" class="h-10 w-10 rounded-lg bg-slate-800 border border-white/10 flex items-center justify-center overflow-hidden flex-shrink-0" :key="pet.Image">
+                                                    <img :src="getPetImageURL(pet.Image)" class="h-full w-full object-cover" @error="handleImageError">
+                                                </div>
+                                                <div>
+                                                    <div class="font-bold text-white">{{ pet.Name }}</div>
+                                                    <div class="text-xs text-brand-400 mt-1 font-medium bg-brand-500/10 px-1.5 py-0.5 rounded border border-brand-500/20 inline-block">{{ pet.PetType }}</div>
+                                                </div>
+                                            </div>
+                                        </td>
+                                        <td class="py-4 px-6">
+                                            <div class="space-y-1 text-xs">
+                                                <div class="flex justify-between w-28">
+                                                    <span class="text-slate-400">生命:</span>
+                                                    <span class="font-semibold text-rose-400">{{ pet.Health }} HP</span>
+                                                </div>
+                                                <div class="flex justify-between w-28">
+                                                    <span class="text-slate-400">饱食:</span>
+                                                    <span class="font-semibold text-amber-400">{{ pet.Hunger }}%</span>
+                                                </div>
+                                                <div class="flex justify-between w-28">
+                                                    <span class="text-slate-400">货币:</span>
+                                                    <span class="font-semibold text-emerald-400">{{ pet.Currency }}</span>
+                                                </div>
+                                            </div>
+                                        </td>
+                                        <td class="py-4 px-6">
+                                            <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-xs max-w-[180px]">
+                                                <div><span class="text-slate-400">成长:</span> <span class="font-medium text-indigo-400">{{ pet.Growth }}</span></div>
+                                                <div><span class="text-slate-400">好感:</span> <span class="font-medium text-pink-400">{{ pet.Affection }}</span></div>
+                                                <div><span class="text-slate-400">智慧:</span> <span class="font-medium text-cyan-400">{{ pet.Wisdom }}</span></div>
+                                                <div><span class="text-slate-400">力量:</span> <span class="font-medium text-orange-400">{{ pet.Strength }}</span></div>
+                                                <div><span class="text-slate-400">防御:</span> <span class="font-medium text-purple-400">{{ pet.Defense }}</span></div>
+                                            </div>
+                                        </td>
+                                        <td class="py-4 px-6 text-center">
+                                            <span :class="getStatusBadgeClass(pet.Status)" class="px-2.5 py-1 rounded-full text-xs font-semibold inline-block border">
+                                                {{ pet.Status }}
+                                            </span>
+                                        </td>
+                                        <td class="py-4 px-6 text-right">
+                                            <div class="flex flex-wrap justify-end gap-1.5">
+                                                <button @click="openEditPet(pet)" class="glass-btn-secondary px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-1 hover:border-brand-500/30 hover:text-brand-300">
+                                                    <i class="fa-solid fa-pen-to-square"></i>改参
+                                                </button>
+                                                <button v-if="['濒死', '逃跑', '失去宠物'].includes(pet.Status)" @click="operatePet(pet.ID, 'revive')" class="glass-btn-primary px-2.5 py-1.5 rounded-lg text-xs bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 flex items-center gap-1">
+                                                    <i class="fa-solid fa-kit-medical"></i>复活
+                                                </button>
+                                                <button v-if="['打工', '学习', '锻炼', '健身'].includes(pet.Status)" @click="operatePet(pet.ID, 'recall')" class="glass-btn-secondary px-2.5 py-1.5 rounded-lg text-xs bg-amber-500/10 border-amber-500/20 text-amber-300 hover:bg-amber-500/20 flex items-center gap-1">
+                                                    <i class="fa-solid fa-person-walking-arrow-loop-left"></i>召回
+                                                </button>
+                                                <button @click="operatePet(pet.ID, 'clear_cooldown')" class="glass-btn-secondary px-2.5 py-1.5 rounded-lg text-xs hover:border-slate-400/30 flex items-center gap-1" title="清除所有状态时间戳">
+                                                    <i class="fa-solid fa-clock-rotate-left"></i>清冷
+                                                </button>
+                                                <button @click="deletePet(pet.ID)" class="glass-btn-danger px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-1">
+                                                    <i class="fa-solid fa-trash-can"></i>删除
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    <tr v-if="pets.data.length === 0">
+                                        <td colspan="6" class="text-center py-8 text-slate-400">
+                                            <i class="fa-solid fa-circle-exclamation text-2xl mb-2"></i>
+                                            <p>未找到符合过滤条件的宠物数据</p>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        
+                        <!-- Pagination -->
+                        <div class="px-6 py-4 flex items-center justify-between border-t border-white/5 bg-white/[0.01]">
+                            <div class="text-xs text-slate-400">
+                                显示第 {{ (pets.page - 1) * pets.limit + 1 }} 至 {{ Math.min(pets.page * pets.limit, pets.total) }} 条，共 {{ pets.total }} 条
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <button @click="prevPetsPage" :disabled="pets.page <= 1" class="glass-btn-secondary px-3 py-1.5 rounded-lg text-xs">
+                                    <i class="fa-solid fa-chevron-left"></i>
+                                </button>
+                                <span class="text-xs text-slate-300 font-semibold px-2">第 {{ pets.page }} / {{ Math.ceil(pets.total / pets.limit) || 1 }} 页</span>
+                                <button @click="nextPetsPage" :disabled="pets.page >= Math.ceil(pets.total / pets.limit)" class="glass-btn-secondary px-3 py-1.5 rounded-lg text-xs">
+                                    <i class="fa-solid fa-chevron-right"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- TAB 3: GROUP SWITCHES & COMPENSATION -->
+                <div v-if="activeTab === 'groups'" class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    
+                    <!-- Left: Group Switch List -->
+                    <div class="glass-panel p-6 rounded-2xl flex flex-col h-[650px]">
+                        <div class="flex items-center justify-between border-b border-white/5 pb-4 mb-4">
+                            <div>
+                                <h3 class="text-lg font-bold text-white"><i class="fa-solid fa-toggle-on text-brand-400 mr-2"></i>QQ 群机器人开关状态</h3>
+                                <p class="text-xs text-slate-400">默认全部开启，关闭的群将静默不处理任何消息</p>
+                            </div>
+                            <button @click="syncGroups" class="glass-btn-secondary px-3 py-1.5 rounded-lg text-xs flex items-center gap-1.5">
+                                <i class="fa-solid fa-arrows-rotate"></i>同步活跃群组
+                            </button>
+                        </div>
+                        
+                        <!-- Quick Group Switch Controllers -->
+                        <div class="grid grid-cols-2 gap-2 mb-4">
+                            <button @click="setAllGroupsState(true)" class="glass-btn-success py-2 rounded-xl text-xs flex items-center justify-center gap-1.5">
+                                <i class="fa-solid fa-circle-check"></i>一键开启全部
+                            </button>
+                            <button @click="setAllGroupsState(false)" class="glass-btn-danger py-2 rounded-xl text-xs flex items-center justify-center gap-1.5">
+                                <i class="fa-solid fa-circle-xmark"></i>一键关闭全部
+                            </button>
+                        </div>
+
+                        <!-- Table list of switches -->
+                        <div class="flex-grow overflow-y-auto pr-2 space-y-2">
+                            <div v-for="g in groups" :key="g.GroupID" class="glass-card p-4 flex items-center justify-between">
+                                <div class="space-y-1">
+                                    <input type="text" v-model="g.GroupName" @blur="updateGroupSwitch(g)" class="bg-transparent border-b border-transparent focus:border-brand-500 focus:outline-none font-bold text-white text-sm py-0.5 max-w-[180px]">
+                                    <div class="text-[10px] text-slate-400 font-mono">群号: {{ g.GroupID }}</div>
+                                </div>
+                                <div class="flex items-center gap-4">
+                                    <!-- Toggle Switch -->
+                                    <label class="relative inline-flex items-center cursor-pointer">
+                                        <input type="checkbox" v-model="g.IsActive" @change="updateGroupSwitch(g)" class="sr-only peer">
+                                        <div class="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
+                                    </label>
+                                    <button @click="deleteGroupSwitch(g.GroupID)" class="text-rose-400 hover:text-rose-500 p-1">
+                                        <i class="fa-solid fa-trash-can text-sm"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <div v-if="groups.length === 0" class="text-center py-20 text-slate-500 text-sm">
+                                <i class="fa-solid fa-folder-open text-3xl mb-2"></i>
+                                <p>暂无记录群组，请点击上方“同步活跃群组”自动抓取</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Right: Compensation Distribution Panel -->
+                    <div class="glass-panel p-6 rounded-2xl flex flex-col h-[650px] overflow-y-auto">
+                        <div class="border-b border-white/5 pb-4 mb-4">
+                            <h3 class="text-lg font-bold text-white"><i class="fa-solid fa-award text-pink-400 mr-2"></i>批量发放奖励与群广播</h3>
+                            <p class="text-xs text-slate-400">快速下发全群维护补偿、节日礼包、活动金币</p>
+                        </div>
+
+                        <form @submit.prevent="sendCompensation" class="space-y-4 text-xs">
+                            <!-- Group target -->
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <div class="space-y-1">
+                                    <label class="block text-slate-400 font-bold uppercase">目标群组</label>
+                                    <select v-model.number="compensationForm.group_id" class="glass-input w-full">
+                                        <option :value="0">全部群 (广播仅会发给有宠物的群)</option>
+                                        <option v-for="g in groups" :key="g.GroupID" :value="g.GroupID">{{ g.GroupName }} ({{ g.GroupID }})</option>
+                                    </select>
+                                </div>
+                                <div class="space-y-1">
+                                    <label class="block text-slate-400 font-bold uppercase">特定QQ号（以 # 隔开，空则默认为全群成员）</label>
+                                    <input type="text" v-model="compensationForm.user_ids" placeholder="例如: 123456#890123" class="glass-input w-full">
+                                </div>
+                            </div>
+
+                            <!-- Reward values -->
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 border-t border-white/5 pt-3">
+                                <div class="space-y-1">
+                                    <label class="block text-slate-400 font-bold uppercase">奖励代币 (咔币)</label>
+                                    <input type="number" v-model.number="compensationForm.coins" class="glass-input w-full" placeholder="如 500">
+                                </div>
+                                <div class="space-y-1">
+                                    <label class="block text-slate-400 font-bold uppercase">奖励物品 (多物品使用 # 隔开)</label>
+                                    <div class="relative">
+                                        <input type="text" v-model="compensationForm.items" class="glass-input w-full pr-12" placeholder="格式: 饼干*5#抽奖券*10">
+                                        <select @change="addQuickItemToCompensation($event.target.value)" class="absolute right-1.5 top-1.5 bg-slate-800 border-none text-[10px] text-slate-400 focus:outline-none p-1 rounded max-w-[80px]">
+                                            <option value="">加物品...</option>
+                                            <option v-for="name in knownItemNames" :key="name" :value="name">{{ name }}</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Announcement Notice -->
+                            <div class="space-y-1 border-t border-white/5 pt-3">
+                                <div class="flex justify-between items-center">
+                                    <label class="block text-slate-400 font-bold uppercase">广播通知文案模板 (为空将只发奖励不广播)</label>
+                                    <div class="flex gap-1.5">
+                                        <button type="button" @click="insertVarToNotice('[奖励玩家]')" class="bg-brand-500/10 hover:bg-brand-500/20 text-brand-300 px-1.5 py-0.5 rounded text-[9px]">成员</button>
+                                        <button type="button" @click="insertVarToNotice('[奖励货币]')" class="bg-brand-500/10 hover:bg-brand-500/20 text-brand-300 px-1.5 py-0.5 rounded text-[9px]">代币</button>
+                                        <button type="button" @click="insertVarToNotice('[奖励物品]')" class="bg-brand-500/10 hover:bg-brand-500/20 text-brand-300 px-1.5 py-0.5 rounded text-[9px]">道具</button>
+                                        <button type="button" @click="insertVarToNotice('[换行]')" class="bg-brand-500/10 hover:bg-brand-500/20 text-brand-300 px-1.5 py-0.5 rounded text-[9px]">换行</button>
+                                    </div>
+                                </div>
+                                <textarea v-model="compensationForm.notice" rows="5" class="glass-input w-full font-mono text-xs" placeholder="【发放补偿】\n目标玩家：[奖励玩家]\n奖励内容：[奖励货币][奖励物品]"></textarea>
+                            </div>
+
+                            <!-- Live preview notice -->
+                            <div class="p-3 bg-black/30 border border-white/5 rounded-xl">
+                                <div class="text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-1">群消息广播效果预览</div>
+                                <pre class="font-mono text-xs text-emerald-400 whitespace-pre-wrap leading-relaxed">{{ getCompensationPreview() }}</pre>
+                            </div>
+
+                            <!-- Submit button -->
+                            <div class="pt-2 flex justify-end">
+                                <button type="submit" class="glass-btn-primary px-8 py-2.5 rounded-xl text-sm flex items-center gap-2">
+                                    <i class="fa-solid fa-paper-plane"></i>一键执行分发
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+
+                </div>
+
+                <!-- TAB 4: CONFIGURATION SETTINGS (DUAL PANE CRUD) -->
+                <div v-if="activeTab === 'configs'" class="grid grid-cols-1 lg:grid-cols-4 gap-6">
+                    
+                    <!-- Left Config Subtabs Sidebar -->
+                    <div class="lg:col-span-1 glass-panel p-3 rounded-2xl space-y-1 h-[680px]">
+                        <div class="px-3 py-2 text-[10px] font-bold text-slate-500 uppercase tracking-wider border-b border-white/5 mb-2">配置控制大类</div>
+                        <button v-for="tab in configTabs" :key="tab.id" @click="changeConfigTab(tab.id)" :class="activeConfigTab === tab.id ? 'bg-brand-500/20 text-brand-300 border-brand-500/30' : 'text-slate-400 hover:text-slate-200 border-transparent hover:bg-white/[0.02]'" class="w-full text-left px-4 py-3 rounded-xl text-xs font-semibold border flex items-center justify-between transition-all">
+                            <span><i :class="tab.icon" class="mr-2"></i>{{ tab.name }}</span>
+                            <i class="fa-solid fa-chevron-right text-[10px] opacity-40"></i>
+                        </button>
+                    </div>
+
+                    <!-- Right Subtab Workspace Pane -->
+                    <div class="lg:col-span-3 glass-panel p-6 md:p-8 rounded-2xl flex flex-col h-[680px]">
+                        
+                        <!-- Header & Actions -->
+                        <div class="flex items-center justify-between border-b border-white/5 pb-4 mb-6">
+                            <div>
+                                <h3 class="text-lg font-bold text-white">{{ getConfigTabTitle() }}</h3>
+                                <p class="text-xs text-slate-400">本地修改将即刻存入 SQLite 库，并需在顶栏点击 <span class="text-emerald-400 font-bold">热重载</span> 刷新以应用给机器人</p>
+                            </div>
+                            <div class="flex gap-2">
+                                <button v-if="isConfigItemCrudable()" @click="openAddConfigModal" class="glass-btn-success px-4 py-2 rounded-xl text-xs flex items-center gap-1.5">
+                                    <i class="fa-solid fa-circle-plus"></i>新增项
+                                </button>
+                                <button @click="saveActiveConfig" class="glass-btn-primary px-6 py-2 rounded-xl text-sm flex items-center gap-2">
+                                    <i class="fa-solid fa-floppy-disk"></i>保存配置
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- 1. CURRENCY INTEGRATION -->
+                        <div v-if="activeConfigTab === 'currency'" class="space-y-6 max-w-xl text-xs">
+                            <div class="p-4 bg-violet-500/5 border border-violet-500/10 rounded-2xl space-y-2">
+                                <h4 class="font-bold text-white text-sm"><i class="fa-solid fa-triangle-exclamation text-amber-400 mr-2"></i>货币对接设计说明</h4>
+                                <p class="text-slate-400 leading-relaxed">
+                                    本模块支持与 Windows 经典机器人中的其他易语言插件的 INI 文件进行货币对接。开启后，程序会对玩家宠物的金币余额读写进行 GORM Hooks 自动拦截，透明双向同步读取与更新外部文本文件。
+                                </p>
+                            </div>
+                            <div class="space-y-4">
+                                <div class="space-y-1">
+                                    <label class="block text-slate-400 font-bold uppercase">对接开关状态</label>
+                                    <select v-model="currencyConfig.sync" class="glass-input w-full text-xs">
+                                        <option value="0">关闭外部对接 (玩家余额本地独立独立存入 SQLite)</option>
+                                        <option value="1">开启外部对接 (同步外部 INI 文本文件)</option>
+                                    </select>
+                                </div>
+                                <div class="space-y-1">
+                                    <label class="block text-slate-400 font-bold uppercase">货币文件路径 (支持变量 [qq] [群号] 替换)</label>
+                                    <input type="text" v-model="currencyConfig.path" class="glass-input w-full font-mono text-xs" placeholder="例如: F:\机器人根目录\data\app\cc.kasiwuhui.Text\玩家数据\[qq].ini">
+                                </div>
+                                <div class="grid grid-cols-2 gap-4">
+                                    <div class="space-y-1">
+                                        <label class="block text-slate-400 font-bold uppercase">货币配置节 (如 [QQ] 或 [12345])</label>
+                                        <input type="text" v-model="currencyConfig.section" class="glass-input w-full font-mono text-xs" placeholder="如: [QQ] 或 玩家信息">
+                                    </div>
+                                    <div class="space-y-1">
+                                        <label class="block text-slate-400 font-bold uppercase">货币配置项 (ini 键名)</label>
+                                        <input type="text" v-model="currencyConfig.key" class="glass-input w-full font-mono text-xs" placeholder="如: 铜钱 或 金币">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 2. SYSTEM CORE PARAMETERS -->
+                        <div v-if="activeConfigTab === 'system'" class="flex-grow flex flex-col min-h-0 space-y-4">
+                            <div class="relative">
+                                <i class="fa-solid fa-magnifying-glass absolute left-4 top-3 text-slate-400"></i>
+                                <input type="text" v-model="sysConfigSearch" placeholder="搜索参数变量键名或中文备注..." class="glass-input w-full pl-10 text-sm">
+                            </div>
+                            <div class="flex-grow overflow-y-auto pr-2 space-y-2">
+                                <div v-for="cfg in filteredSystemConfigs" :key="cfg.Key" class="glass-card p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                                    <div class="space-y-1">
+                                        <div class="font-semibold text-slate-200 font-mono text-xs">{{ cfg.Key }}</div>
+                                        <div class="text-[10px] text-slate-400 font-semibold">{{ getSystemConfigDesc(cfg.Key) }}</div>
+                                    </div>
+                                    <div class="md:w-1/2">
+                                        <input type="text" v-model="cfg.Value" class="glass-input w-full font-mono text-xs py-1.5">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 3. CHECK-IN REWARDS -->
+                        <div v-if="activeConfigTab === 'checkin'" class="flex-grow flex min-h-0 gap-6">
+                            <!-- Left checklist days -->
+                            <div class="w-1/3 border-r border-white/5 overflow-y-auto pr-3 space-y-1 text-xs">
+                                <div class="px-2 py-1 text-[10px] text-slate-500 font-bold uppercase tracking-wider">按周轮换签到奖励</div>
+                                <button v-for="day in weeklyCheckinDays" :key="'w-'+day.id" @click="selectCheckinReward('weekly', day.id)" :class="selectedCheckin.type === 'weekly' && selectedCheckin.day === day.id ? 'bg-brand-500/20 text-brand-300 border-brand-500/30' : 'text-slate-400 hover:text-slate-200 border-transparent'" class="w-full text-left px-3 py-2 rounded-lg font-medium border transition-all">
+                                    星期{{ day.name }}
+                                </button>
+                                <div class="px-2 py-1 text-[10px] text-slate-500 font-bold uppercase tracking-wider mt-4">新手七天签到奖励</div>
+                                <button v-for="day in 7" :key="'n-'+day" @click="selectCheckinReward('newbie', day.toString())" :class="selectedCheckin.type === 'newbie' && selectedCheckin.day === day.toString() ? 'bg-brand-500/20 text-brand-300 border-brand-500/30' : 'text-slate-400 hover:text-slate-200 border-transparent'" class="w-full text-left px-3 py-2 rounded-lg font-medium border transition-all">
+                                    第 {{ day }} 天签到
+                                </button>
+                            </div>
+                            <!-- Right day form editor -->
+                            <div class="w-2/3 space-y-4 text-xs">
+                                <div class="font-bold text-white text-sm border-b border-white/5 pb-2">
+                                    编辑: {{ selectedCheckin.type === 'weekly' ? '星期' + getWeeklyDayName(selectedCheckin.day) : '新手第 ' + selectedCheckin.day + ' 天' }}
+                                </div>
+                                <div class="space-y-3" v-if="selectedCheckin.data">
+                                    <div class="space-y-1">
+                                        <label class="block text-slate-400 font-bold">奖励货币 (咔币)</label>
+                                        <input type="number" v-model.number="selectedCheckin.data.Currency" class="glass-input w-full">
+                                    </div>
+                                    <div class="space-y-1">
+                                        <label class="block text-slate-400 font-bold">奖励好感度</label>
+                                        <input type="number" v-model.number="selectedCheckin.data.Affection" class="glass-input w-full">
+                                    </div>
+                                    <div class="space-y-1">
+                                        <label class="block text-slate-400 font-bold">奖励物品包 (格式: 饼干*1#抽奖券*2)</label>
+                                        <div class="relative">
+                                            <input type="text" v-model="selectedCheckin.data.Items" class="glass-input w-full pr-12">
+                                            <select @change="addQuickItemToCheckin($event.target.value)" class="absolute right-1.5 top-1.5 bg-slate-800 border-none text-[10px] text-slate-400 focus:outline-none p-1 rounded max-w-[80px]">
+                                                <option value="">添加...</option>
+                                                <option v-for="name in knownItemNames" :key="name" :value="name">{{ name }}</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <div class="space-y-1">
+                                        <label class="block text-slate-400 font-bold">配图文件名 (Adopt/xxx.png, 拖入或双击上传)</label>
+                                        <div class="flex items-center gap-2">
+                                            <div class="h-10 w-10 rounded-lg bg-slate-800 border border-white/10 flex items-center justify-center flex-shrink-0 overflow-hidden cursor-zoom-in" v-if="selectedCheckin.data.Image" :key="selectedCheckin.data.Image" @click="openImageLightbox(selectedCheckin.data.Image)" title="点击放大预览">
+                                                <img :src="getPetImageURL(selectedCheckin.data.Image)" class="h-full w-full object-cover" @error="handleImageError">
+                                            </div>
+                                            <div class="relative flex-grow flex items-center">
+                                                <input type="text" v-model="selectedCheckin.data.Image" @dragover.prevent @drop.prevent="handleImageDrop($event, selectedCheckin.data, 'Image')" @dblclick="triggerImageUpload(selectedCheckin.data, 'Image')" class="glass-input w-full pr-10" placeholder="拖入或双击上传图片...">
+                                                <button type="button" @click="triggerImageUpload(selectedCheckin.data, 'Image')" class="absolute right-3 text-slate-400 hover:text-brand-400"><i class="fa-solid fa-cloud-arrow-up"></i></button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 4. JOB LIST (DUAL PANE CRUD) -->
+                        <div v-if="activeConfigTab === 'work'" class="flex-grow flex min-h-0 gap-6">
+                            <div class="w-1/3 border-r border-white/5 overflow-y-auto pr-3 space-y-1 text-xs">
+                                <button v-for="job in configs.work_setting_configs" :key="job.Name" @click="selectedConfigItem = job" :class="selectedConfigItem && selectedConfigItem.Name === job.Name ? 'bg-brand-500/20 text-brand-300 border-brand-500/30' : 'text-slate-400 hover:text-slate-200 border-transparent'" class="w-full text-left px-3 py-2.5 rounded-lg border transition-all flex items-center justify-between">
+                                    <span>{{ job.Name }}</span>
+                                    <i class="fa-solid fa-chevron-right text-[9px] opacity-40"></i>
+                                </button>
+                            </div>
+                            <div class="w-2/3 space-y-4 text-xs overflow-y-auto pr-2" v-if="selectedConfigItem">
+                                <div class="flex items-center justify-between border-b border-white/5 pb-2">
+                                    <div class="font-bold text-white text-sm">编辑打工类型: {{ selectedConfigItem.Name }}</div>
+                                    <button @click="deleteConfigItem('work_setting', selectedConfigItem.Name)" class="text-rose-400 hover:text-rose-500 text-xs flex items-center gap-1">
+                                        <i class="fa-solid fa-trash-can"></i>删除此项
+                                    </button>
+                                </div>
+                                <div class="grid grid-cols-2 gap-4">
+                                    <div class="space-y-1">
+                                        <label class="block text-slate-400 font-bold">打工类型名</label>
+                                        <input type="text" v-model="selectedConfigItem.Name" disabled class="glass-input w-full opacity-60">
+                                    </div>
+                                    <div class="space-y-1">
+                                        <label class="block text-slate-400 font-bold">打工时间限制 (分钟)</label>
+                                        <input type="number" v-model.number="selectedConfigItem.Time" class="glass-input w-full">
+                                    </div>
+                                </div>
+                                <div class="grid grid-cols-2 gap-4">
+                                    <div class="space-y-1">
+                                        <label class="block text-slate-400 font-bold">消耗饱食度</label>
+                                        <input type="number" v-model.number="selectedConfigItem.HungerCost" class="glass-input w-full">
+                                    </div>
+                                    <div class="space-y-1">
+                                        <label class="block text-slate-400 font-bold">基本代币奖励</label>
+                                        <input type="number" v-model.number="selectedConfigItem.RewardCoin" class="glass-input w-full">
+                                    </div>
+                                </div>
+                                <div class="space-y-1">
+                                    <label class="block text-slate-400 font-bold">概率掉落道具 (物品*概率，多物以#隔开，如: 抽奖券*10#饼干*30)</label>
+                                    <input type="text" v-model="selectedConfigItem.RewardItems" class="glass-input w-full font-mono">
+                                </div>
+                                <div class="space-y-1">
+                                    <label class="block text-slate-400 font-bold">开始打工提示语句 (多句以英文逗号分隔)</label>
+                                    <textarea v-model="selectedConfigItem.ReplyQuotes" rows="2" class="glass-input w-full leading-relaxed"></textarea>
+                                </div>
+                                <div class="grid grid-cols-2 gap-4">
+                                    <div class="space-y-1">
+                                        <label class="block text-slate-400 font-bold">开始打工图片路径 (拖入/双击上传)</label>
+                                        <div class="flex items-center gap-2">
+                                            <div class="h-10 w-10 rounded-lg bg-slate-800 border border-white/10 flex items-center justify-center flex-shrink-0 overflow-hidden cursor-zoom-in" v-if="selectedConfigItem.StartImage" :key="selectedConfigItem.StartImage" @click="openImageLightbox(selectedConfigItem.StartImage)" title="点击放大预览">
+                                                <img :src="getPetImageURL(selectedConfigItem.StartImage)" class="h-full w-full object-cover" @error="handleImageError">
+                                            </div>
+                                            <div class="relative flex-grow flex items-center">
+                                                <input type="text" v-model="selectedConfigItem.StartImage" @dragover.prevent @drop.prevent="handleImageDrop($event, selectedConfigItem, 'StartImage')" @dblclick="triggerImageUpload(selectedConfigItem, 'StartImage')" class="glass-input w-full pr-10" placeholder="选择图片...">
+                                                <button type="button" @click="triggerImageUpload(selectedConfigItem, 'StartImage')" class="absolute right-3 text-slate-400 hover:text-brand-400"><i class="fa-solid fa-cloud-arrow-up"></i></button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="space-y-1">
+                                        <label class="block text-slate-400 font-bold">结束打工图片路径 (拖入/双击上传)</label>
+                                        <div class="flex items-center gap-2">
+                                            <div class="h-10 w-10 rounded-lg bg-slate-800 border border-white/10 flex items-center justify-center flex-shrink-0 overflow-hidden cursor-zoom-in" v-if="selectedConfigItem.EndImage" :key="selectedConfigItem.EndImage" @click="openImageLightbox(selectedConfigItem.EndImage)" title="点击放大预览">
+                                                <img :src="getPetImageURL(selectedConfigItem.EndImage)" class="h-full w-full object-cover" @error="handleImageError">
+                                            </div>
+                                            <div class="relative flex-grow flex items-center">
+                                                <input type="text" v-model="selectedConfigItem.EndImage" @dragover.prevent @drop.prevent="handleImageDrop($event, selectedConfigItem, 'EndImage')" @dblclick="triggerImageUpload(selectedConfigItem, 'EndImage')" class="glass-input w-full pr-10" placeholder="选择图片...">
+                                                <button type="button" @click="triggerImageUpload(selectedConfigItem, 'EndImage')" class="absolute right-3 text-slate-400 hover:text-brand-400"><i class="fa-solid fa-cloud-arrow-up"></i></button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 5. SHOP LIST (DUAL PANE CRUD) -->
+                        <div v-if="activeConfigTab === 'shop'" class="flex-grow flex min-h-0 gap-6">
+                            <div class="w-1/3 border-r border-white/5 overflow-y-auto pr-3 space-y-1 text-xs">
+                                <div class="px-2 py-1 text-[10px] text-slate-500 font-bold uppercase tracking-wider">普通商店货架</div>
+                                <button v-for="shop in getNormalShopItems()" :key="shop.ID" @click="selectedConfigItem = shop" :class="selectedConfigItem && selectedConfigItem.ID === shop.ID ? 'bg-brand-500/20 text-brand-300 border-brand-500/30' : 'text-slate-400 hover:text-slate-200 border-transparent'" class="w-full text-left px-3 py-2.5 rounded-lg border transition-all flex items-center justify-between">
+                                    <span>{{ shop.Name }}</span>
+                                    <i class="fa-solid fa-chevron-right text-[9px] opacity-40"></i>
+                                </button>
+                                <div class="px-2 py-1 text-[10px] text-slate-500 font-bold uppercase tracking-wider mt-4">好感度商店货架</div>
+                                <button v-for="shop in getAffectionShopItems()" :key="shop.ID" @click="selectedConfigItem = shop" :class="selectedConfigItem && selectedConfigItem.ID === shop.ID ? 'bg-brand-500/20 text-brand-300 border-brand-500/30' : 'text-slate-400 hover:text-slate-200 border-transparent'" class="w-full text-left px-3 py-2.5 rounded-lg border transition-all flex items-center justify-between">
+                                    <span>{{ shop.Name }}</span>
+                                    <i class="fa-solid fa-chevron-right text-[9px] opacity-40"></i>
+                                </button>
+                            </div>
+                            <div class="w-2/3 space-y-4 text-xs overflow-y-auto pr-2" v-if="selectedConfigItem">
+                                <div class="flex items-center justify-between border-b border-white/5 pb-2">
+                                    <div class="font-bold text-white text-sm">编辑货架商品: {{ selectedConfigItem.Name }}</div>
+                                    <button @click="deleteConfigItem('shop_item', selectedConfigItem.ID.toString())" class="text-rose-400 hover:text-rose-500 text-xs flex items-center gap-1">
+                                        <i class="fa-solid fa-trash-can"></i>下架此商品
+                                    </button>
+                                </div>
+                                <div class="grid grid-cols-2 gap-4">
+                                    <div class="space-y-1">
+                                        <label class="block text-slate-400 font-bold">商品名称</label>
+                                        <input type="text" v-model="selectedConfigItem.Name" class="glass-input w-full">
+                                    </div>
+                                    <div class="space-y-1">
+                                        <label class="block text-slate-400 font-bold">货架类型</label>
+                                        <select v-model="selectedConfigItem.ShopType" class="glass-input w-full">
+                                            <option value="shop_normal">普通商店</option>
+                                            <option value="shop_affection">好感商店</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="grid grid-cols-2 gap-4">
+                                    <div class="space-y-1">
+                                        <label class="block text-slate-400 font-bold">出售单价 (咔币/好感点)</label>
+                                        <input type="number" v-model.number="selectedConfigItem.Price" class="glass-input w-full">
+                                    </div>
+                                    <div class="space-y-1">
+                                        <label class="block text-slate-400 font-bold">库存限制 (-1为无限)</label>
+                                        <input type="number" v-model.number="selectedConfigItem.Stock" class="glass-input w-full">
+                                    </div>
+                                </div>
+                                <div class="space-y-1">
+                                    <label class="block text-slate-400 font-bold">商品配图路径 (拖入或双击上传)</label>
+                                    <div class="flex items-center gap-2">
+                                        <div class="h-10 w-10 rounded-lg bg-slate-800 border border-white/10 flex items-center justify-center flex-shrink-0 overflow-hidden cursor-zoom-in" v-if="selectedConfigItem.Image" :key="selectedConfigItem.Image" @click="openImageLightbox(selectedConfigItem.Image)" title="点击放大预览">
+                                            <img :src="getPetImageURL(selectedConfigItem.Image)" class="h-full w-full object-cover" @error="handleImageError">
+                                        </div>
+                                        <div class="relative flex-grow flex items-center">
+                                            <input type="text" v-model="selectedConfigItem.Image" @dragover.prevent @drop.prevent="handleImageDrop($event, selectedConfigItem, 'Image')" @dblclick="triggerImageUpload(selectedConfigItem, 'Image')" class="glass-input w-full pr-10" placeholder="拖入或双击选择...">
+                                            <button type="button" @click="triggerImageUpload(selectedConfigItem, 'Image')" class="absolute right-3 text-slate-400 hover:text-brand-400"><i class="fa-solid fa-cloud-arrow-up"></i></button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="space-y-1">
+                                    <label class="block text-slate-400 font-bold">商品说明/描述</label>
+                                    <textarea v-model="selectedConfigItem.Description" rows="3" class="glass-input w-full"></textarea>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 6. ITEMS LIST (DUAL PANE CRUD) -->
+                        <div v-if="activeConfigTab === 'items'" class="flex-grow flex min-h-0 gap-6">
+                            <div class="w-1/3 border-r border-white/5 overflow-y-auto pr-3 space-y-1 text-xs">
+                                <button v-for="item in configs.item_configs" :key="item.Name" @click="selectedConfigItem = item" :class="selectedConfigItem && selectedConfigItem.Name === item.Name ? 'bg-brand-500/20 text-brand-300 border-brand-500/30' : 'text-slate-400 hover:text-slate-200 border-transparent'" class="w-full text-left px-3 py-2.5 rounded-lg border transition-all flex items-center justify-between">
+                                    <span>{{ item.Name }}</span>
+                                    <span class="text-[9px] px-1 rounded bg-white/5 text-slate-400">{{ item.Type }}</span>
+                                </button>
+                            </div>
+                            <div class="w-2/3 space-y-4 text-xs overflow-y-auto pr-2" v-if="selectedConfigItem">
+                                <div class="flex items-center justify-between border-b border-white/5 pb-2">
+                                    <div class="font-bold text-white text-sm">编辑道具资料: {{ selectedConfigItem.Name }}</div>
+                                    <button @click="deleteConfigItem('item', selectedConfigItem.Name)" class="text-rose-400 hover:text-rose-500 text-xs flex items-center gap-1">
+                                        <i class="fa-solid fa-trash-can"></i>删除此道具
+                                    </button>
+                                </div>
+                                <div class="grid grid-cols-2 gap-4">
+                                    <div class="space-y-1">
+                                        <label class="block text-slate-400 font-bold">道具名</label>
+                                        <input type="text" v-model="selectedConfigItem.Name" disabled class="glass-input w-full opacity-60">
+                                    </div>
+                                    <div class="space-y-1">
+                                        <label class="block text-slate-400 font-bold">道具类型</label>
+                                        <select v-model="selectedConfigItem.Type" class="glass-input w-full">
+                                            <option value="礼包">礼包</option>
+                                            <option value="血量">血量</option>
+                                            <option value="饱食">饱食</option>
+                                            <option value="好感">好感（礼物）</option>
+                                            <option value="智慧">智慧（学习）</option>
+                                            <option value="力量">力量（锻炼）</option>
+                                            <option value="防御">防御（健身）</option>
+                                            <option value="成长">成长</option>
+                                            <option value="鱼类">鱼类</option>
+                                            <option value="家族">家族商标</option>
+                                            <option value="抽奖">抽奖券</option>
+                                            <option value="觉醒">觉醒物</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="grid grid-cols-3 gap-4" v-if="selectedConfigItem.Type === '礼包'">
+                                    <div class="space-y-1">
+                                        <label class="block text-slate-400 font-bold">礼包类型</label>
+                                        <select v-model="selectedConfigItem.RewardType" class="glass-input w-full">
+                                            <option value="固定">固定奖励</option>
+                                            <option value="随机">随机概率</option>
+                                        </select>
+                                    </div>
+                                    <div class="space-y-1 col-span-2">
+                                        <label class="block text-slate-400 font-bold">打开需要 (消耗钥匙)</label>
+                                        <input type="text" v-model="selectedConfigItem.OpenReq" class="glass-input w-full" placeholder="如: 水之钥*1，空则免匙">
+                                    </div>
+                                </div>
+                                <div class="grid grid-cols-2 gap-4">
+                                    <div class="space-y-1">
+                                        <label class="block text-slate-400 font-bold">使用效果值或物品清单 (Effect字段)</label>
+                                        <input type="text" v-model="selectedConfigItem.Effect" class="glass-input w-full font-mono" placeholder="值如: 50 或 物品*数量#物品*数量">
+                                    </div>
+                                    <div class="space-y-1">
+                                        <label class="block text-slate-400 font-bold">回收售价 (咔币)</label>
+                                        <input type="number" v-model.number="selectedConfigItem.SellPrice" class="glass-input w-full">
+                                    </div>
+                                </div>
+                                <div class="grid grid-cols-2 gap-4">
+                                    <div class="space-y-1">
+                                        <label class="block text-slate-400 font-bold">获得限制 (1为单次/终生，0为多次)</label>
+                                        <input type="number" v-model.number="selectedConfigItem.ObtainType" class="glass-input w-full">
+                                    </div>
+                                    <div class="space-y-1">
+                                        <label class="block text-slate-400 font-bold">道具配图路径 (拖入或双击上传)</label>
+                                        <div class="flex items-center gap-2">
+                                            <div class="h-10 w-10 rounded-lg bg-slate-800 border border-white/10 flex items-center justify-center flex-shrink-0 overflow-hidden cursor-zoom-in" v-if="selectedConfigItem.Image" :key="selectedConfigItem.Image" @click="openImageLightbox(selectedConfigItem.Image)" title="点击放大预览">
+                                                <img :src="getPetImageURL(selectedConfigItem.Image)" class="h-full w-full object-cover" @error="handleImageError">
+                                            </div>
+                                            <div class="relative flex-grow flex items-center">
+                                                <input type="text" v-model="selectedConfigItem.Image" @dragover.prevent @drop.prevent="handleImageDrop($event, selectedConfigItem, 'Image')" @dblclick="triggerImageUpload(selectedConfigItem, 'Image')" class="glass-input w-full pr-10" placeholder="拖入或双击选择...">
+                                                <button type="button" @click="triggerImageUpload(selectedConfigItem, 'Image')" class="absolute right-3 text-slate-400 hover:text-brand-400"><i class="fa-solid fa-cloud-arrow-up"></i></button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="space-y-1">
+                                    <label class="block text-slate-400 font-bold">道具介绍描述</label>
+                                    <textarea v-model="selectedConfigItem.Description" rows="2" class="glass-input w-full"></textarea>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 7. PET SPECIES LIST (DUAL PANE CRUD) -->
+                        <div v-if="activeConfigTab === 'pet_species'" class="flex-grow flex min-h-0 gap-6">
+                            <div class="w-1/3 border-r border-white/5 overflow-y-auto pr-3 space-y-1 text-xs">
+                                <button v-for="pet in configs.pet_species_configs" :key="pet.Name" @click="selectedConfigItem = pet" :class="selectedConfigItem && selectedConfigItem.Name === pet.Name ? 'bg-brand-500/20 text-brand-300 border-brand-500/30' : 'text-slate-400 hover:text-slate-200 border-transparent'" class="w-full text-left px-3 py-2.5 rounded-lg border transition-all flex items-center justify-between">
+                                    <span>{{ pet.Name }}</span>
+                                    <i class="fa-solid fa-chevron-right text-[9px] opacity-40"></i>
+                                </button>
+                            </div>
+                            <div class="w-2/3 space-y-4 text-xs overflow-y-auto pr-2" v-if="selectedConfigItem">
+                                <div class="flex items-center justify-between border-b border-white/5 pb-2">
+                                    <div class="font-bold text-white text-sm">编辑宠物种类: {{ selectedConfigItem.Name }}</div>
+                                    <button @click="deleteConfigItem('pet_species', selectedConfigItem.Name)" class="text-rose-400 hover:text-rose-500 text-xs flex items-center gap-1">
+                                        <i class="fa-solid fa-trash-can"></i>删除此种类
+                                    </button>
+                                </div>
+                                <div class="grid grid-cols-2 gap-4">
+                                    <div class="space-y-1">
+                                        <label class="block text-slate-400 font-bold">种类名称</label>
+                                        <input type="text" v-model="selectedConfigItem.Name" disabled class="glass-input w-full opacity-60">
+                                    </div>
+                                    <div class="space-y-1">
+                                        <label class="block text-slate-400 font-bold">种类描述介绍</label>
+                                        <input type="text" v-model="selectedConfigItem.Description" class="glass-input w-full">
+                                    </div>
+                                </div>
+                                
+                                <!-- Attributes Max -->
+                                <div class="p-3 bg-white/[0.01] border border-white/5 rounded-xl space-y-3">
+                                    <div class="text-[10px] text-slate-400 font-bold uppercase tracking-wider">初始基础值与上限设置</div>
+                                    <div class="grid grid-cols-5 gap-2">
+                                        <div>
+                                            <label class="block text-[9px] text-slate-500 text-center mb-0.5">初始血量</label>
+                                            <input type="number" v-model.number="selectedConfigItem.Health" class="glass-input w-full text-center py-1 text-xs">
+                                        </div>
+                                        <div>
+                                            <label class="block text-[9px] text-slate-500 text-center mb-0.5">生命上限</label>
+                                            <input type="number" v-model.number="selectedConfigItem.HealthMax" class="glass-input w-full text-center py-1 text-xs">
+                                        </div>
+                                        <div>
+                                            <label class="block text-[9px] text-slate-500 text-center mb-0.5">初始饱食</label>
+                                            <input type="number" v-model.number="selectedConfigItem.Hunger" class="glass-input w-full text-center py-1 text-xs">
+                                        </div>
+                                        <div>
+                                            <label class="block text-[9px] text-slate-500 text-center mb-0.5">饱食上限</label>
+                                            <input type="number" v-model.number="selectedConfigItem.HungerMax" class="glass-input w-full text-center py-1 text-xs">
+                                        </div>
+                                        <div>
+                                            <label class="block text-[9px] text-slate-500 text-center mb-0.5">初始力量</label>
+                                            <input type="number" v-model.number="selectedConfigItem.Strength" class="glass-input w-full text-center py-1 text-xs">
+                                        </div>
+                                    </div>
+                                    <div class="grid grid-cols-5 gap-2">
+                                        <div>
+                                            <label class="block text-[9px] text-slate-500 text-center mb-0.5">力量上限</label>
+                                            <input type="number" v-model.number="selectedConfigItem.StrengthMax" class="glass-input w-full text-center py-1 text-xs">
+                                        </div>
+                                        <div>
+                                            <label class="block text-[9px] text-slate-500 text-center mb-0.5">初始智慧</label>
+                                            <input type="number" v-model.number="selectedConfigItem.Wisdom" class="glass-input w-full text-center py-1 text-xs">
+                                        </div>
+                                        <div>
+                                            <label class="block text-[9px] text-slate-500 text-center mb-0.5">智慧上限</label>
+                                            <input type="number" v-model.number="selectedConfigItem.WisdomMax" class="glass-input w-full text-center py-1 text-xs">
+                                        </div>
+                                        <div>
+                                            <label class="block text-[9px] text-slate-500 text-center mb-0.5">初始防御</label>
+                                            <input type="number" v-model.number="selectedConfigItem.Defense" class="glass-input w-full text-center py-1 text-xs">
+                                        </div>
+                                        <div>
+                                            <label class="block text-[9px] text-slate-500 text-center mb-0.5">防御上限</label>
+                                            <input type="number" v-model.number="selectedConfigItem.DefenseMax" class="glass-input w-full text-center py-1 text-xs">
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Evolution / Awakening -->
+                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 border-t border-white/5 pt-3">
+                                    <!-- Evolution -->
+                                    <div class="p-3 bg-white/[0.01] border border-white/5 rounded-xl space-y-2">
+                                        <div class="text-[10px] text-slate-400 font-bold uppercase tracking-wider">第一阶段：进化设置</div>
+                                        <div class="space-y-1">
+                                            <label class="block text-[9px] text-slate-500">进化后名称</label>
+                                            <input type="text" v-model="selectedConfigItem.Evolution" class="glass-input w-full py-1">
+                                        </div>
+                                        <div class="grid grid-cols-2 gap-2">
+                                            <div class="space-y-1">
+                                                <label class="block text-[9px] text-slate-500">所需成长</label>
+                                                <input type="number" v-model.number="selectedConfigItem.EvolutionGrowth" class="glass-input w-full py-1">
+                                            </div>
+                                            <div class="space-y-1">
+                                                <label class="block text-[9px] text-slate-500">所需好感</label>
+                                                <input type="number" v-model.number="selectedConfigItem.EvolutionAffect" class="glass-input w-full py-1">
+                                            </div>
+                                        </div>
+                                        <div class="space-y-1">
+                                            <label class="block text-[9px] text-slate-500">进化图片映射名</label>
+                                            <input type="text" v-model="selectedConfigItem.EvolutionImage" class="glass-input w-full py-1">
+                                        </div>
+                                    </div>
+
+                                    <!-- Awakening -->
+                                    <div class="p-3 bg-white/[0.01] border border-white/5 rounded-xl space-y-2">
+                                        <div class="text-[10px] text-slate-400 font-bold uppercase tracking-wider">第二阶段：觉醒设置</div>
+                                        <div class="space-y-1">
+                                            <label class="block text-[9px] text-slate-500">觉醒后名称</label>
+                                            <input type="text" v-model="selectedConfigItem.Awaken" class="glass-input w-full py-1">
+                                        </div>
+                                        <div class="grid grid-cols-2 gap-2">
+                                            <div class="space-y-1">
+                                                <label class="block text-[9px] text-slate-500">所需成长</label>
+                                                <input type="number" v-model.number="selectedConfigItem.AwakenGrowth" class="glass-input w-full py-1">
+                                            </div>
+                                            <div class="space-y-1">
+                                                <label class="block text-[9px] text-slate-500">所需好感</label>
+                                                <input type="number" v-model.number="selectedConfigItem.AwakenAffect" class="glass-input w-full py-1">
+                                            </div>
+                                        </div>
+                                        <div class="space-y-1">
+                                            <label class="block text-[9px] text-slate-500">需要觉醒道具清单</label>
+                                            <input type="text" v-model="selectedConfigItem.AwakenItems" class="glass-input w-full py-1" placeholder="格式: 妖之石*1">
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 宠物动作与状态素材图片 (全新拖放上传体验) -->
+                                <div class="p-3 bg-white/[0.01] border border-white/5 rounded-xl space-y-3 mt-3">
+                                    <div class="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-2">
+                                        <i class="fa-solid fa-images text-indigo-400"></i>宠物专属美术资源路径 (双击或拖放图片至输入框可直接上传)
+                                    </div>
+                                    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                                        <div class="space-y-1">
+                                            <label class="block text-[9px] text-slate-500">卡片主图 (Image)</label>
+                                            <div class="flex items-center gap-1.5">
+                                                <div class="h-7 w-7 rounded bg-slate-800 border border-white/10 flex items-center justify-center flex-shrink-0 overflow-hidden cursor-zoom-in" v-if="selectedConfigItem.Image" :key="selectedConfigItem.Image" @click="openImageLightbox(selectedConfigItem.Image)" title="点击放大预览">
+                                                    <img :src="getPetImageURL(selectedConfigItem.Image)" class="h-full w-full object-cover" @error="handleImageError">
+                                                </div>
+                                                <div class="relative flex-grow flex items-center">
+                                                    <input type="text" v-model="selectedConfigItem.Image" @dragover.prevent @drop.prevent="handleImageDrop($event, selectedConfigItem, 'Image')" @dblclick="triggerImageUpload(selectedConfigItem, 'Image')" class="glass-input w-full pr-8 py-1 text-[10px]" placeholder="主图...">
+                                                    <button type="button" @click="triggerImageUpload(selectedConfigItem, 'Image')" class="absolute right-2 text-slate-500 hover:text-indigo-400"><i class="fa-solid fa-cloud-arrow-up text-[10px]"></i></button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="space-y-1">
+                                            <label class="block text-[9px] text-slate-500">领养图 (AdoptImage)</label>
+                                            <div class="flex items-center gap-1.5">
+                                                <div class="h-7 w-7 rounded bg-slate-800 border border-white/10 flex items-center justify-center flex-shrink-0 overflow-hidden cursor-zoom-in" v-if="selectedConfigItem.AdoptImage" :key="selectedConfigItem.AdoptImage" @click="openImageLightbox(selectedConfigItem.AdoptImage)" title="点击放大预览">
+                                                    <img :src="getPetImageURL(selectedConfigItem.AdoptImage)" class="h-full w-full object-cover" @error="handleImageError">
+                                                </div>
+                                                <div class="relative flex-grow flex items-center">
+                                                    <input type="text" v-model="selectedConfigItem.AdoptImage" @dragover.prevent @drop.prevent="handleImageDrop($event, selectedConfigItem, 'AdoptImage')" @dblclick="triggerImageUpload(selectedConfigItem, 'AdoptImage')" class="glass-input w-full pr-8 py-1 text-[10px]" placeholder="领养图...">
+                                                    <button type="button" @click="triggerImageUpload(selectedConfigItem, 'AdoptImage')" class="absolute right-2 text-slate-500 hover:text-indigo-400"><i class="fa-solid fa-cloud-arrow-up text-[10px]"></i></button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="space-y-1">
+                                            <label class="block text-[9px] text-slate-500">进化阶段图 (EvolutionImage)</label>
+                                            <div class="flex items-center gap-1.5">
+                                                <div class="h-7 w-7 rounded bg-slate-800 border border-white/10 flex items-center justify-center flex-shrink-0 overflow-hidden cursor-zoom-in" v-if="selectedConfigItem.EvolutionImage" :key="selectedConfigItem.EvolutionImage" @click="openImageLightbox(selectedConfigItem.EvolutionImage)" title="点击放大预览">
+                                                    <img :src="getPetImageURL(selectedConfigItem.EvolutionImage)" class="h-full w-full object-cover" @error="handleImageError">
+                                                </div>
+                                                <div class="relative flex-grow flex items-center">
+                                                    <input type="text" v-model="selectedConfigItem.EvolutionImage" @dragover.prevent @drop.prevent="handleImageDrop($event, selectedConfigItem, 'EvolutionImage')" @dblclick="triggerImageUpload(selectedConfigItem, 'EvolutionImage')" class="glass-input w-full pr-8 py-1 text-[10px]" placeholder="进化图...">
+                                                    <button type="button" @click="triggerImageUpload(selectedConfigItem, 'EvolutionImage')" class="absolute right-2 text-slate-500 hover:text-indigo-400"><i class="fa-solid fa-cloud-arrow-up text-[10px]"></i></button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="space-y-1">
+                                            <label class="block text-[9px] text-slate-500">觉醒阶段图 (AwakenImage)</label>
+                                            <div class="flex items-center gap-1.5">
+                                                <div class="h-7 w-7 rounded bg-slate-800 border border-white/10 flex items-center justify-center flex-shrink-0 overflow-hidden cursor-zoom-in" v-if="selectedConfigItem.AwakenImage" :key="selectedConfigItem.AwakenImage" @click="openImageLightbox(selectedConfigItem.AwakenImage)" title="点击放大预览">
+                                                    <img :src="getPetImageURL(selectedConfigItem.AwakenImage)" class="h-full w-full object-cover" @error="handleImageError">
+                                                </div>
+                                                <div class="relative flex-grow flex items-center">
+                                                    <input type="text" v-model="selectedConfigItem.AwakenImage" @dragover.prevent @drop.prevent="handleImageDrop($event, selectedConfigItem, 'AwakenImage')" @dblclick="triggerImageUpload(selectedConfigItem, 'AwakenImage')" class="glass-input w-full pr-8 py-1 text-[10px]" placeholder="觉醒图...">
+                                                    <button type="button" @click="triggerImageUpload(selectedConfigItem, 'AwakenImage')" class="absolute right-2 text-slate-500 hover:text-indigo-400"><i class="fa-solid fa-cloud-arrow-up text-[10px]"></i></button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="grid grid-cols-2 sm:grid-cols-6 gap-2 border-t border-white/5 pt-2">
+                                        <div class="space-y-1">
+                                            <label class="block text-[9px] text-slate-500">锻炼开始 (TrainStart)</label>
+                                            <div class="flex items-center gap-1">
+                                                <div class="h-6 w-6 rounded bg-slate-800 border border-white/10 flex items-center justify-center flex-shrink-0 overflow-hidden cursor-zoom-in" v-if="selectedConfigItem.TrainStartImg" :key="selectedConfigItem.TrainStartImg" @click="openImageLightbox(selectedConfigItem.TrainStartImg)" title="点击放大预览">
+                                                    <img :src="getPetImageURL(selectedConfigItem.TrainStartImg)" class="h-full w-full object-cover" @error="handleImageError">
+                                                </div>
+                                                <div class="relative flex-grow flex items-center">
+                                                    <input type="text" v-model="selectedConfigItem.TrainStartImg" @dragover.prevent @drop.prevent="handleImageDrop($event, selectedConfigItem, 'TrainStartImg')" @dblclick="triggerImageUpload(selectedConfigItem, 'TrainStartImg')" class="glass-input w-full pr-6 py-0.5 text-[9px]" placeholder="开始图...">
+                                                    <button type="button" @click="triggerImageUpload(selectedConfigItem, 'TrainStartImg')" class="absolute right-1 text-slate-500 hover:text-indigo-400"><i class="fa-solid fa-cloud-arrow-up text-[9px]"></i></button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="space-y-1">
+                                            <label class="block text-[9px] text-slate-500">锻炼结束 (TrainEnd)</label>
+                                            <div class="flex items-center gap-1">
+                                                <div class="h-6 w-6 rounded bg-slate-800 border border-white/10 flex items-center justify-center flex-shrink-0 overflow-hidden cursor-zoom-in" v-if="selectedConfigItem.TrainEndImg" :key="selectedConfigItem.TrainEndImg" @click="openImageLightbox(selectedConfigItem.TrainEndImg)" title="点击放大预览">
+                                                    <img :src="getPetImageURL(selectedConfigItem.TrainEndImg)" class="h-full w-full object-cover" @error="handleImageError">
+                                                </div>
+                                                <div class="relative flex-grow flex items-center">
+                                                    <input type="text" v-model="selectedConfigItem.TrainEndImg" @dragover.prevent @drop.prevent="handleImageDrop($event, selectedConfigItem, 'TrainEndImg')" @dblclick="triggerImageUpload(selectedConfigItem, 'TrainEndImg')" class="glass-input w-full pr-6 py-0.5 text-[9px]" placeholder="结束图...">
+                                                    <button type="button" @click="triggerImageUpload(selectedConfigItem, 'TrainEndImg')" class="absolute right-1 text-slate-500 hover:text-indigo-400"><i class="fa-solid fa-cloud-arrow-up text-[9px]"></i></button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="space-y-1">
+                                            <label class="block text-[9px] text-slate-500">学习开始 (StudyStart)</label>
+                                            <div class="flex items-center gap-1">
+                                                <div class="h-6 w-6 rounded bg-slate-800 border border-white/10 flex items-center justify-center flex-shrink-0 overflow-hidden cursor-zoom-in" v-if="selectedConfigItem.StudyStartImg" :key="selectedConfigItem.StudyStartImg" @click="openImageLightbox(selectedConfigItem.StudyStartImg)" title="点击放大预览">
+                                                    <img :src="getPetImageURL(selectedConfigItem.StudyStartImg)" class="h-full w-full object-cover" @error="handleImageError">
+                                                </div>
+                                                <div class="relative flex-grow flex items-center">
+                                                    <input type="text" v-model="selectedConfigItem.StudyStartImg" @dragover.prevent @drop.prevent="handleImageDrop($event, selectedConfigItem, 'StudyStartImg')" @dblclick="triggerImageUpload(selectedConfigItem, 'StudyStartImg')" class="glass-input w-full pr-6 py-0.5 text-[9px]" placeholder="开始图...">
+                                                    <button type="button" @click="triggerImageUpload(selectedConfigItem, 'StudyStartImg')" class="absolute right-1 text-slate-500 hover:text-indigo-400"><i class="fa-solid fa-cloud-arrow-up text-[9px]"></i></button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="space-y-1">
+                                            <label class="block text-[9px] text-slate-500">学习结束 (StudyEnd)</label>
+                                            <div class="flex items-center gap-1">
+                                                <div class="h-6 w-6 rounded bg-slate-800 border border-white/10 flex items-center justify-center flex-shrink-0 overflow-hidden cursor-zoom-in" v-if="selectedConfigItem.StudyEndImg" :key="selectedConfigItem.StudyEndImg" @click="openImageLightbox(selectedConfigItem.StudyEndImg)" title="点击放大预览">
+                                                    <img :src="getPetImageURL(selectedConfigItem.StudyEndImg)" class="h-full w-full object-cover" @error="handleImageError">
+                                                </div>
+                                                <div class="relative flex-grow flex items-center">
+                                                    <input type="text" v-model="selectedConfigItem.StudyEndImg" @dragover.prevent @drop.prevent="handleImageDrop($event, selectedConfigItem, 'StudyEndImg')" @dblclick="triggerImageUpload(selectedConfigItem, 'StudyEndImg')" class="glass-input w-full pr-6 py-0.5 text-[9px]" placeholder="结束图...">
+                                                    <button type="button" @click="triggerImageUpload(selectedConfigItem, 'StudyEndImg')" class="absolute right-1 text-slate-500 hover:text-indigo-400"><i class="fa-solid fa-cloud-arrow-up text-[9px]"></i></button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="space-y-1">
+                                            <label class="block text-[9px] text-slate-500">健身开始 (FitnessStart)</label>
+                                            <div class="flex items-center gap-1">
+                                                <div class="h-6 w-6 rounded bg-slate-800 border border-white/10 flex items-center justify-center flex-shrink-0 overflow-hidden cursor-zoom-in" v-if="selectedConfigItem.FitnessStartImg" :key="selectedConfigItem.FitnessStartImg" @click="openImageLightbox(selectedConfigItem.FitnessStartImg)" title="点击放大预览">
+                                                    <img :src="getPetImageURL(selectedConfigItem.FitnessStartImg)" class="h-full w-full object-cover" @error="handleImageError">
+                                                </div>
+                                                <div class="relative flex-grow flex items-center">
+                                                    <input type="text" v-model="selectedConfigItem.FitnessStartImg" @dragover.prevent @drop.prevent="handleImageDrop($event, selectedConfigItem, 'FitnessStartImg')" @dblclick="triggerImageUpload(selectedConfigItem, 'FitnessStartImg')" class="glass-input w-full pr-6 py-0.5 text-[9px]" placeholder="开始图...">
+                                                    <button type="button" @click="triggerImageUpload(selectedConfigItem, 'FitnessStartImg')" class="absolute right-1 text-slate-500 hover:text-indigo-400"><i class="fa-solid fa-cloud-arrow-up text-[9px]"></i></button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="space-y-1">
+                                            <label class="block text-[9px] text-slate-500">健身结束 (FitnessEnd)</label>
+                                            <div class="flex items-center gap-1">
+                                                <div class="h-6 w-6 rounded bg-slate-800 border border-white/10 flex items-center justify-center flex-shrink-0 overflow-hidden cursor-zoom-in" v-if="selectedConfigItem.FitnessEndImg" :key="selectedConfigItem.FitnessEndImg" @click="openImageLightbox(selectedConfigItem.FitnessEndImg)" title="点击放大预览">
+                                                    <img :src="getPetImageURL(selectedConfigItem.FitnessEndImg)" class="h-full w-full object-cover" @error="handleImageError">
+                                                </div>
+                                                <div class="relative flex-grow flex items-center">
+                                                    <input type="text" v-model="selectedConfigItem.FitnessEndImg" @dragover.prevent @drop.prevent="handleImageDrop($event, selectedConfigItem, 'FitnessEndImg')" @dblclick="triggerImageUpload(selectedConfigItem, 'FitnessEndImg')" class="glass-input w-full pr-6 py-0.5 text-[9px]" placeholder="结束图...">
+                                                    <button type="button" @click="triggerImageUpload(selectedConfigItem, 'FitnessEndImg')" class="absolute right-1 text-slate-500 hover:text-indigo-400"><i class="fa-solid fa-cloud-arrow-up text-[9px]"></i></button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 8. MENU LIST (DUAL PANE CRUD) -->
+                        <div v-if="activeConfigTab === 'menus'" class="flex-grow flex min-h-0 gap-6">
+                            <div class="w-1/3 border-r border-white/5 overflow-y-auto pr-3 space-y-1 text-xs">
+                                <button v-for="menu in configs.menu_configs" :key="menu.Name" @click="selectedConfigItem = menu" :class="selectedConfigItem && selectedConfigItem.Name === menu.Name ? 'bg-brand-500/20 text-brand-300 border-brand-500/30' : 'text-slate-400 hover:text-slate-200 border-transparent'" class="w-full text-left px-3 py-2.5 rounded-lg border transition-all flex items-center justify-between">
+                                    <span>{{ menu.Name }}</span>
+                                    <i class="fa-solid fa-chevron-right text-[9px] opacity-40"></i>
+                                </button>
+                            </div>
+                            <div class="w-2/3 space-y-4 text-xs overflow-y-auto pr-2" v-if="selectedConfigItem">
+                                <div class="flex items-center justify-between border-b border-white/5 pb-2">
+                                    <div class="font-bold text-white text-sm">编辑菜单指令回复: {{ selectedConfigItem.Name }}</div>
+                                    <button @click="deleteConfigItem('menu', selectedConfigItem.Name)" class="text-rose-400 hover:text-rose-500 text-xs flex items-center gap-1">
+                                        <i class="fa-solid fa-trash-can"></i>删除此菜单
+                                    </button>
+                                </div>
+                                <div class="space-y-1">
+                                    <label class="block text-slate-400 font-bold">触发指令名称</label>
+                                    <input type="text" v-model="selectedConfigItem.Name" disabled class="glass-input w-full opacity-60">
+                                </div>
+                                <div class="space-y-1">
+                                    <div class="flex justify-between items-center mb-1">
+                                        <label class="block text-slate-400 font-bold">回复文案内容 (可用占位符和变量)</label>
+                                        <div class="flex gap-1.5">
+                                            <button type="button" @click="insertVarToMenu('[@QQ]')" class="bg-brand-500/10 hover:bg-brand-500/20 text-brand-300 px-1.5 py-0.5 rounded text-[9px]">艾特</button>
+                                            <button type="button" @click="insertVarToMenu('[qq]')" class="bg-brand-500/10 hover:bg-brand-500/20 text-brand-300 px-1.5 py-0.5 rounded text-[9px]">QQ号</button>
+                                            <button type="button" @click="insertVarToMenu('《核心图片/头像.png》')" class="bg-brand-500/10 hover:bg-brand-500/20 text-brand-300 px-1.5 py-0.5 rounded text-[9px]">插图</button>
+                                            <button type="button" @click="insertVarToMenu('\n')" class="bg-brand-500/10 hover:bg-brand-500/20 text-brand-300 px-1.5 py-0.5 rounded text-[9px]">换行</button>
+                                        </div>
+                                    </div>
+                                    <textarea v-model="selectedConfigItem.Reply" rows="12" class="glass-input w-full font-mono text-xs leading-relaxed"></textarea>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 9. IMAGES LIST -->
+                        <div v-if="activeConfigTab === 'images'" class="flex-grow flex flex-col min-h-0 space-y-4">
+                            <div class="overflow-y-auto flex-grow pr-2 space-y-2 text-xs">
+                                <div v-for="img in configs.image_configs" :key="img.Name" class="glass-card p-4 flex items-center justify-between gap-4">
+                                    <div class="w-1/3">
+                                        <div class="font-bold text-white">{{ img.Name }}</div>
+                                        <div class="text-[9px] text-slate-500 mt-0.5 font-mono">图片功能键名</div>
+                                    </div>
+                                    <div class="w-1/2 flex items-center gap-2">
+                                        <div class="h-8 w-8 rounded bg-slate-800 border border-white/10 flex items-center justify-center flex-shrink-0 overflow-hidden cursor-zoom-in" v-if="img.Path" :key="img.Path" @click="openImageLightbox(img.Path)" title="点击放大预览">
+                                            <img :src="getPetImageURL(img.Path)" class="h-full w-full object-cover" @error="handleImageError">
+                                        </div>
+                                        <div class="relative flex-grow flex items-center">
+                                            <input type="text" v-model="img.Path" @dragover.prevent @drop.prevent="handleImageDrop($event, img, 'Path')" @dblclick="triggerImageUpload(img, 'Path')" class="glass-input w-full pr-8 py-1 font-mono text-xs" placeholder="拖入或双击上传...">
+                                            <button type="button" @click="triggerImageUpload(img, 'Path')" class="absolute right-2.5 text-slate-500 hover:text-indigo-400"><i class="fa-solid fa-cloud-arrow-up"></i></button>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <button @click="deleteConfigItem('image', img.Name)" class="text-rose-400 hover:text-rose-500 p-1">
+                                            <i class="fa-solid fa-trash-can"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+
+            </div>
+        </main>
+
+        <!-- FOOTER -->
+        <footer class="mt-auto glass-panel border-t border-white/5 py-6 text-center text-xs text-slate-500">
+            <p>QQ 宠物管理控制台 v2.0.0 (Premium local console)</p>
+            <p class="mt-1">由 <b>Antigravity AI Agent</b> 终极重构与优化，实现全功能无缝迁移。</p>
+        </footer>
+
+        <!-- EDIT PET MODAL -->
+        <transition name="modal-slide">
+            <div v-if="editPetModal.show" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+                <div class="glass-panel w-full max-w-2xl rounded-3xl overflow-hidden shadow-2xl border border-white/10 flex flex-col max-h-[90vh]">
+                    <div class="px-6 py-4 bg-white/[0.02] border-b border-white/5 flex items-center justify-between">
+                        <div class="flex items-center gap-3">
+                            <i class="fa-solid fa-user-gear text-brand-400 text-lg"></i>
+                            <h3 class="font-bold text-white text-base">修改宠物属性参数: {{ editPetModal.data.Name }}</h3>
+                        </div>
+                        <button @click="editPetModal.show = false" class="text-slate-400 hover:text-white transition-colors">
+                            <i class="fa-solid fa-xmark text-xl"></i>
+                        </button>
+                    </div>
+
+                    <div class="p-6 space-y-4 overflow-y-auto flex-grow text-xs">
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div class="space-y-1">
+                                <label class="block text-slate-400 font-semibold uppercase">昵称</label>
+                                <input type="text" v-model="editPetModal.data.Name" class="glass-input w-full">
+                            </div>
+                            <div class="space-y-1">
+                                <label class="block text-slate-400 font-semibold uppercase">当前状态</label>
+                                <select v-model="editPetModal.data.Status" class="glass-input w-full">
+                                    <option value="空闲">空闲</option>
+                                    <option value="打工">打工</option>
+                                    <option value="学习">学习</option>
+                                    <option value="锻炼">锻炼</option>
+                                    <option value="健身">健身</option>
+                                    <option value="濒死">濒死</option>
+                                    <option value="逃跑">逃跑</option>
+                                    <option value="失去宠物">失去宠物</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 border-t border-white/5 pt-4">
+                            <div class="space-y-1">
+                                <label class="block text-slate-400 font-semibold uppercase">生命值</label>
+                                <input type="number" v-model.number="editPetModal.data.Health" class="glass-input w-full">
+                            </div>
+                            <div class="space-y-1">
+                                <label class="block text-slate-400 font-semibold uppercase">饱食度</label>
+                                <input type="number" v-model.number="editPetModal.data.Hunger" class="glass-input w-full">
+                            </div>
+                            <div class="space-y-1">
+                                <label class="block text-slate-400 font-semibold uppercase">心情点数(0-100)</label>
+                                <input type="number" v-model.number="editPetModal.data.MoodPoints" class="glass-input w-full">
+                            </div>
+                            <div class="space-y-1">
+                                <label class="block text-slate-400 font-semibold uppercase">拥有金币/货币</label>
+                                <input type="number" v-model.number="editPetModal.data.Currency" class="glass-input w-full">
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 border-t border-white/5 pt-4">
+                            <div class="space-y-1">
+                                <label class="block text-slate-400 font-semibold uppercase">成长修为</label>
+                                <input type="number" v-model.number="editPetModal.data.Growth" class="glass-input w-full">
+                            </div>
+                            <div class="space-y-1">
+                                <label class="block text-slate-400 font-semibold uppercase">好感值</label>
+                                <input type="number" v-model.number="editPetModal.data.Affection" class="glass-input w-full">
+                            </div>
+                            <div class="space-y-1">
+                                <label class="block text-slate-400 font-semibold uppercase">智慧值</label>
+                                <input type="number" v-model.number="editPetModal.data.Wisdom" class="glass-input w-full">
+                            </div>
+                            <div class="space-y-1">
+                                <label class="block text-slate-400 font-semibold uppercase">力量值</label>
+                                <input type="number" v-model.number="editPetModal.data.Strength" class="glass-input w-full">
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-2 sm:grid-cols-3 gap-4 border-t border-white/5 pt-4">
+                            <div class="space-y-1 col-span-2">
+                                <label class="block text-slate-400 font-semibold uppercase">所在家族</label>
+                                <input type="text" v-model="editPetModal.data.Family" class="glass-input w-full">
+                            </div>
+                            <div class="space-y-1">
+                                <label class="block text-slate-400 font-semibold uppercase">防御值</label>
+                                <input type="number" v-model.number="editPetModal.data.Defense" class="glass-input w-full">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="px-6 py-4 bg-white/[0.02] border-t border-white/5 flex items-center justify-end gap-3">
+                        <button @click="editPetModal.show = false" class="glass-btn-secondary px-5 py-2.5 rounded-xl">
+                            取消
+                        </button>
+                        <button @click="savePetUpdate" class="glass-btn-primary px-8 py-2.5 rounded-xl">
+                            保存变更
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </transition>
+
+        <!-- ADD CONFIG ITEM MODAL -->
+        <transition name="modal-slide">
+            <div v-if="addConfigModal.show" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+                <div class="glass-panel w-full max-w-md rounded-3xl overflow-hidden shadow-2xl border border-white/10 flex flex-col">
+                    <div class="px-6 py-4 bg-white/[0.02] border-b border-white/5 flex items-center justify-between">
+                        <h3 class="font-bold text-white text-base">新增配置项</h3>
+                        <button @click="addConfigModal.show = false" class="text-slate-400 hover:text-white transition-colors">
+                            <i class="fa-solid fa-xmark text-xl"></i>
+                        </button>
+                    </div>
+                    <div class="p-6 space-y-4 text-xs">
+                        <div class="space-y-1">
+                            <label class="block text-slate-400 font-bold uppercase">唯一标识键名 (如物品名、打工名)</label>
+                            <input type="text" v-model="addConfigModal.key" class="glass-input w-full" placeholder="英文或中文键名">
+                        </div>
+                    </div>
+                    <div class="px-6 py-4 bg-white/[0.02] border-t border-white/5 flex items-center justify-end gap-3">
+                        <button @click="addConfigModal.show = false" class="glass-btn-secondary px-5 py-2.5 rounded-xl">
+                            取消
+                        </button>
+                        <button @click="submitAddConfigItem" class="glass-btn-primary px-8 py-2.5 rounded-xl">
+                            确定添加
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </transition>
+
+        <!-- CHANGE PASSWORD MODAL -->
+        <transition name="modal-slide">
+            <div v-if="changePasswordModal.show" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm">
+                <form @submit.prevent="changePassword" class="glass-panel w-full max-w-md overflow-hidden rounded-3xl border border-white/10 shadow-2xl">
+                    <div class="flex items-center justify-between border-b border-white/5 bg-white/[0.02] px-6 py-5">
+                        <div class="flex items-center gap-3">
+                            <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-500/10 text-brand-300">
+                                <i class="fa-solid fa-key"></i>
+                            </div>
+                            <div>
+                                <h3 class="font-bold text-white">修改密码</h3>
+                                <p class="mt-0.5 text-xs text-slate-500">成功后所有设备都需要重新登录</p>
+                            </div>
+                        </div>
+                        <button type="button" @click="changePasswordModal.show = false" class="text-slate-400 transition-colors hover:text-white">
+                            <i class="fa-solid fa-xmark text-xl"></i>
+                        </button>
+                    </div>
+                    <div class="space-y-4 p-6">
+                        <div>
+                            <label for="current-password" class="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-400">当前密码</label>
+                            <input id="current-password" v-model="changePasswordModal.currentPassword" type="password" autocomplete="current-password" required class="glass-input w-full" placeholder="请输入当前密码">
+                        </div>
+                        <div>
+                            <label for="new-password" class="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-400">新密码</label>
+                            <input id="new-password" v-model="changePasswordModal.newPassword" type="password" autocomplete="new-password" minlength="6" required class="glass-input w-full" placeholder="至少 6 个字符">
+                        </div>
+                        <div>
+                            <label for="confirm-password" class="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-400">确认新密码</label>
+                            <input id="confirm-password" v-model="changePasswordModal.confirmPassword" type="password" autocomplete="new-password" minlength="6" required class="glass-input w-full" placeholder="再次输入新密码">
+                        </div>
+                        <div v-if="changePasswordModal.error" class="rounded-xl border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+                            <i class="fa-solid fa-circle-exclamation mr-2"></i>{{ changePasswordModal.error }}
+                        </div>
+                    </div>
+                    <div class="flex items-center justify-end gap-3 border-t border-white/5 bg-white/[0.02] px-6 py-4">
+                        <button type="button" @click="changePasswordModal.show = false" class="glass-btn-secondary px-5 py-2.5">取消</button>
+                        <button type="submit" :disabled="changePasswordModal.submitting" class="glass-btn-primary flex items-center gap-2 px-6 py-2.5">
+                            <i v-if="changePasswordModal.submitting" class="fa-solid fa-circle-notch animate-spin"></i>
+                            <span>{{ changePasswordModal.submitting ? '正在保存...' : '确认修改' }}</span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </transition>
+
+        <!-- IMAGE LIGHTBOX MODAL -->
+        <transition name="fade">
+            <div v-if="lightbox.show" @click="lightbox.show = false" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-md cursor-zoom-out">
+                <img :src="lightbox.url" class="max-w-full max-h-[90vh] rounded-2xl shadow-2xl border border-white/10 object-contain">
+                <div class="absolute bottom-6 left-1/2 transform -translate-x-1/2 bg-black/60 px-4 py-2 rounded-full text-xs text-slate-400">点击任意位置关闭预览</div>
+            </div>
+        </transition>
+
+        </template>
+    </div>
+
+    <!-- Script Section -->
+    <script>
+        const nativeFetch = window.fetch.bind(window);
+        let handleAdminUnauthorized = () => {};
+
+        // 管理接口统一使用 HttpOnly Cookie；任意受保护接口返回 401 时回到登录页。
+        window.fetch = async (input, init = {}) => {
+            const url = typeof input === 'string' ? input : input.url;
+            if (!url.startsWith('/api/admin')) return nativeFetch(input, init);
+
+            const response = await nativeFetch(input, {
+                ...init,
+                credentials: 'same-origin'
+            });
+            if (response.status === 401 && url !== '/api/admin/auth/login') {
+                handleAdminUnauthorized();
+            }
+            return response;
+        };
+
+        const { createApp, ref, reactive, onMounted, computed, watch, nextTick } = Vue;
+
+        createApp({
+            setup() {
+                const activeTab = ref('dashboard');
+                const loading = ref(false);
+
+                const auth = reactive({
+                    ready: false,
+                    authenticated: false,
+                    username: '',
+                    submitting: false,
+                    loginError: '',
+                    loginNotice: ''
+                });
+
+                const loginForm = reactive({
+                    username: 'admin',
+                    password: '',
+                    remember: false
+                });
+
+                const changePasswordModal = reactive({
+                    show: false,
+                    currentPassword: '',
+                    newPassword: '',
+                    confirmPassword: '',
+                    submitting: false,
+                    error: ''
+                });
+
+                const setUnauthenticated = (message = '') => {
+                    auth.authenticated = false;
+                    auth.ready = true;
+                    auth.username = '';
+                    auth.submitting = false;
+                    auth.loginError = message;
+                    loginForm.password = '';
+                    loginForm.remember = false;
+                    changePasswordModal.show = false;
+                    changePasswordModal.currentPassword = '';
+                    changePasswordModal.newPassword = '';
+                    changePasswordModal.confirmPassword = '';
+                    changePasswordModal.submitting = false;
+                    changePasswordModal.error = '';
+                };
+
+                handleAdminUnauthorized = () => {
+                    setUnauthenticated('登录已失效，请重新登录');
+                };
+
+                const login = async () => {
+                    auth.submitting = true;
+                    auth.loginError = '';
+                    auth.loginNotice = '';
+                    try {
+                        const response = await fetch('/api/admin/auth/login', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(loginForm)
+                        });
+                        const data = await response.json().catch(() => ({}));
+                        if (!response.ok) {
+                            auth.loginError = data.error || '登录失败，请重试';
+                            loginForm.password = '';
+                            return;
+                        }
+                        auth.authenticated = true;
+                        auth.username = data.username || loginForm.username;
+                        await loadAdminData();
+                    } catch (error) {
+                        auth.loginError = '无法连接服务器，请稍后重试';
+                    } finally {
+                        auth.submitting = false;
+                    }
+                };
+
+                const checkAdminSession = async () => {
+                    try {
+                        const response = await fetch('/api/admin/auth/session');
+                        const data = await response.json().catch(() => ({}));
+                        if (!response.ok) {
+                            throw new Error(data.error || '会话检查失败');
+                        }
+                        auth.authenticated = Boolean(data.authenticated);
+                        auth.username = data.username || '';
+                        if (auth.authenticated) {
+                            await loadAdminData();
+                        }
+                    } catch (error) {
+                        auth.loginError = '无法确认登录状态，请重新登录';
+                        auth.authenticated = false;
+                    } finally {
+                        auth.ready = true;
+                    }
+                };
+
+                const logout = async () => {
+                    try {
+                        const response = await fetch('/api/admin/auth/logout', { method: 'POST' });
+                        if (!response.ok) {
+                            throw new Error('logout failed');
+                        }
+                        setUnauthenticated();
+                        auth.loginNotice = '已安全退出登录';
+                    } catch (error) {
+                        if (auth.authenticated) {
+                            showToast('退出登录失败，请稍后重试', 'error');
+                        }
+                    }
+                };
+
+                const openChangePassword = () => {
+                    changePasswordModal.currentPassword = '';
+                    changePasswordModal.newPassword = '';
+                    changePasswordModal.confirmPassword = '';
+                    changePasswordModal.error = '';
+                    changePasswordModal.show = true;
+                };
+
+                const changePassword = async () => {
+                    changePasswordModal.error = '';
+                    if (changePasswordModal.newPassword.length < 6) {
+                        changePasswordModal.error = '新密码至少需要 6 个字符';
+                        return;
+                    }
+                    if (changePasswordModal.newPassword !== changePasswordModal.confirmPassword) {
+                        changePasswordModal.error = '两次输入的新密码不一致';
+                        return;
+                    }
+
+                    changePasswordModal.submitting = true;
+                    try {
+                        const response = await fetch('/api/admin/auth/password', {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                current_password: changePasswordModal.currentPassword,
+                                new_password: changePasswordModal.newPassword,
+                                confirm_password: changePasswordModal.confirmPassword
+                            })
+                        });
+                        const data = await response.json().catch(() => ({}));
+                        if (!response.ok) {
+                            changePasswordModal.error = data.error || '修改密码失败';
+                            return;
+                        }
+                        setUnauthenticated();
+                        auth.loginNotice = data.message || '密码修改成功，请重新登录';
+                    } catch (error) {
+                        changePasswordModal.error = '无法连接服务器，请稍后重试';
+                    } finally {
+                        changePasswordModal.submitting = false;
+                    }
+                };
+
+                // Global Toast Notification
+                const toast = reactive({
+                    show: false,
+                    message: '',
+                    bg: 'bg-emerald-600/90 border-emerald-500/30 text-white',
+                    icon: 'fa-solid fa-circle-check text-emerald-400'
+                });
+
+                const showToast = (msg, type = 'success') => {
+                    toast.message = msg;
+                    if (type === 'success') {
+                        toast.bg = 'bg-emerald-950/90 border-emerald-500/30 text-emerald-200';
+                        toast.icon = 'fa-solid fa-circle-check text-emerald-400';
+                    } else if (type === 'error') {
+                        toast.bg = 'bg-rose-950/90 border-rose-500/30 text-rose-200';
+                        toast.icon = 'fa-solid fa-triangle-exclamation text-rose-400';
+                    } else {
+                        toast.bg = 'bg-slate-900/90 border-brand-500/30 text-brand-300';
+                        toast.icon = 'fa-solid fa-circle-info text-brand-400';
+                    }
+                    toast.show = true;
+                    setTimeout(() => {
+                        toast.show = false;
+                    }, 4000);
+                };
+
+                // 1. Dashboard Stats
+                const stats = reactive({
+                    total_pets: 0,
+                    total_users: 0,
+                    status_dist: {},
+                    top_wealth: [],
+                    top_growth: [],
+                    top_affection: []
+                });
+
+                let statusChart = null;
+                let wealthChart = null;
+                let growthChart = null;
+
+                const fetchStats = async () => {
+                    try {
+                        const res = await fetch('/api/admin/stats');
+                        const data = await res.json();
+                        Object.assign(stats, data);
+                        renderCharts(data);
+                    } catch (e) {
+                        showToast('获取统计数据失败: ' + e.message, 'error');
+                    }
+                };
+
+                const renderCharts = (data) => {
+                    const ctxStatus = document.getElementById('chart-status');
+                    if (ctxStatus) {
+                        if (statusChart) statusChart.destroy();
+                        const labels = Object.keys(data.status_dist);
+                        const counts = Object.values(data.status_dist);
+                        
+                        statusChart = new Chart(ctxStatus, {
+                            type: 'doughnut',
+                            data: {
+                                labels: labels,
+                                datasets: [{
+                                    data: counts,
+                                    backgroundColor: [
+                                        'rgba(139, 92, 246, 0.6)',
+                                        'rgba(14, 165, 233, 0.6)',
+                                        'rgba(245, 158, 11, 0.6)',
+                                        'rgba(244, 63, 94, 0.6)',
+                                        'rgba(16, 185, 129, 0.6)',
+                                        'rgba(236, 72, 153, 0.6)',
+                                        'rgba(100, 116, 139, 0.6)'
+                                    ],
+                                    borderColor: 'rgba(255, 255, 255, 0.1)',
+                                    borderWidth: 1
+                                }]
+                            },
+                            options: {
+                                responsive: true,
+                                plugins: {
+                                    legend: {
+                                        position: 'bottom',
+                                        labels: { color: '#94a3b8', font: { size: 10 } }
+                                    }
+                                }
+                            }
+                        });
+                    }
+
+                    const ctxWealth = document.getElementById('chart-wealth');
+                    if (ctxWealth) {
+                        if (wealthChart) wealthChart.destroy();
+                        const labels = data.top_wealth.map(p => `${p.Name} (${p.UserID})`);
+                        const values = data.top_wealth.map(p => p.Currency);
+
+                        wealthChart = new Chart(ctxWealth, {
+                            type: 'bar',
+                            data: {
+                                labels: labels,
+                                datasets: [{
+                                    label: '咔币持币量',
+                                    data: values,
+                                    backgroundColor: 'rgba(16, 185, 129, 0.5)',
+                                    borderColor: 'rgba(16, 185, 129, 0.8)',
+                                    borderWidth: 1,
+                                    borderRadius: 6
+                                }]
+                            },
+                            options: {
+                                indexAxis: 'y',
+                                responsive: true,
+                                maintainAspectRatio: false,
+                                plugins: { legend: { display: false } },
+                                scales: {
+                                    x: { grid: { color: 'rgba(255, 255, 255, 0.05)' }, ticks: { color: '#94a3b8', font: { size: 9 } } },
+                                    y: { grid: { display: false }, ticks: { color: '#94a3b8', font: { size: 9 } } }
+                                }
+                            }
+                        });
+                    }
+
+                    const ctxGrowth = document.getElementById('chart-growth');
+                    if (ctxGrowth) {
+                        if (growthChart) growthChart.destroy();
+                        const labels = data.top_growth.map(p => p.Name);
+                        const values = data.top_growth.map(p => p.Growth);
+
+                        growthChart = new Chart(ctxGrowth, {
+                            type: 'bar',
+                            data: {
+                                labels: labels,
+                                datasets: [{
+                                    label: '成长修为',
+                                    data: values,
+                                    backgroundColor: 'rgba(139, 92, 246, 0.5)',
+                                    borderColor: 'rgba(139, 92, 246, 0.8)',
+                                    borderWidth: 1,
+                                    borderRadius: 6
+                                }]
+                            },
+                            options: {
+                                indexAxis: 'y',
+                                responsive: true,
+                                maintainAspectRatio: false,
+                                plugins: { legend: { display: false } },
+                                scales: {
+                                    x: { grid: { color: 'rgba(255, 255, 255, 0.05)' }, ticks: { color: '#94a3b8', font: { size: 9 } } },
+                                    y: { grid: { display: false }, ticks: { color: '#94a3b8', font: { size: 9 } } }
+                                }
+                            }
+                        });
+                    }
+                };
+
+
+                // 2. Pets Management
+                const pets = reactive({
+                    total: 0,
+                    page: 1,
+                    limit: 10,
+                    data: []
+                });
+                const petsFilter = reactive({
+                    user_id: '',
+                    group_id: '',
+                    name: '',
+                    status: '',
+                    pet_type: ''
+                });
+
+                const fetchPets = async () => {
+                    try {
+                        const params = new URLSearchParams({
+                            page: pets.page.toString(),
+                            limit: pets.limit.toString(),
+                            user_id: petsFilter.user_id,
+                            group_id: petsFilter.group_id,
+                            name: petsFilter.name,
+                            status: petsFilter.status,
+                            pet_type: petsFilter.pet_type
+                        });
+                        const res = await fetch(`/api/admin/pets?${params}`);
+                        const data = await res.json();
+                        Object.assign(pets, data);
+                    } catch (e) {
+                        showToast('获取宠物列表失败: ' + e.message, 'error');
+                    }
+                };
+
+                const clearPetsFilter = () => {
+                    petsFilter.user_id = '';
+                    petsFilter.group_id = '';
+                    petsFilter.name = '';
+                    petsFilter.status = '';
+                    petsFilter.pet_type = '';
+                    pets.page = 1;
+                    fetchPets();
+                };
+
+                const prevPetsPage = () => {
+                    if (pets.page > 1) {
+                        pets.page--;
+                        fetchPets();
+                    }
+                };
+
+                const nextPetsPage = () => {
+                    if (pets.page < Math.ceil(pets.total / pets.limit)) {
+                        pets.page++;
+                        fetchPets();
+                    }
+                };
+
+                const getStatusBadgeClass = (status) => {
+                    switch (status) {
+                        case '空闲': return 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30';
+                        case '学习': return 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30';
+                        case '锻炼': return 'bg-sky-500/10 text-sky-400 border-sky-500/30';
+                        case '打工': return 'bg-amber-500/10 text-amber-400 border-amber-500/30';
+                        case '健身': return 'bg-purple-500/10 text-purple-400 border-purple-500/30';
+                        case '濒死': return 'bg-rose-500/10 text-rose-400 border-rose-500/30 animate-pulse';
+                        case '逃跑': return 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30';
+                        case '失去宠物': return 'bg-slate-500/10 text-slate-400 border-slate-500/30';
+                        default: return 'bg-slate-500/10 text-slate-300 border-slate-500/30';
+                    }
+                };
+
+                const operatePet = async (petId, action) => {
+                    try {
+                        const res = await fetch(`/api/admin/pets/${petId}/operate`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ action })
+                        });
+                        const data = await res.json();
+                        if (res.ok) {
+                            showToast(data.message || '操作成功！');
+                            fetchPets();
+                            fetchStats();
+                        } else {
+                            showToast(data.error || '执行操作失败', 'error');
+                        }
+                    } catch (e) {
+                        showToast('与服务器通信失败: ' + e.message, 'error');
+                    }
+                };
+
+                const deletePet = async (petId) => {
+                    if (confirm('警告！确定要永久删除这名玩家的宠物数据吗？删除后将无法找回！')) {
+                        try {
+                            const res = await fetch(`/api/admin/pets/${petId}`, { method: 'DELETE' });
+                            const data = await res.json();
+                            if (res.ok) {
+                                showToast(data.message || '宠物删除成功');
+                                fetchPets();
+                                fetchStats();
+                            } else {
+                                showToast(data.error || '删除宠物失败', 'error');
+                            }
+                        } catch (e) {
+                            showToast('请求异常: ' + e.message, 'error');
+                        }
+                    }
+                };
+
+                const editPetModal = reactive({
+                    show: false,
+                    data: {}
+                });
+
+                const openEditPet = (pet) => {
+                    editPetModal.data = JSON.parse(JSON.stringify(pet));
+                    editPetModal.show = true;
+                };
+
+                const savePetUpdate = async () => {
+                    try {
+                        const res = await fetch(`/api/admin/pets/${editPetModal.data.ID}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(editPetModal.data)
+                        });
+                        const data = await res.json();
+                        if (res.ok) {
+                            showToast('宠物属性修改保存成功');
+                            editPetModal.show = false;
+                            fetchPets();
+                            fetchStats();
+                        } else {
+                            showToast(data.error || '修改保存失败', 'error');
+                        }
+                    } catch (e) {
+                        showToast('保存异常: ' + e.message, 'error');
+                    }
+                };
+
+
+                // 3. Group Control switches & compensations
+                const groups = ref([]);
+                const compensationForm = reactive({
+                    group_id: 0,
+                    user_ids: '',
+                    coins: 0,
+                    items: '',
+                    notice: '【发放补偿】\n目标玩家：[奖励玩家]\n奖励内容：[奖励货币][奖励物品]'
+                });
+
+                const fetchGroups = async () => {
+                    try {
+                        const res = await fetch('/api/admin/groups');
+                        groups.value = await res.json();
+                    } catch (e) {
+                        showToast('拉取群组列表失败: ' + e.message, 'error');
+                    }
+                };
+
+                const updateGroupSwitch = async (g) => {
+                    try {
+                        const res = await fetch(`/api/admin/groups/${g.GroupID}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(g)
+                        });
+                        if (!res.ok) {
+                            showToast('更新群开关失败', 'error');
+                        }
+                    } catch (e) {
+                        showToast('群组设置同步失败: ' + e.message, 'error');
+                    }
+                };
+
+                const deleteGroupSwitch = async (gid) => {
+                    if (confirm('确定要删除这只群开关的记录吗？删除后将恢复为默认开启。')) {
+                        try {
+                            const res = await fetch(`/api/admin/groups/${gid}`, { method: 'DELETE' });
+                            if (res.ok) {
+                                showToast('删除群组记录成功');
+                                fetchGroups();
+                            }
+                        } catch (e) {
+                            showToast('操作异常: ' + e.message, 'error');
+                        }
+                    }
+                };
+
+                const syncGroups = async () => {
+                    try {
+                        const res = await fetch('/api/admin/groups/sync', { method: 'POST' });
+                        const data = await res.json();
+                        if (res.ok) {
+                            showToast(data.message);
+                            fetchGroups();
+                        }
+                    } catch (e) {
+                        showToast('同步群组异常: ' + e.message, 'error');
+                    }
+                };
+
+                const setAllGroupsState = async (state) => {
+                    for (let g of groups.value) {
+                        g.IsActive = state;
+                        await updateGroupSwitch(g);
+                    }
+                    showToast(`已一键将所有群开关设置为: ${state ? '开启' : '关闭'}`);
+                };
+
+                const addQuickItemToCompensation = (name) => {
+                    if (!name) return;
+                    if (compensationForm.items) {
+                        compensationForm.items += '#' + name + '*1';
+                    } else {
+                        compensationForm.items = name + '*1';
+                    }
+                };
+
+                const insertVarToNotice = (variable) => {
+                    compensationForm.notice += variable;
+                };
+
+                const getCompensationPreview = () => {
+                    let text = compensationForm.notice;
+                    let players = compensationForm.user_ids ? compensationForm.user_ids.replace(/#/g, ' @') : '本群全体宠物玩家';
+                    if (compensationForm.user_ids) {
+                        players = '@' + players;
+                    }
+                    
+                    let coinName = configs.system_configs.find(c => c.Key === 'Core.CoinName')?.Value || '咔币';
+                    let coins = compensationForm.coins > 0 ? `\n- ${compensationForm.coins} ${coinName}` : '';
+                    let items = compensationForm.items ? `\n- ${compensationForm.items.replace(/#/g, '、')}` : '';
+
+                    text = text.replace(/\[奖励玩家\]/g, players);
+                    text = text.replace(/\[奖励货币\]/g, coins);
+                    text = text.replace(/\[奖励物品\]/g, items);
+                    text = text.replace(/\[换行\]/g, '\n');
+                    return text;
+                };
+
+                const sendCompensation = async () => {
+                    try {
+                        // Parse user_ids
+                        let userIdsArr = [];
+                        if (compensationForm.user_ids) {
+                            userIdsArr = compensationForm.user_ids.split('#').map(id => parseInt(id.trim())).filter(id => !isNaN(id));
+                        }
+
+                        const body = {
+                            group_id: compensationForm.group_id,
+                            user_ids: userIdsArr,
+                            coins: compensationForm.coins,
+                            items: compensationForm.items,
+                            notice: compensationForm.notice
+                        };
+
+                        const res = await fetch('/api/admin/compensation', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(body)
+                        });
+                        const data = await res.json();
+                        if (res.ok) {
+                            showToast(data.message || '补偿发放执行成功！');
+                            compensationForm.coins = 0;
+                            compensationForm.items = '';
+                            compensationForm.user_ids = '';
+                            fetchStats();
+                            fetchPets();
+                        } else {
+                            showToast(data.error || '补偿发放失败', 'error');
+                        }
+                    } catch (e) {
+                        showToast('网络交互异常: ' + e.message, 'error');
+                    }
+                };
+
+
+                // 4. Configuration settings tab
+                const configTabs = [
+                    { id: 'currency', name: '货币对接设置', icon: 'fa-solid fa-circle-nodes text-brand-400' },
+                    { id: 'system', name: '系统核心参数', icon: 'fa-solid fa-gears text-blue-400' },
+                    { id: 'checkin', name: '每日签到奖励', icon: 'fa-solid fa-calendar-check text-rose-400' },
+                    { id: 'work', name: '挂机打工配置', icon: 'fa-solid fa-briefcase text-amber-400' },
+                    { id: 'shop', name: '商店货架管理', icon: 'fa-solid fa-store text-emerald-400' },
+                    { id: 'items', name: '游戏道具百科', icon: 'fa-solid fa-box-open text-purple-400' },
+                    { id: 'pet_species', name: '宠物种类进化', icon: 'fa-solid fa-dna text-indigo-400' },
+                    { id: 'menus', name: '指令菜单回复', icon: 'fa-solid fa-message text-cyan-400' },
+                    { id: 'images', name: '图片映射路径', icon: 'fa-solid fa-image text-pink-400' }
+                ];
+                const activeConfigTab = ref('currency');
+                const sysConfigSearch = ref('');
+
+                const configs = reactive({
+                    system_configs: [],
+                    command_configs: [],
+                    pet_species_configs: [],
+                    item_configs: [],
+                    shop_item_configs: [],
+                    work_setting_configs: [],
+                    menu_configs: [],
+                    image_configs: [],
+                    checkin_reward_configs: []
+                });
+
+                const currencyConfig = reactive({
+                    sync: '0',
+                    path: '',
+                    section: '',
+                    key: ''
+                });
+
+                // Checkin reward active select
+                const weeklyCheckinDays = [
+                    { id: '1', name: '一' },
+                    { id: '2', name: '二' },
+                    { id: '3', name: '三' },
+                    { id: '4', name: '四' },
+                    { id: '5', name: '五' },
+                    { id: '6', name: '六' },
+                    { id: '7', name: '日' }
+                ];
+                const selectedCheckin = reactive({
+                    type: 'weekly',
+                    day: '1',
+                    data: null
+                });
+
+                // CRUD selected items
+                const selectedConfigItem = ref(null);
+
+                const fetchConfigs = async () => {
+                    try {
+                        const res = await fetch('/api/admin/configs');
+                        const data = await res.json();
+                        Object.assign(configs, data);
+
+                        // Parse currency integration configuration
+                        const cSync = data.system_configs.find(c => c.Key === 'Core.CurrencySync')?.Value || '0';
+                        const cPath = data.system_configs.find(c => c.Key === 'Core.CurrencySyncPath')?.Value || '';
+                        const cSec = data.system_configs.find(c => c.Key === 'Core.CurrencySyncSection')?.Value || '';
+                        const cKey = data.system_configs.find(c => c.Key === 'Core.CurrencySyncKey')?.Value || '';
+
+                        currencyConfig.sync = cSync;
+                        currencyConfig.path = cPath;
+                        currencyConfig.section = cSec;
+                        currencyConfig.key = cKey;
+
+                        // Default select for checkin reward
+                        selectCheckinReward('weekly', '1');
+
+                        // Default select for other tabs
+                        setDefaultSelectedConfigItem();
+                    } catch (e) {
+                        showToast('拉取配置表失败: ' + e.message, 'error');
+                    }
+                };
+
+                const changeConfigTab = (tabId) => {
+                    activeConfigTab.value = tabId;
+                    setDefaultSelectedConfigItem();
+                };
+
+                const setDefaultSelectedConfigItem = () => {
+                    selectedConfigItem.value = null;
+                    if (activeConfigTab.value === 'work' && configs.work_setting_configs.length > 0) {
+                        selectedConfigItem.value = configs.work_setting_configs[0];
+                    } else if (activeConfigTab.value === 'shop' && configs.shop_item_configs.length > 0) {
+                        selectedConfigItem.value = configs.shop_item_configs[0];
+                    } else if (activeConfigTab.value === 'items' && configs.item_configs.length > 0) {
+                        selectedConfigItem.value = configs.item_configs[0];
+                    } else if (activeConfigTab.value === 'pet_species' && configs.pet_species_configs.length > 0) {
+                        selectedConfigItem.value = configs.pet_species_configs[0];
+                    } else if (activeConfigTab.value === 'menus' && configs.menu_configs.length > 0) {
+                        selectedConfigItem.value = configs.menu_configs[0];
+                    } else if (activeConfigTab.value === 'images' && configs.image_configs.length > 0) {
+                        selectedConfigItem.value = configs.image_configs[0];
+                    }
+                };
+
+                const selectCheckinReward = (type, day) => {
+                    selectedCheckin.type = type;
+                    selectedCheckin.day = day;
+
+                    let found = configs.checkin_reward_configs.find(c => c.Type === (type === 'weekly' ? 'checkin_weekly' : 'checkin_newbie') && c.Day === day);
+                    if (!found) {
+                        // Create virtual mock
+                        found = { Type: type === 'weekly' ? 'checkin_weekly' : 'checkin_newbie', Day: day, Currency: 0, Affection: 0, Items: '', Image: '' };
+                        configs.checkin_reward_configs.push(found);
+                    }
+                    selectedCheckin.data = found;
+                };
+
+                const getWeeklyDayName = (d) => {
+                    return weeklyCheckinDays.find(w => w.id === d)?.name || d;
+                };
+
+                const addQuickItemToCheckin = (name) => {
+                    if (!name || !selectedCheckin.data) return;
+                    if (selectedCheckin.data.Items) {
+                        selectedCheckin.data.Items += '#' + name + '*1';
+                    } else {
+                        selectedCheckin.data.Items = name + '*1';
+                    }
+                };
+
+                const insertVarToMenu = (v) => {
+                    if (selectedConfigItem.value && selectedConfigItem.value.Reply !== undefined) {
+                        selectedConfigItem.value.Reply += v;
+                    }
+                };
+
+                // Shop items filters
+                const getNormalShopItems = () => {
+                    return configs.shop_item_configs.filter(s => s.ShopType === 'shop_normal');
+                };
+                const getAffectionShopItems = () => {
+                    return configs.shop_item_configs.filter(s => s.ShopType === 'shop_affection');
+                };
+
+                const filteredSystemConfigs = computed(() => {
+                    if (!sysConfigSearch.value) return configs.system_configs;
+                    const kw = sysConfigSearch.value.toLowerCase();
+                    return configs.system_configs.filter(c => {
+                        const desc = getSystemConfigDesc(c.Key).toLowerCase();
+                        return c.Key.toLowerCase().includes(kw) || desc.includes(kw);
+                    });
+                });
+
+                // Chinese translation description helper mapping for core settings
+                const sysConfigDescs = {
+                    "Core.InitialPets": "新建账号初始赠送宠物种类 (若有多个以 # 隔开)",
+                    "Core.CoinName": "全局代币名称描述 (例如：咔币、金币)",
+                    "Core.InitialCoin": "新建账号时玩家获得的初始货币数",
+                    "Core.RenameCost": "改名卡操作所需消耗的代币数",
+                    "Core.RenameBlocklist": "改名关键词屏蔽设定 (以 # 隔开)",
+                    "Core.TreatCost": "治疗受伤/饱食小病扣除的代币数",
+                    "Core.DyingSaveTime": "宠物处于濒死状态的倒计时时限 (分钟)",
+                    "Core.DyingProtectTime": "抢救成功后，宠物的血量保护期 (分钟)",
+                    "Core.EscapeFindTime": "宠物离家出走逃跑状态下的寻回时限 (分钟)",
+                    "Core.LostCooldown": "失去宠物后，重新领养新宠物需要的冷却时长 (分钟)",
+                    "Core.CheckinLike": "群内玩家每日签到时是否需要机器人对该成员点赞 (true/false)",
+                    "Core.CurrencySync": "外部货币同步对接开关值 (0关闭，1开启)",
+                    "Core.CurrencySyncPath": "外部 INI 货币文件的完整网络/系统文件路径",
+                    "Core.CurrencySyncSection": "货币文件对应的 INI 配置节，如 [QQ]",
+                    "Core.CurrencySyncKey": "货币配置项对应的 ini 键名，如 铜钱",
+                    "Core.TxFee": "转账或发送红包需要交纳的手续费点数",
+                    "Core.MasterQQ": "主人管理员 QQ 号",
+                    "Core.NotifyQQ": "接收系统异常或反馈通知的 QQ 账号",
+                    "Core.ImageHost": "SaaS远程图片服务器域名 (如 http://your-vps-ip:8080)",
+                    "Interaction.TrainGrowth": "每次训练可获得的成长点数",
+                    "Interaction.TrainLimit": "每日宠物可参与训练的最大上限次数",
+                    "Interaction.TrainHungerCost": "训练一次消耗的饱食度数值",
+                    "Interaction.StudyGrowth": "每次学习获得的成长值",
+                    "Interaction.StudyLimit": "每日学习最大上限次数",
+                    "Interaction.StudyHungerCost": "学习扣减的饱食度",
+                    "Interaction.WashGrowth": "给宠物洗澡提升的成长值",
+                    "Interaction.WashAffection": "给宠物洗澡提升的好感度",
+                    "Interaction.WashHungerCost": "洗澡扣减的饱食度",
+                    "Interaction.WalkGrowth": "宠物散步提升的成长值",
+                    "Interaction.WalkAffection": "宠物散步提升的好感度",
+                    "Interaction.WalkGrowthLimit": "散步成长点数的单日上限",
+                    "Interaction.WalkAffectLimit": "散步好感度的单日上限",
+                    "Interaction.WalkInterval": "每次散步所需的最低冷却秒数",
+                    "Interaction.WalkHungerCost": "散步扣减的饱食度",
+                    "Interaction.TouchGrowth": "摸头获得的成长值",
+                    "Interaction.TouchAffection": "摸头获得的好感度",
+                    "Interaction.TouchGrowthLimit": "摸头成长单日上限",
+                    "Interaction.TouchAffectLimit": "摸头好感单日上限",
+                    "Interaction.TouchInterval": "摸头之间的最低冷却秒数",
+                    "Interaction.TouchHungerCost": "摸头扣减的饱食度",
+                    "Interaction.RpsAffection": "猜拳胜利/参与获得的好感度",
+                    "Interaction.RpsAffectLimit": "猜拳好感度单日上限",
+                    "Interaction.RpsHungerCost": "猜拳扣减的饱食度",
+                    "Interaction.RpsInterval": "猜拳操作之间的最短冷却秒数",
+                    "Interaction.SnackHungerCost": "偷袭互动消耗的饱食度",
+                    "Interaction.SnackSuccess": "偷袭成功的概率 (0-100)",
+                    "Interaction.SnackInterval": "偷袭成功进入的冷却时间 (秒)",
+                    "Interaction.SnackProtect": "偷袭保护时限 (秒)",
+                    "Interaction.CounterHunger": "受到偷袭反击消耗的饱食度",
+                    "Interaction.CounterSuccess": "反击成功保护自己的概率 (0-100)",
+                    "Interaction.CreateFamilyCoin": "建立虚拟宠物家族需要支出的代币数",
+                    "Interaction.CreateFamilyItem": "创建宠物家族需要从背包消耗的特殊道具 (如 家族商标*1)",
+                    "Interaction.FamilySizeLimit": "宠物家族默认最大容纳成员数",
+                    "Interaction.FishHungerCost": "钓鱼动作每次扣减的饱食度",
+                    "Interaction.FishSuccessRate": "钓鱼上钩概率 (0-100)",
+                    "Interaction.GiftLimit": "每日对宠物赠送礼包的上限次数",
+                    "Interaction.FishSpecies": "钓鱼可能产出的鱼类配置 (以 # 隔开)",
+                    "Interaction.HungerMoodFlush": "因饱食度变动引起的心情值刷新间隔秒数",
+                    "Interaction.LotteryItem": "抽奖轮盘需要消耗的背包道具及数量 (如 抽奖券*10)",
+                    "Interaction.LotteryRewardStr": "抽奖概率与物品奖励配置",
+                    "Interaction.WorkTime": "打工默认挂机所需的时长 (秒)",
+                    "Interaction.WorkRewardCoin": "打工结束后默认发放的货币值",
+                    "Interaction.WorkRewardItems": "打工概率赠送的多样化物品概率字符串",
+                    "Interaction.WorkHungerCost": "打工需要扣除的饱食度基底",
+                    "Interaction.FitnessGrowth": "健身每次带来的成长加成",
+                    "Interaction.FitnessLimit": "每日健身次数最大限额",
+                    "Interaction.FitnessHungerCost": "健身每次消耗的饱食度",
+                    "Interaction.SellNoPriceGrowth": "售出零元垃圾道具获得的基准成长值",
+                    "Interaction.TreeResultNutri": "神树成熟结果需要的累计养分值",
+                    "Interaction.TreeRewardItems": "神树果实成熟后产出的奖励物品池 (以 # 隔开)",
+                    "Interaction.BuyLimit": "单次最多可批量向商店购买道具的个数限制"
+                };
+
+                const getSystemConfigDesc = (key) => {
+                    return sysConfigDescs[key] || '系统核心变量参数项';
+                };
+
+                const getConfigTabTitle = () => {
+                    const found = configTabs.find(t => t.id === activeConfigTab.value);
+                    return found ? found.name : '配置管理';
+                };
+
+                // CRUD config add modals
+                const addConfigModal = reactive({
+                    show: false,
+                    key: ''
+                });
+
+                const isConfigItemCrudable = () => {
+                    return ['work', 'shop', 'items', 'pet_species', 'menus'].includes(activeConfigTab.value);
+                };
+
+                const openAddConfigModal = () => {
+                    addConfigModal.key = '';
+                    addConfigModal.show = true;
+                };
+
+                const submitAddConfigItem = () => {
+                    const k = addConfigModal.key.trim();
+                    if (!k) {
+                        showToast('唯一标识键名不能为空', 'error');
+                        return;
+                    }
+
+                    if (activeConfigTab.value === 'work') {
+                        // Check duplicate
+                        if (configs.work_setting_configs.some(j => j.Name === k)) {
+                            showToast('打工名已存在', 'error');
+                            return;
+                        }
+                        const item = { Name: k, Time: 10, HungerCost: 10, RewardCoin: 50, RewardItems: '', ReplyQuotes: '', StartImage: '', EndImage: '' };
+                        configs.work_setting_configs.push(item);
+                        selectedConfigItem.value = item;
+                    } else if (activeConfigTab.value === 'shop') {
+                        const item = { ShopType: 'shop_normal', Name: k, Image: '', Stock: -1, Price: 10, Description: '' };
+                        configs.shop_item_configs.push(item);
+                        selectedConfigItem.value = item;
+                    } else if (activeConfigTab.value === 'items') {
+                        if (configs.item_configs.some(i => i.Name === k)) {
+                            showToast('道具名已存在', 'error');
+                            return;
+                        }
+                        const item = { Name: k, Type: '饱食', RewardType: '', ObtainType: 0, OpenReq: '', Effect: '30', Time: 0, Image: '', Description: '', SellPrice: 10 };
+                        configs.item_configs.push(item);
+                        selectedConfigItem.value = item;
+                    } else if (activeConfigTab.value === 'pet_species') {
+                        if (configs.pet_species_configs.some(p => p.Name === k)) {
+                            showToast('宠物种类名已存在', 'error');
+                            return;
+                        }
+                        const item = { Name: k, Image: '', AdoptImage: '', TrainStartImg: '', TrainEndImg: '', StudyStartImg: '', StudyEndImg: '', FitnessStartImg: '', FitnessEndImg: '', FavoriteFood: '', FavoriteGift: '', Health: 100, Wisdom: 10, Strength: 10, Defense: 10, Hunger: 100, Description: '', EvolutionBranch: 0, Evolution: '', EvolutionGrowth: 0, EvolutionAffect: 0, EvolutionImage: '', Awaken: '', AwakenGrowth: 0, AwakenAffect: 0, AwakenItems: '', AwakenImage: '', HealthMax: 100, WisdomMax: 100, StrengthMax: 100, DefenseMax: 100, HungerMax: 100 };
+                        configs.pet_species_configs.push(item);
+                        selectedConfigItem.value = item;
+                    } else if (activeConfigTab.value === 'menus') {
+                        if (configs.menu_configs.some(m => m.Name === k)) {
+                            showToast('菜单名已存在', 'error');
+                            return;
+                        }
+                        const item = { Name: k, Reply: '' };
+                        configs.menu_configs.push(item);
+                        selectedConfigItem.value = item;
+                    }
+
+                    showToast(`成功新增配置项: ${k}，请继续填写详细参数并点击保存！`);
+                    addConfigModal.show = false;
+                };
+
+                const deleteConfigItem = async (type, key) => {
+                    if (confirm(`确定要永久删除这个配置项 [${key}] 吗？这会直接同步并从 SQLite 数据库中物理删除此项！`)) {
+                        try {
+                            const res = await fetch(`/api/admin/configs/${type}/${encodeURIComponent(key)}`, { method: 'DELETE' });
+                            const data = await res.json();
+                            if (res.ok) {
+                                showToast(data.message || '删除成功');
+                                // Remove from local UI arrays
+                                if (type === 'work_setting') {
+                                    configs.work_setting_configs = configs.work_setting_configs.filter(j => j.Name !== key);
+                                } else if (type === 'shop_item') {
+                                    configs.shop_item_configs = configs.shop_item_configs.filter(s => s.ID.toString() !== key);
+                                } else if (type === 'item') {
+                                    configs.item_configs = configs.item_configs.filter(i => i.Name !== key);
+                                } else if (type === 'pet_species') {
+                                    configs.pet_species_configs = configs.pet_species_configs.filter(p => p.Name !== key);
+                                } else if (type === 'menu') {
+                                    configs.menu_configs = configs.menu_configs.filter(m => m.Name !== key);
+                                } else if (type === 'image') {
+                                    configs.image_configs = configs.image_configs.filter(img => img.Name !== key);
+                                }
+                                setDefaultSelectedConfigItem();
+                            } else {
+                                showToast(data.error || '删除失败', 'error');
+                            }
+                        } catch (e) {
+                            showToast('网络请求异常: ' + e.message, 'error');
+                        }
+                    }
+                };
+
+                // Bulk Save Config for current active config tab
+                const saveActiveConfig = async () => {
+                    let endpoint = '';
+                    let bodyData = null;
+
+                    // Sync currency integration form back to GORM structures
+                    if (activeConfigTab.value === 'currency') {
+                        let sysConfigsToUpdate = [
+                            { Key: 'Core.CurrencySync', Value: currencyConfig.sync },
+                            { Key: 'Core.CurrencySyncPath', Value: currencyConfig.path },
+                            { Key: 'Core.CurrencySyncSection', Value: currencyConfig.section },
+                            { Key: 'Core.CurrencySyncKey', Value: currencyConfig.key }
+                        ];
+                        // Apply locally
+                        for (let item of sysConfigsToUpdate) {
+                            let found = configs.system_configs.find(c => c.Key === item.Key);
+                            if (found) found.Value = item.Value;
+                        }
+
+                        endpoint = '/api/admin/configs/system';
+                        bodyData = sysConfigsToUpdate;
+                    } else {
+                        switch (activeConfigTab.value) {
+                            case 'system':
+                                endpoint = '/api/admin/configs/system';
+                                bodyData = configs.system_configs;
+                                break;
+                            case 'checkin':
+                                endpoint = '/api/admin/configs/checkin_rewards';
+                                bodyData = configs.checkin_reward_configs;
+                                break;
+                            case 'work':
+                                endpoint = '/api/admin/configs/work_settings';
+                                bodyData = configs.work_setting_configs;
+                                break;
+                            case 'shop':
+                                endpoint = '/api/admin/configs/shop_items';
+                                bodyData = configs.shop_item_configs;
+                                break;
+                            case 'items':
+                                endpoint = '/api/admin/configs/items';
+                                bodyData = configs.item_configs;
+                                break;
+                            case 'pet_species':
+                                endpoint = '/api/admin/configs/pet_species';
+                                bodyData = configs.pet_species_configs;
+                                break;
+                            case 'menus':
+                                endpoint = '/api/admin/configs/menus';
+                                bodyData = configs.menu_configs;
+                                break;
+                            case 'images':
+                                endpoint = '/api/admin/configs/images';
+                                bodyData = configs.image_configs;
+                                break;
+                            default:
+                                return;
+                        }
+                    }
+
+                    try {
+                        const res = await fetch(endpoint, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(bodyData)
+                        });
+                        const data = await res.json();
+                        if (res.ok) {
+                            showToast(data.message || '配置成功保存至数据库！');
+                        } else {
+                            showToast(data.error || '保存配置失败', 'error');
+                        }
+                    } catch (e) {
+                        showToast('保存配置异常: ' + e.message, 'error');
+                    }
+                };
+
+                // Quick system triggers
+                const reloadConfigs = async () => {
+                    try {
+                        const res = await fetch('/api/admin/configs/reload', { method: 'POST' });
+                        const data = await res.json();
+                        if (res.ok) {
+                            showToast('所有配置已成功同步并热重载至机器人运行内存中！');
+                            fetchConfigs();
+                        } else {
+                            showToast(data.error || '热重载失败', 'error');
+                        }
+                    } catch (e) {
+                        showToast('热重载异常: ' + e.message, 'error');
+                    }
+                };
+
+                const confirmReset = () => {
+                    if (confirm('确定要清空修改，将所有游戏参数恢复为出厂的默认种子配置吗？此操作不可逆！')) {
+                        resetConfigs();
+                    }
+                };
+
+                const resetConfigs = async () => {
+                    try {
+                        const res = await fetch('/api/admin/configs/reset', { method: 'POST' });
+                        const data = await res.json();
+                        if (res.ok) {
+                            showToast('出厂默认配置已重新装载并重载生效！', 'success');
+                            fetchConfigs();
+                            fetchStats();
+                            fetchPets();
+                            fetchGroups();
+                        } else {
+                            showToast(data.error || '恢复出厂设置失败', 'error');
+                        }
+                    } catch (e) {
+                        showToast('重置异常: ' + e.message, 'error');
+                    }
+                };
+
+                // Drag and drop & Click upload helpers for Images
+                const triggerImageUpload = (item, field) => {
+                    const input = document.createElement('input');
+                    input.type = 'file';
+                    input.accept = 'image/*';
+                    input.onchange = async (e) => {
+                        const file = e.target.files[0];
+                        if (file) {
+                            await uploadFile(file, item, field);
+                        }
+                    };
+                    input.click();
+                };
+
+                const handleImageDrop = async (e, item, field) => {
+                    const file = e.dataTransfer.files[0];
+                    if (file && file.type.startsWith('image/')) {
+                        await uploadFile(file, item, field);
+                    }
+                };
+
+                const uploadFile = async (file, item, field) => {
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    try {
+                        showToast('正在上传图片，请稍候...', 'info');
+                        const res = await fetch('/api/admin/upload', {
+                            method: 'POST',
+                            body: formData
+                        });
+                        const data = await res.json();
+                        if (res.ok) {
+                            item[field] = data.path;
+                            cacheBuster.value = Date.now(); // 强制刷新所有预览图的浏览器缓存
+                            showToast('图片上传成功！已自动填充相对路径。');
+                        } else {
+                            showToast(data.error || '图片上传失败', 'error');
+                        }
+                    } catch (err) {
+                        showToast('图片上传发生异常: ' + err.message, 'error');
+                    }
+                };
+
+                // Helpers for Images
+                const cacheBuster = ref(Date.now());
+
+                const getPetImageURL = (relPath) => {
+                    if (!relPath) return '';
+                    const cleanPath = relPath.replace(/\\/g, '/');
+                    return `/images/${cleanPath}?t=${cacheBuster.value}`;
+                };
+
+                const handleImageError = (e) => {
+                    e.target.style.display = 'none';
+                    const container = e.target.closest('.cursor-zoom-in') || e.target.parentElement;
+                    if (container) {
+                        container.style.display = 'none';
+                    }
+                };
+
+                const lightbox = reactive({
+                    show: false,
+                    url: ''
+                });
+
+                const openImageLightbox = (path) => {
+                    if (!path) return;
+                    lightbox.url = getPetImageURL(path);
+                    lightbox.show = true;
+                };
+
+                const knownItemNames = computed(() => {
+                    return configs.item_configs.map(it => it.Name);
+                });
+
+                // Tab Switcher and Auto Loading
+                watch(activeTab, (newTab) => {
+                    if (!auth.authenticated) return;
+                    if (newTab === 'dashboard') {
+                        fetchStats();
+                    } else if (newTab === 'pets') {
+                        fetchPets();
+                    } else if (newTab === 'groups') {
+                        fetchGroups();
+                    } else if (newTab === 'configs') {
+                        fetchConfigs();
+                    }
+                });
+
+                const loadAdminData = async () => {
+                    await nextTick();
+                    await Promise.all([
+                        fetchStats(),
+                        fetchPets(),
+                        fetchGroups(),
+                        fetchConfigs()
+                    ]);
+                };
+
+                onMounted(() => {
+                    checkAdminSession();
+                });
+
+                return {
+                    auth,
+                    loginForm,
+                    login,
+                    logout,
+                    changePasswordModal,
+                    openChangePassword,
+                    changePassword,
+                    activeTab,
+                    loading,
+                    toast,
+                    showToast,
+                    
+                    // Stats
+                    stats,
+                    
+                    // Pets
+                    pets,
+                    petsFilter,
+                    fetchPets,
+                    clearPetsFilter,
+                    prevPetsPage,
+                    nextPetsPage,
+                    getStatusBadgeClass,
+                    operatePet,
+                    deletePet,
+                    editPetModal,
+                    openEditPet,
+                    savePetUpdate,
+                    getPetImageURL,
+                    handleImageError,
+
+                    // Groups & Compensation
+                    groups,
+                    compensationForm,
+                    fetchGroups,
+                    updateGroupSwitch,
+                    deleteGroupSwitch,
+                    syncGroups,
+                    setAllGroupsState,
+                    addQuickItemToCompensation,
+                    insertVarToNotice,
+                    getCompensationPreview,
+                    sendCompensation,
+
+                    // Configs CRUD Workspace
+                    configTabs,
+                    activeConfigTab,
+                    sysConfigSearch,
+                    configs,
+                    currencyConfig,
+                    weeklyCheckinDays,
+                    selectedCheckin,
+                    selectedConfigItem,
+                    addConfigModal,
+                    changeConfigTab,
+                    selectCheckinReward,
+                    getWeeklyDayName,
+                    addQuickItemToCheckin,
+                    insertVarToMenu,
+                    getNormalShopItems,
+                    getAffectionShopItems,
+                    filteredSystemConfigs,
+                    getSystemConfigDesc,
+                    getConfigTabTitle,
+                    isConfigItemCrudable,
+                    openAddConfigModal,
+                    submitAddConfigItem,
+                    deleteConfigItem,
+                    saveActiveConfig,
+                    reloadConfigs,
+                    confirmReset,
+                    knownItemNames,
+                    triggerImageUpload,
+                    handleImageDrop,
+                    lightbox,
+                    openImageLightbox
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>

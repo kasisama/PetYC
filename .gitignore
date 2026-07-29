@@ -1,0 +1,23 @@
+# Local runtime data and credentials
+pet_game.db
+pet_game.db-*
+credentials.json
+*.log
+
+# Generated binaries
+*.exe
+
+# Local tool metadata
+.codebase-memory/
+.worktrees/
+worktrees/
+
+# Editor and operating-system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.new

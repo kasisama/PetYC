@@ -1,0 +1,390 @@
+package admin
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"qq-pet-saas/security"
+)
+
+func TestSessionManagerCreatesAndRevokesSession(t *testing.T) {
+	manager := NewSessionManager()
+	token, _, err := manager.Create(false)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if token == "" {
+		t.Fatal("Create() returned an empty token")
+	}
+	if !manager.Validate(token) {
+		t.Fatal("Validate() rejected a new session")
+	}
+
+	manager.Delete(token)
+	if manager.Validate(token) {
+		t.Fatal("Validate() accepted a deleted session")
+	}
+}
+
+func TestSessionManagerRejectsExpiredSession(t *testing.T) {
+	now := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
+	manager := NewSessionManager()
+	manager.now = func() time.Time { return now }
+
+	token, expiresAt, err := manager.Create(true)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if want := now.Add(rememberedSessionDuration); !expiresAt.Equal(want) {
+		t.Fatalf("expiresAt = %v, want %v", expiresAt, want)
+	}
+
+	now = expiresAt.Add(time.Second)
+	if manager.Validate(token) {
+		t.Fatal("Validate() accepted an expired session")
+	}
+}
+
+func TestSessionManagerDeleteAllRevokesEverySession(t *testing.T) {
+	manager := NewSessionManager()
+	first, _, err := manager.Create(false)
+	if err != nil {
+		t.Fatalf("first Create() error = %v", err)
+	}
+	second, _, err := manager.Create(true)
+	if err != nil {
+		t.Fatalf("second Create() error = %v", err)
+	}
+
+	manager.DeleteAll()
+	if manager.Validate(first) || manager.Validate(second) {
+		t.Fatal("DeleteAll() left a session active")
+	}
+}
+
+func TestSessionManagerCreatePrunesExpiredSessions(t *testing.T) {
+	now := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
+	manager := NewSessionManager()
+	manager.now = func() time.Time { return now }
+	if _, _, err := manager.Create(false); err != nil {
+		t.Fatalf("first Create() error = %v", err)
+	}
+
+	now = now.Add(rememberedSessionDuration + time.Second)
+	if _, _, err := manager.Create(false); err != nil {
+		t.Fatalf("second Create() error = %v", err)
+	}
+	if len(manager.sessions) != 1 {
+		t.Fatalf("session count = %d, want 1 active session", len(manager.sessions))
+	}
+}
+
+func TestRequireAdminSessionRejectsMissingOrWrongCookie(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	manager := NewSessionManager()
+	router := gin.New()
+	router.Use(RequireAdminSession(manager))
+	router.GET("/protected", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+
+	for _, cookieValue := range []string{"", "wrong-session"} {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, "/protected", nil)
+		if cookieValue != "" {
+			request.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: cookieValue})
+		}
+		router.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusUnauthorized {
+			t.Fatalf("cookie %q returned %d, want %d", cookieValue, recorder.Code, http.StatusUnauthorized)
+		}
+	}
+}
+
+func TestRequireAdminSessionAcceptsValidCookie(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	manager := NewSessionManager()
+	token, _, err := manager.Create(false)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	router := gin.New()
+	router.Use(RequireAdminSession(manager))
+	router.GET("/protected", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	request.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: token})
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNoContent)
+	}
+}
+
+func TestAdminLoginRejectsWrongCredentials(t *testing.T) {
+	router, _ := newAuthTestRouter(t)
+	recorder := performJSONRequest(
+		router,
+		http.MethodPost,
+		"/api/admin/auth/login",
+		`{"username":"admin","password":"wrong","remember":false}`,
+		nil,
+	)
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload["error"] != "账号或密码错误" {
+		t.Fatalf("error = %#v", payload["error"])
+	}
+}
+
+func TestAdminLoginCreatesBrowserSessionCookieByDefault(t *testing.T) {
+	router, _ := newAuthTestRouter(t)
+	recorder := performJSONRequest(
+		router,
+		http.MethodPost,
+		"/api/admin/auth/login",
+		`{"username":"admin","password":"123456","remember":false}`,
+		nil,
+	)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	cookie := responseCookie(t, recorder, adminSessionCookieName)
+	if !cookie.HttpOnly || cookie.SameSite != http.SameSiteStrictMode {
+		t.Fatalf("cookie security attributes = %#v", cookie)
+	}
+	if cookie.MaxAge != 0 || !cookie.Expires.IsZero() {
+		t.Fatalf("browser session cookie unexpectedly persisted: %#v", cookie)
+	}
+}
+
+func TestAdminLoginRememberMeCreatesFifteenDayCookie(t *testing.T) {
+	router, manager := newAuthTestRouter(t)
+	now := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
+	manager.now = func() time.Time { return now }
+
+	recorder := performJSONRequest(
+		router,
+		http.MethodPost,
+		"/api/admin/auth/login",
+		`{"username":"admin","password":"123456","remember":true}`,
+		nil,
+	)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	cookie := responseCookie(t, recorder, adminSessionCookieName)
+	if cookie.MaxAge != int(rememberedSessionDuration/time.Second) {
+		t.Fatalf("MaxAge = %d, want %d", cookie.MaxAge, int(rememberedSessionDuration/time.Second))
+	}
+	if want := now.Add(rememberedSessionDuration); !cookie.Expires.Equal(want) {
+		t.Fatalf("Expires = %v, want %v", cookie.Expires, want)
+	}
+}
+
+func TestAdminSessionReportsAuthenticationState(t *testing.T) {
+	router, manager := newAuthTestRouter(t)
+
+	anonymous := performJSONRequest(router, http.MethodGet, "/api/admin/auth/session", "", nil)
+	if anonymous.Code != http.StatusOK {
+		t.Fatalf("anonymous status = %d", anonymous.Code)
+	}
+	assertAuthenticatedResponse(t, anonymous, false)
+
+	token, _, err := manager.Create(false)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	authenticated := performJSONRequest(
+		router,
+		http.MethodGet,
+		"/api/admin/auth/session",
+		"",
+		&http.Cookie{Name: adminSessionCookieName, Value: token},
+	)
+	if authenticated.Code != http.StatusOK {
+		t.Fatalf("authenticated status = %d", authenticated.Code)
+	}
+	assertAuthenticatedResponse(t, authenticated, true)
+}
+
+func TestAdminLogoutRevokesOnlyCurrentSession(t *testing.T) {
+	router, manager := newAuthTestRouter(t)
+	current, _, err := manager.Create(false)
+	if err != nil {
+		t.Fatalf("first Create() error = %v", err)
+	}
+	other, _, err := manager.Create(true)
+	if err != nil {
+		t.Fatalf("second Create() error = %v", err)
+	}
+
+	recorder := performJSONRequest(
+		router,
+		http.MethodPost,
+		"/api/admin/auth/logout",
+		"",
+		&http.Cookie{Name: adminSessionCookieName, Value: current},
+	)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if manager.Validate(current) {
+		t.Fatal("current session remains valid")
+	}
+	if !manager.Validate(other) {
+		t.Fatal("other session was unexpectedly revoked")
+	}
+}
+
+func TestAdminPasswordChangeRevokesAllSessions(t *testing.T) {
+	router, manager := newAuthTestRouter(t)
+	current, _, err := manager.Create(false)
+	if err != nil {
+		t.Fatalf("first Create() error = %v", err)
+	}
+	other, _, err := manager.Create(true)
+	if err != nil {
+		t.Fatalf("second Create() error = %v", err)
+	}
+
+	recorder := performJSONRequest(
+		router,
+		http.MethodPut,
+		"/api/admin/auth/password",
+		`{"current_password":"123456","new_password":"654321","confirm_password":"654321"}`,
+		&http.Cookie{Name: adminSessionCookieName, Value: current},
+	)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if manager.Validate(current) || manager.Validate(other) {
+		t.Fatal("password change left an existing session valid")
+	}
+	oldOK, err := security.VerifyAdminCredentials("admin", "123456")
+	if err != nil {
+		t.Fatalf("verify old password error = %v", err)
+	}
+	newOK, err := security.VerifyAdminCredentials("admin", "654321")
+	if err != nil {
+		t.Fatalf("verify new password error = %v", err)
+	}
+	if oldOK || !newOK {
+		t.Fatalf("old password valid = %v, new password valid = %v", oldOK, newOK)
+	}
+}
+
+func TestAdminPasswordChangeValidatesInput(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "wrong current password",
+			body: `{"current_password":"wrong","new_password":"654321","confirm_password":"654321"}`,
+		},
+		{
+			name: "short new password",
+			body: `{"current_password":"123456","new_password":"12345","confirm_password":"12345"}`,
+		},
+		{
+			name: "confirmation mismatch",
+			body: `{"current_password":"123456","new_password":"654321","confirm_password":"654322"}`,
+		},
+		{
+			name: "password exceeds bcrypt limit",
+			body: `{"current_password":"123456","new_password":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","confirm_password":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			router, manager := newAuthTestRouter(t)
+			token, _, err := manager.Create(false)
+			if err != nil {
+				t.Fatalf("Create() error = %v", err)
+			}
+			recorder := performJSONRequest(
+				router,
+				http.MethodPut,
+				"/api/admin/auth/password",
+				test.body,
+				&http.Cookie{Name: adminSessionCookieName, Value: token},
+			)
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+			}
+		})
+	}
+}
+
+func newAuthTestRouter(t *testing.T) (*gin.Engine, *SessionManager) {
+	t.Helper()
+	t.Setenv("QQPET_DATA_DIR", t.TempDir())
+	t.Setenv("QQPET_WS_TOKEN", "")
+	if _, err := security.LoadCredentials(); err != nil {
+		t.Fatalf("LoadCredentials() error = %v", err)
+	}
+
+	gin.SetMode(gin.TestMode)
+	manager := NewSessionManager()
+	handler := NewAuthHandler(manager)
+	router := gin.New()
+	router.POST("/api/admin/auth/login", handler.Login)
+	router.GET("/api/admin/auth/session", handler.Session)
+	protected := router.Group("/api/admin", RequireAdminSession(manager))
+	protected.POST("/auth/logout", handler.Logout)
+	protected.PUT("/auth/password", handler.ChangePassword)
+	protected.GET("/protected", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	return router, manager
+}
+
+func performJSONRequest(
+	router http.Handler,
+	method string,
+	path string,
+	body string,
+	cookie *http.Cookie,
+) *httptest.ResponseRecorder {
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(method, path, bytes.NewBufferString(body))
+	if body != "" {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	if cookie != nil {
+		request.AddCookie(cookie)
+	}
+	router.ServeHTTP(recorder, request)
+	return recorder
+}
+
+func responseCookie(t *testing.T, recorder *httptest.ResponseRecorder, name string) *http.Cookie {
+	t.Helper()
+	for _, cookie := range recorder.Result().Cookies() {
+		if cookie.Name == name {
+			return cookie
+		}
+	}
+	t.Fatalf("response has no %q cookie", name)
+	return nil
+}
+
+func assertAuthenticatedResponse(t *testing.T, recorder *httptest.ResponseRecorder, want bool) {
+	t.Helper()
+	var payload struct {
+		Authenticated bool `json:"authenticated"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Authenticated != want {
+		t.Fatalf("authenticated = %v, want %v", payload.Authenticated, want)
+	}
+}
