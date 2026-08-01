@@ -43,7 +43,11 @@ func RegisterRoutes(r *gin.Engine) {
 	if err != nil {
 		log.Fatalf("Failed to create sub-FS for embedded assets: %v", err)
 	}
-	r.StaticFS("/admin", http.FS(subFS))
+	serveAdminUI := newAdminUIHandler(subFS)
+	r.GET("/admin", serveAdminUI)
+	r.HEAD("/admin", serveAdminUI)
+	r.GET("/admin/*filepath", serveAdminUI)
+	r.HEAD("/admin/*filepath", serveAdminUI)
 
 	_, err = security.LoadCredentials()
 	if err != nil {

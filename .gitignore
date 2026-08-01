@@ -9,8 +9,12 @@ credentials.json
 
 # Local tool metadata
 .codebase-memory/
+.superpowers/
 .worktrees/
 worktrees/
+
+# 前端依赖（admin/dist 下的构建产物需要随仓库提交，供 go:embed 使用）
+node_modules/
 
 # Editor and operating-system files
 .idea/
