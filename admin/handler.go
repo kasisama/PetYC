@@ -103,6 +103,10 @@ func RegisterRoutes(r *gin.Engine) {
 		api.POST("/configs/reload", ReloadConfigs)
 		api.POST("/configs/reset", ResetConfigs)
 		api.POST("/upload", UploadImage)
+
+		// 配置中心 REST 接口（新版 Vue 后台使用，统一 {code,msg,data} 响应格式）。
+		// 与上面的旧 /configs/* 接口并存，待前端迁移完成后再移除旧接口。
+		RegisterConfigRoutes(api, NewConfigAPI(database.DB))
 	}
 }
 

@@ -13,13 +13,13 @@ func TestSuccessResponse(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
-	
+
 	Success(ctx, gin.H{"key": "value"})
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", recorder.Code)
 	}
-	
+
 	// Map serialization order might vary occasionally, but for simple gin.H it's usually stable,
 	// or we can just check if required keys exist
 	body := recorder.Body.String()
@@ -32,7 +32,7 @@ func TestErrorResponse(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
-	
+
 	Error(ctx, 4004, "not found")
 
 	if recorder.Code != http.StatusOK {
