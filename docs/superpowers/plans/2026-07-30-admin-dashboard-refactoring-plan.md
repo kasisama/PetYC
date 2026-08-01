@@ -13,6 +13,21 @@
 
 ---
 
+## 进度总览（更新于 2026-08-01）
+
+| 任务 | 状态 | 提交 |
+|------|------|------|
+| 1. 标准响应格式与 API 中间件 | ✅ 已完成 | `426e416` |
+| 2. 配置中心 REST 接口 | ✅ 已完成 | `82c0b03` |
+| 3. 初始化 Vue 3 前端工程 | ⬜ 未开始 | — |
+| 4. 主题控制器与全局 Layout | ⬜ 未开始 | — |
+| 5. Vue 登录与验证闭环 | ⬜ 未开始 | — |
+
+**当前状态：** 后端配置中心接口已可用并接入路由，前端仍是原先 188KB 的单文件
+`admin/dist/index.html`，尚未开始 Vue 迁移。下一步为任务 3。
+
+---
+
 ### 任务 1: 建立标准响应格式与 API 中间件
 
 **相关文件：**
@@ -20,7 +35,7 @@
 - 创建：`admin/response_test.go`
 - 修改：`admin/handler.go`
 
-- [ ] **步骤 1: 为标准响应生成器编写失败的测试**
+- [x] **步骤 1: 为标准响应生成器编写失败的测试**
 
 ```go
 func TestSuccessResponse(t *testing.T) {
@@ -52,12 +67,12 @@ func TestErrorResponse(t *testing.T) {
 }
 ```
 
-- [ ] **步骤 2: 运行测试以验证失败**
+- [x] **步骤 2: 运行测试以验证失败**
 
 运行：`go test ./admin -run "(TestSuccessResponse|TestErrorResponse)" -v`
 预期结果：FAIL（由于找不到方法）
 
-- [ ] **步骤 3: 实现标准的响应函数**
+- [x] **步骤 3: 实现标准的响应函数**
 
 ```go
 package admin
@@ -84,79 +99,63 @@ func Error(c *gin.Context, code int, msg string) {
 }
 ```
 
-- [ ] **步骤 4: 运行测试以验证成功**
+- [x] **步骤 4: 运行测试以验证成功**
 
 运行：`go test ./admin -run "(TestSuccessResponse|TestErrorResponse)" -v`
 预期结果：PASS
 
-- [ ] **步骤 5: Commit**
+- [x] **步骤 5: Commit**
 
 ```bash
 git add admin/response.go admin/response_test.go
 git commit -m "feat(admin): implement standard json response format"
 ```
 
+> ✅ 已完成，提交于 `426e416`。
+
 ---
 
-### 任务 2: 重构 API 路由 - 配置中心列表
+### 任务 2: 重构 API 路由 - 配置中心列表 ✅ 已完成（提交 `82c0b03`）
+
+**实施说明：** 原计划的接口设计与真实数据库不符，实现时做了修正——库中并不存在
+`global_parameters` 或 `config_*` 表，实际是 `database.InitDB` 迁移的 9 张配置表
+（`system_configs`、`command_configs`、`pet_species_configs`、`item_configs`、
+`shop_item_configs`、`work_setting_configs`、`menu_configs`、`image_configs`、
+`checkin_reward_configs`）。因此 `:schema` 改为强类型白名单映射，而不是拼接表名。
 
 **相关文件：**
 - 创建：`admin/api_config.go`
 - 创建：`admin/api_config_test.go`
-- 修改：`admin/handler.go` (删除现有乱码的关于 config 的所有 switch 判断逻辑)
+- 创建：`admin/routes_test.go`（路由注册回归测试）
+- 修改：`admin/handler.go`（挂载新路由；旧 `/configs/*` 接口暂时保留）
 
-- [ ] **步骤 1: 编写失败的 API 路由测试**
+- [x] **步骤 1: 编写失败的 API 路由测试**
 
-```go
-func TestGetGlobalConfig(t *testing.T) {
-    // 说明: 需要先组装 Gin router 和注册路由，然后做数据库 mock 
-    // 断言 GET /api/admin/config/global_parameters 必须返回 code: 0 的正确格式.
-}
-```
+针对内存 SQLite 建表后做真实读写断言，而不是留空 DB。
 
-- [ ] **步骤 2: 运行测试验证失败**
+- [x] **步骤 2: 运行测试验证失败**
 
-运行：`go test ./admin -run TestGetGlobalConfig -v`
-预期结果：FAIL
+- [x] **步骤 3: 实现配置中心 API 的路由控制器**
 
-- [ ] **步骤 3: 实现配置中心 API 的路由控制器**
+`GET  /api/admin/config/schemas` — 返回可管理的配置类型清单
+`GET  /api/admin/config/:schema` — 读取整表（空表返回 `[]` 而非 `null`）
+`PUT  /api/admin/config/:schema` — 批量写入，包在事务中，失败整体回滚
 
-在 `admin/api_config.go` 里调用刚刚封装的 Success:
-```go
-package admin
+错误码约定：`4000` 请求体非法、`4004` 未知配置类型、`5000` 服务端错误。
 
-import "github.com/gin-gonic/gin"
+- [x] **步骤 4: 验证测试通过和代码格式**
 
-type ConfigAPI struct {
-    // DB 依赖注入
-}
+`go test ./...` 全部通过；`gofmt` / `go vet` 无输出。
+已针对真实 `pet_game.db` 验证 9 张表均能返回数据。
 
-func (api *ConfigAPI) GetConfig(c *gin.Context) {
-    schema := c.Param("schema")
-    // 映射表名并进行 DB 读取
-    // Success(c, results)
-}
+- [x] **步骤 5: Commit**
 
-func (api *ConfigAPI) SaveConfig(c *gin.Context) {
-    schema := c.Param("schema")
-    // 解析 JSON body
-    // 持久化到 DB
-    // Success(c, nil)
-}
-```
-然后在 `admin/handler.go` 中运用 `RequireAdminSession` 把它注册进路由。
+> ✅ 已完成，提交于 `82c0b03`。
 
-- [ ] **步骤 4: 验证测试通过和代码格式**
-
-运行：`go test ./admin -run TestGetGlobalConfig -v`
-预期结果：PASS
-
-- [ ] **步骤 5: Commit**
-
-```bash
-git add admin/api_config.go admin/api_config_test.go admin/handler.go
-git commit -m "refactor(admin): extract configuration REST endpoints"
-```
+**遗留项（迁移完成后处理）：**
+- `SaveConfig` 只做 upsert，不删除请求中未出现的记录；如需「整表替换」语义要另行设计。
+- 旧的 `/api/admin/configs/*` 接口仍在服务旧版 HTML 后台，Vue 前端迁移完成后移除。
+- 尚未提供 `DELETE /api/admin/config/:schema/:key`，删除仍走旧的 `DeleteConfig`。
 
 ---
 
