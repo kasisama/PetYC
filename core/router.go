@@ -1,7 +1,6 @@
 package core
 
 import (
-	"log"
 	"sort"
 	"strings"
 	"sync"
@@ -24,7 +23,6 @@ func RegisterHandler(command string, handler MessageHandler) {
 	handlersMu.Lock()
 	defer handlersMu.Unlock()
 	handlers[command] = handler
-	log.Printf("[Router] 注册指令成功: %s", command)
 }
 
 // RouteMessage 将收到的 OneBot 事件路由分发给对应的处理器
@@ -66,4 +64,3 @@ func RouteMessage(conn *websocket.Conn, event *OneBotEvent) {
 		matchedHandler(conn, event)
 	}
 }
-

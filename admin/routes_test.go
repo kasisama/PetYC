@@ -15,9 +15,16 @@ func TestRegisterRoutesMountsConfigCenterAPI(t *testing.T) {
 	RegisterRoutes(router)
 
 	wanted := map[string]string{
-		"GET /api/admin/config/schemas": "",
-		"GET /api/admin/config/:schema": "",
-		"PUT /api/admin/config/:schema": "",
+		"GET /api/admin/config/schemas":    "",
+		"GET /api/admin/config/status":     "",
+		"GET /api/admin/config/:schema":    "",
+		"PUT /api/admin/config/:schema":    "",
+		"PUT /api/admin/groups/bulk-state": "",
+		"GET /api/admin/overview":          "",
+		"GET /api/admin/players":           "",
+		"GET /api/admin/communities":       "",
+		"GET /api/admin/platforms/status":  "",
+		"GET /api/admin/audit-logs":        "",
 	}
 	for _, route := range router.Routes() {
 		delete(wanted, route.Method+" "+route.Path)

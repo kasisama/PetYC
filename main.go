@@ -1,15 +1,16 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"log"
-	"os"
-	"strings"
 
+	"qq-pet-saas/admin"
 	"qq-pet-saas/config"
 	"qq-pet-saas/core"
 	"qq-pet-saas/database"
-	_ "qq-pet-saas/features" // 隐式导入 features 聚合包，触发所有玩法的 init() 自路由注册
+	_ "qq-pet-saas/features"
+	"qq-pet-saas/qqofficial"
 	"qq-pet-saas/security"
 )
 
@@ -17,31 +18,42 @@ import (
 var SeedFS embed.FS
 
 func main() {
+	runtimeConfig, err := security.LoadRuntimeConfig()
+	if err != nil {
+		log.Fatalf("[Main] 初始化平台运行配置失败: %v", err)
+	}
 	if _, err := security.LoadCredentials(); err != nil {
 		log.Fatalf("[Main] 初始化安全凭据失败: %v", err)
 	}
-	log.Printf("[Main] 已加载管理员账号与 WebSocket 凭据；WebSocket 令牌可通过 QQPET_WS_TOKEN 覆盖（凭据文件：%s）", security.CredentialsPath())
+	log.Print("[启动] 运行配置与安全凭据已加载")
 
-	// 1. 如果本地无“图片”目录，从嵌入资源中自动释放游戏素材图片
 	if err := config.ExtractImages(SeedFS); err != nil {
 		log.Printf("[Main] 自动释放嵌入图片资源失败: %v", err)
 	}
-
-	// 2. 初始化 SQLite 数据库并执行表结构迁移
 	database.InitDB()
-
-	// 3. 将本地配置文件数据加载/同步到 SQLite 数据库中 (空库时读取嵌入的 SeedFS 进行种子填充)
 	if err := config.SyncWithDB(database.DB, SeedFS); err != nil {
 		log.Fatalf("[Main] 初始化配置失败: %v", err)
 	}
-
-	// 4. 启动核心 HTTP 与 WebSocket 监听服务 (支持环境变量 PORT，默认监听 :8080)
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = ":8080"
-	} else if !strings.HasPrefix(port, ":") {
-		port = ":" + port
+	if err := config.EnsureModernMenus(database.DB); err != nil {
+		log.Fatalf("[Main] 更新新版菜单失败: %v", err)
+	}
+	if err := core.SyncUnifiedCommandConfigs(database.DB); err != nil {
+		log.Fatalf("[Main] 更新命令目录失败: %v", err)
+	}
+	if err := config.MarkConfigLoaded(database.DB); err != nil {
+		log.Fatalf("[Main] 初始化配置版本状态失败: %v", err)
 	}
 
-	core.StartApp(port)
+	if _, enabled, err := qqofficial.StartFromEnv(context.Background()); err != nil {
+		log.Fatalf("[Main] 启动 QQ 官方机器人适配器失败: %v", err)
+	} else if enabled {
+		log.Printf("[启动] 接入方式：OneBot + QQ 官方机器人")
+	} else {
+		log.Printf("[启动] 接入方式：OneBot（QQ 官方机器人未启用）")
+	}
+	admin.QQOfficialStatusFunc = func() interface{} { return qqofficial.DefaultRuntimeSnapshot() }
+	admin.QQOfficialReconnectFunc = qqofficial.ReconnectDefault
+	admin.QQOfficialApplyConfigFunc = qqofficial.ApplyDefaultConfig
+
+	core.StartApp(runtimeConfig.ListenAddress, runtimeConfig.Port)
 }

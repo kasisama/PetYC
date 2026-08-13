@@ -7,10 +7,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
+	configstate "qq-pet-saas/config"
 	"qq-pet-saas/models"
 )
 
@@ -38,6 +40,11 @@ func newConfigTestDB(t *testing.T) *gorm.DB {
 		&models.MenuConfig{},
 		&models.ImageConfig{},
 		&models.CheckinRewardConfig{},
+		&models.GrowthRoleConfig{},
+		&models.GrowthStanceConfig{},
+		&models.PersonalityRuleConfig{},
+		&models.CodexCatalogConfig{},
+		&models.AdminConfigState{},
 	)
 	if err != nil {
 		t.Fatalf("迁移测试表结构失败: %v", err)
@@ -99,6 +106,65 @@ func TestGetConfigReturnsRowsForKnownSchema(t *testing.T) {
 	}
 }
 
+func TestLiveEventConfigRejectsInvalidStoryChoices(t *testing.T) {
+	db := newConfigTestDB(t)
+	if err := db.AutoMigrate(&models.LiveEventConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`[{"key":"forest-week","name":"森林周","region":"森林","story_choices":"[\"只有一个\"]","starts_at":"2026-08-01T00:00:00Z","ends_at":"2026-08-08T00:00:00Z","active":true}]`)
+	response := doConfigRequest(t, newConfigTestRouter(db), http.MethodPut, "/api/admin/config/live_events", body)
+	if response.Code != codeInvalidPayload {
+		t.Fatalf("expected validation error, got code=%d msg=%s", response.Code, response.Msg)
+	}
+}
+
+func TestRewardTrackAllowsMultipleItemsAtSameMilestone(t *testing.T) {
+	db := newConfigTestDB(t)
+	if err := db.AutoMigrate(&models.RewardTrackConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`[{"event_key":"forest","milestone":100,"item_name":"木材","quantity":5},{"event_key":"forest","milestone":100,"item_name":"调查记录","quantity":2}]`)
+	response := doConfigRequest(t, newConfigTestRouter(db), http.MethodPut, "/api/admin/config/reward_tracks", body)
+	if response.Code != 0 {
+		t.Fatalf("同一里程碑应允许多个不同物品，实际 code=%d msg=%s", response.Code, response.Msg)
+	}
+	var count int64
+	db.Model(&models.RewardTrackConfig{}).Where("event_key = ? AND milestone = ?", "forest", 100).Count(&count)
+	if count != 2 {
+		t.Fatalf("期望保存 2 个奖励物品，实际 %d", count)
+	}
+}
+
+func TestRewardTrackRejectsDuplicateItemAtSameMilestone(t *testing.T) {
+	db := newConfigTestDB(t)
+	if err := db.AutoMigrate(&models.RewardTrackConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`[{"event_key":"forest","milestone":100,"item_name":"木材","quantity":5},{"event_key":"forest","milestone":100,"item_name":"木材","quantity":2}]`)
+	response := doConfigRequest(t, newConfigTestRouter(db), http.MethodPut, "/api/admin/config/reward_tracks", body)
+	if response.Code != codeInvalidPayload {
+		t.Fatalf("同一里程碑的同一物品应被拒绝，实际 code=%d msg=%s", response.Code, response.Msg)
+	}
+}
+
+func TestLiveEventSaveReplacesRemovedRows(t *testing.T) {
+	db := newConfigTestDB(t)
+	if err := db.AutoMigrate(&models.LiveEventConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	db.Create(&models.LiveEventConfig{Key: "old", Name: "旧活动", Region: "森林", StoryChoices: `["一","二","三"]`, StartsAt: time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC), EndsAt: time.Date(2026, 7, 2, 0, 0, 0, 0, time.UTC), Active: true})
+	body := []byte(`[{"key":"new","name":"新活动","region":"遗迹","story_choices":"[\"一\",\"二\",\"三\"]","starts_at":"2026-08-01T00:00:00Z","ends_at":"2026-08-08T00:00:00Z","active":true}]`)
+	response := doConfigRequest(t, newConfigTestRouter(db), http.MethodPut, "/api/admin/config/live_events", body)
+	if response.Code != 0 {
+		t.Fatalf("save failed: %s", response.Msg)
+	}
+	var rows []models.LiveEventConfig
+	db.Find(&rows)
+	if len(rows) != 1 || rows[0].Key != "new" {
+		t.Fatalf("expected only new row, got %+v", rows)
+	}
+}
+
 func TestGetConfigReturnsEmptyListNotNullForEmptyTable(t *testing.T) {
 	response := doConfigRequest(t, newConfigTestRouter(newConfigTestDB(t)), http.MethodGet, "/api/admin/config/menus", nil)
 	if response.Code != 0 {
@@ -114,12 +180,51 @@ func TestGetConfigCoversEveryConfigSchema(t *testing.T) {
 	// 后台需要管理的 9 张配置表都必须可读，否则 Vue 前端会缺少数据源。
 	schemas := []string{
 		"system", "commands", "pet_species", "items", "shop_items",
-		"work_settings", "menus", "images", "checkin_rewards",
+		"menus", "images",
+		"growth_roles", "growth_stances", "personality_rules", "codex_catalog",
 	}
 	for _, schema := range schemas {
 		response := doConfigRequest(t, router, http.MethodGet, "/api/admin/config/"+schema, nil)
 		if response.Code != 0 {
 			t.Errorf("schema %q 期望 code 0，实际 %d，msg=%s", schema, response.Code, response.Msg)
+		}
+	}
+}
+
+func TestHistoricalSchemasAreNotExposed(t *testing.T) {
+	router := newConfigTestRouter(newConfigTestDB(t))
+	for _, schema := range []string{"work_settings", "checkin_rewards"} {
+		response := doConfigRequest(t, router, http.MethodGet, "/api/admin/config/"+schema, nil)
+		if response.Code != codeSchemaNotFound {
+			t.Fatalf("历史配置域 %s 不应继续暴露，实际 code=%d", schema, response.Code)
+		}
+	}
+}
+
+func TestCommandConfigRejectsDuplicateEnabledTrigger(t *testing.T) {
+	body := []byte(`[{"func_name":"status","command":"状态","display_name":"状态","category":"基础","description":"查看状态","enabled":true,"sort_order":1},{"func_name":"daily","command":"状态","display_name":"今日","category":"基础","description":"查看今日","enabled":true,"sort_order":2}]`)
+	response := doConfigRequest(t, newConfigTestRouter(newConfigTestDB(t)), http.MethodPut, "/api/admin/config/commands", body)
+	if response.Code != codeInvalidPayload {
+		t.Fatalf("重复启用触发词应被拒绝，实际 code=%d msg=%s", response.Code, response.Msg)
+	}
+}
+
+func TestGrowthRulesRejectIncompleteOrInvalidRows(t *testing.T) {
+	db := newConfigTestDB(t)
+	router := newConfigTestRouter(db)
+	cases := []struct {
+		schema string
+		body   string
+	}{
+		{"growth_roles", `[{"name":"守护者","description":"保护伙伴","skill_1":"护盾","skill_2":"","skill_3":"稳固","enabled":true}]`},
+		{"growth_stances", `[{"name":"","description":"降低风险","enabled":true}]`},
+		{"personality_rules", `[{"name":"温柔","dimension":"unknown","min_threshold":3,"description":"照料形成","enabled":true}]`},
+		{"codex_catalog", `[{"category":"生物","entry_key":"林间足迹","region":"","enabled":true}]`},
+	}
+	for _, item := range cases {
+		response := doConfigRequest(t, router, http.MethodPut, "/api/admin/config/"+item.schema, []byte(item.body))
+		if response.Code != codeInvalidPayload {
+			t.Errorf("schema %s expected validation error, got code=%d msg=%s", item.schema, response.Code, response.Msg)
 		}
 	}
 }
@@ -134,6 +239,9 @@ func TestGetConfigRejectsUnknownSchema(t *testing.T) {
 
 func TestSaveConfigPersistsRows(t *testing.T) {
 	db := newConfigTestDB(t)
+	if err := configstate.MarkConfigLoaded(db); err != nil {
+		t.Fatalf("初始化配置状态失败: %v", err)
+	}
 	db.Create(&models.MenuConfig{Name: "主菜单", Reply: "旧内容"})
 
 	body := []byte(`[{"Name":"主菜单","Reply":"新内容"},{"Name":"帮助","Reply":"帮助内容"}]`)
@@ -151,6 +259,88 @@ func TestSaveConfigPersistsRows(t *testing.T) {
 	db.First(&updated, "name = ?", "主菜单")
 	if updated.Reply != "新内容" {
 		t.Fatalf("既有记录未被更新，Reply=%q", updated.Reply)
+	}
+
+	status, err := configstate.GetConfigStatus(db)
+	if err != nil {
+		t.Fatalf("读取配置状态失败: %v", err)
+	}
+	if !status.PendingReload || status.DBRevision != status.LoadedRevision+1 {
+		t.Fatalf("保存后应进入待重载状态，实际 %+v", status)
+	}
+	if err := configstate.MarkConfigLoaded(db); err != nil {
+		t.Fatalf("标记配置已加载失败: %v", err)
+	}
+	status, err = configstate.GetConfigStatus(db)
+	if err != nil {
+		t.Fatalf("重载后读取配置状态失败: %v", err)
+	}
+	if status.PendingReload || status.DBRevision != status.LoadedRevision {
+		t.Fatalf("重载后数据库与内存版本应一致，实际 %+v", status)
+	}
+}
+
+func TestConfigStatusTracksLoadedRevision(t *testing.T) {
+	db := newConfigTestDB(t)
+	if err := configstate.MarkConfigLoaded(db); err != nil {
+		t.Fatalf("初始化配置状态失败: %v", err)
+	}
+
+	response := doConfigRequest(t, newConfigTestRouter(db), http.MethodGet, "/api/admin/config/status", nil)
+	if response.Code != 0 {
+		t.Fatalf("期望 code 0，实际 %d，msg=%s", response.Code, response.Msg)
+	}
+	var status configstate.ConfigStatus
+	if err := json.Unmarshal(response.Data, &status); err != nil {
+		t.Fatalf("解析配置状态失败: %v", err)
+	}
+	if status.PendingReload || status.DBRevision != status.LoadedRevision {
+		t.Fatalf("首次加载后数据库与内存版本应一致，实际 %+v", status)
+	}
+}
+
+func TestMarkConfigLoadedDoesNotHideNewerSavedRevision(t *testing.T) {
+	db := newConfigTestDB(t)
+	if err := configstate.MarkConfigLoaded(db); err != nil {
+		t.Fatalf("初始化配置状态失败: %v", err)
+	}
+	if err := configstate.MarkConfigSaved(db); err != nil {
+		t.Fatalf("第一次保存标记失败: %v", err)
+	}
+	status, err := configstate.GetConfigStatus(db)
+	if err != nil {
+		t.Fatalf("读取待加载版本失败: %v", err)
+	}
+	loadedRevision := status.DBRevision
+
+	if err := configstate.MarkConfigSaved(db); err != nil {
+		t.Fatalf("并发保存标记失败: %v", err)
+	}
+	if err := configstate.MarkConfigLoaded(db, loadedRevision); err != nil {
+		t.Fatalf("标记指定版本已加载失败: %v", err)
+	}
+
+	status, err = configstate.GetConfigStatus(db)
+	if err != nil {
+		t.Fatalf("读取最终配置状态失败: %v", err)
+	}
+	if !status.PendingReload || status.LoadedRevision != loadedRevision || status.DBRevision <= status.LoadedRevision {
+		t.Fatalf("较新的保存版本必须保持待重载，实际 %+v", status)
+	}
+
+	latestRevision := status.DBRevision
+	if err := configstate.MarkConfigLoaded(db, latestRevision); err != nil {
+		t.Fatalf("标记最新版本已加载失败: %v", err)
+	}
+	if err := configstate.MarkConfigLoaded(db, loadedRevision); err != nil {
+		t.Fatalf("较旧重载完成标记失败: %v", err)
+	}
+	status, err = configstate.GetConfigStatus(db)
+	if err != nil {
+		t.Fatalf("读取单调加载版本失败: %v", err)
+	}
+	if status.PendingReload || status.LoadedRevision != latestRevision {
+		t.Fatalf("较旧重载不应让已加载版本倒退，实际 %+v", status)
 	}
 }
 

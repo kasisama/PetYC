@@ -4,8 +4,12 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -17,7 +21,11 @@ import (
 )
 
 const (
-	adminSessionCookieName    = "qqpet_admin_session"
+	adminSessionCookieName = "qqpet_admin_session"
+	adminSessionsFileName  = "admin_sessions.json"
+	// 未勾选「记住我」：浏览器会话 Cookie，服务端侧保留 12 小时。
+	browserSessionDuration = 12 * time.Hour
+	// 勾选「记住我」：持久 Cookie + 落盘，跨进程重启仍有效。
 	rememberedSessionDuration = 15 * 24 * time.Hour
 	minAdminPasswordLength    = 6
 	maxAdminPasswordBytes     = 72
@@ -25,24 +33,33 @@ const (
 
 type adminSession struct {
 	expiresAt time.Time
+	remember  bool
 }
 
 // SessionManager owns the opaque sessions used by the admin UI. Only token
 // digests are retained by the server; raw tokens stay in HttpOnly cookies.
+// Remembered sessions are also written to disk so go run / 进程重启后仍可校验。
 type SessionManager struct {
 	mu       sync.Mutex
 	sessions map[[sha256.Size]byte]adminSession
 	now      func() time.Time
+	// storePath empty disables persistence (unit tests).
+	storePath string
 }
 
 func NewSessionManager() *SessionManager {
-	return &SessionManager{
+	manager := &SessionManager{
 		sessions: make(map[[sha256.Size]byte]adminSession),
 		now:      time.Now,
 	}
+	if dir, err := security.DataDir(); err == nil {
+		manager.storePath = filepath.Join(dir, adminSessionsFileName)
+		manager.loadFromDisk()
+	}
+	return manager
 }
 
-func (manager *SessionManager) Create(_ bool) (string, time.Time, error) {
+func (manager *SessionManager) Create(remember bool) (string, time.Time, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return "", time.Time{}, err
@@ -50,15 +67,18 @@ func (manager *SessionManager) Create(_ bool) (string, time.Time, error) {
 	token := base64.RawURLEncoding.EncodeToString(raw)
 	digest := sha256.Sum256([]byte(token))
 	now := manager.now()
-	expiresAt := now.Add(rememberedSessionDuration)
+	ttl := browserSessionDuration
+	if remember {
+		ttl = rememberedSessionDuration
+	}
+	expiresAt := now.Add(ttl)
 
 	manager.mu.Lock()
-	for storedDigest, session := range manager.sessions {
-		if now.After(session.expiresAt) {
-			delete(manager.sessions, storedDigest)
-		}
+	manager.pruneExpiredLocked(now)
+	manager.sessions[digest] = adminSession{expiresAt: expiresAt, remember: remember}
+	if remember {
+		_ = manager.persistLocked()
 	}
-	manager.sessions[digest] = adminSession{expiresAt: expiresAt}
 	manager.mu.Unlock()
 	return token, expiresAt, nil
 }
@@ -78,6 +98,9 @@ func (manager *SessionManager) Validate(token string) bool {
 	}
 	if now.After(session.expiresAt) {
 		delete(manager.sessions, digest)
+		if session.remember {
+			_ = manager.persistLocked()
+		}
 		return false
 	}
 	return true
@@ -89,14 +112,99 @@ func (manager *SessionManager) Delete(token string) {
 	}
 	digest := sha256.Sum256([]byte(token))
 	manager.mu.Lock()
+	session, existed := manager.sessions[digest]
 	delete(manager.sessions, digest)
+	if existed && session.remember {
+		_ = manager.persistLocked()
+	}
 	manager.mu.Unlock()
 }
 
 func (manager *SessionManager) DeleteAll() {
 	manager.mu.Lock()
 	manager.sessions = make(map[[sha256.Size]byte]adminSession)
+	_ = manager.persistLocked()
 	manager.mu.Unlock()
+}
+
+func (manager *SessionManager) pruneExpiredLocked(now time.Time) {
+	changed := false
+	for storedDigest, session := range manager.sessions {
+		if now.After(session.expiresAt) {
+			delete(manager.sessions, storedDigest)
+			if session.remember {
+				changed = true
+			}
+		}
+	}
+	if changed {
+		_ = manager.persistLocked()
+	}
+}
+
+type sessionStoreFile struct {
+	Sessions map[string]sessionStoreEntry `json:"sessions"`
+}
+
+type sessionStoreEntry struct {
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+func (manager *SessionManager) loadFromDisk() {
+	if manager.storePath == "" {
+		return
+	}
+	raw, err := os.ReadFile(manager.storePath)
+	if err != nil {
+		return
+	}
+	var file sessionStoreFile
+	if err := json.Unmarshal(raw, &file); err != nil || file.Sessions == nil {
+		return
+	}
+	now := manager.now()
+	for key, entry := range file.Sessions {
+		if now.After(entry.ExpiresAt) {
+			continue
+		}
+		digestBytes, err := hex.DecodeString(key)
+		if err != nil || len(digestBytes) != sha256.Size {
+			continue
+		}
+		var digest [sha256.Size]byte
+		copy(digest[:], digestBytes)
+		manager.sessions[digest] = adminSession{
+			expiresAt: entry.ExpiresAt,
+			remember:  true,
+		}
+	}
+}
+
+func (manager *SessionManager) persistLocked() error {
+	if manager.storePath == "" {
+		return nil
+	}
+	file := sessionStoreFile{Sessions: make(map[string]sessionStoreEntry)}
+	for digest, session := range manager.sessions {
+		if !session.remember {
+			continue
+		}
+		file.Sessions[hex.EncodeToString(digest[:])] = sessionStoreEntry{
+			ExpiresAt: session.expiresAt,
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(manager.storePath), 0o700); err != nil {
+		return err
+	}
+	raw, err := json.MarshalIndent(file, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := manager.storePath + ".tmp"
+	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, manager.storePath)
 }
 
 // RequireAdminSession protects administrative APIs with an opaque Cookie.

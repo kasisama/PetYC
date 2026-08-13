@@ -69,7 +69,9 @@ func showShop(conn *websocket.Conn, event *core.OneBotEvent) {
 	shopMu.Lock()
 	var itemNames []string
 	for name := range config.Shop {
-		itemNames = append(itemNames, name)
+		if config.CanObtainItem(name, "shop") {
+			itemNames = append(itemNames, name)
+		}
 	}
 	shopMu.Unlock()
 
@@ -137,7 +139,9 @@ func showAffectionShop(conn *websocket.Conn, event *core.OneBotEvent) {
 	shopMu.Lock()
 	var itemNames []string
 	for name := range config.AffectionShop {
-		itemNames = append(itemNames, name)
+		if config.CanObtainItem(name, "shop") {
+			itemNames = append(itemNames, name)
+		}
 	}
 	shopMu.Unlock()
 
@@ -202,6 +206,10 @@ func viewGoods(conn *websocket.Conn, event *core.OneBotEvent) {
 
 	if !inShop && !inAffShop {
 		core.SendGroupMessage(conn, event.GroupID, fmt.Sprintf("%s\n%s没有找到阁下说的这个[%s]商品呀！", AtSender(event.UserID), utils.Emoji("E29D84"), target))
+		return
+	}
+	if !config.CanObtainItem(target, "shop") {
+		core.SendGroupMessage(conn, event.GroupID, fmt.Sprintf("%s\n%s该商品当前已暂停展示。", AtSender(event.UserID), utils.Emoji("E29D84")))
 		return
 	}
 
@@ -442,6 +450,10 @@ func buyItem(conn *websocket.Conn, event *core.OneBotEvent) {
 
 	if !inShop && !inAffShop {
 		core.SendGroupMessage(conn, event.GroupID, fmt.Sprintf("%s\n%s商店和好感商店里都没有找到阁下说的这个[%s]哦！", AtSender(event.UserID), utils.Emoji("E29D84"), itemName))
+		return
+	}
+	if !config.CanObtainItem(itemName, "shop") {
+		core.SendGroupMessage(conn, event.GroupID, fmt.Sprintf("%s\n%s该物品当前不可购买，请稍后再试。", AtSender(event.UserID), utils.Emoji("E29D84")))
 		return
 	}
 

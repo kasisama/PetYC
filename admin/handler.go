@@ -2,6 +2,7 @@ package admin
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
@@ -29,6 +30,8 @@ import (
 // BroadcastMessageFunc is a callback function set by the core package to send messages.
 // This decouples the admin package from the core package, avoiding import cycles.
 var BroadcastMessageFunc func(groupID int64, text string)
+var ReloadCommandRoutesFunc func() error
+var PrepareModernContentFunc func() error
 
 // RegisterRoutes registers the admin dashboard APIs and serves the static files
 const (
@@ -86,6 +89,7 @@ func RegisterRoutes(r *gin.Engine) {
 		// Group Switches APIs
 		api.GET("/groups", GetGroups)
 		api.PUT("/groups/:id", UpdateGroup)
+		api.PUT("/groups/bulk-state", BulkUpdateGroups)
 		api.DELETE("/groups/:id", DeleteGroup)
 		api.POST("/groups/sync", SyncGroups)
 
@@ -100,9 +104,7 @@ func RegisterRoutes(r *gin.Engine) {
 		api.PUT("/configs/items", UpdateItemConfigs)
 		api.PUT("/configs/menus", UpdateMenuConfigs)
 		api.PUT("/configs/shop_items", UpdateShopItemConfigs)
-		api.PUT("/configs/work_settings", UpdateWorkSettingConfigs)
 		api.PUT("/configs/images", UpdateImageConfigs)
-		api.PUT("/configs/checkin_rewards", UpdateCheckinRewardConfigs)
 		api.DELETE("/configs/:type/:key", DeleteConfig)
 		api.POST("/configs/reload", ReloadConfigs)
 		api.POST("/configs/reset", ResetConfigs)
@@ -111,6 +113,8 @@ func RegisterRoutes(r *gin.Engine) {
 		// 配置中心 REST 接口（新版 Vue 后台使用，统一 {code,msg,data} 响应格式）。
 		// 与上面的旧 /configs/* 接口并存，待前端迁移完成后再移除旧接口。
 		RegisterConfigRoutes(api, NewConfigAPI(database.DB))
+		RegisterContentRoutes(api, database.DB)
+		RegisterEcosystemRoutes(api, database.DB)
 	}
 }
 
@@ -151,7 +155,7 @@ func GetStats(c *gin.Context) {
 	var topAffection []models.UserPet
 	database.DB.Order("affection desc").Limit(10).Find(&topAffection)
 
-	c.JSON(http.StatusOK, gin.H{
+	Success(c, gin.H{
 		"total_pets":    totalPets,
 		"total_users":   totalUsers,
 		"status_dist":   statusDist,
@@ -495,6 +499,63 @@ func UpdateGroup(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "群开关状态更新成功", "data": gSwitch})
 }
 
+// BulkUpdateGroups updates selected group switches, or every switch when group_ids is null.
+func BulkUpdateGroups(c *gin.Context) {
+	type request struct {
+		GroupIDs json.RawMessage `json:"group_ids"`
+		IsActive *bool           `json:"is_active"`
+	}
+	var req request
+	if err := c.ShouldBindJSON(&req); err != nil {
+		Error(c, codeInvalidPayload, "请求体不是合法的 JSON: "+err.Error())
+		return
+	}
+	if req.IsActive == nil {
+		Error(c, codeInvalidPayload, "is_active 为必填项")
+		return
+	}
+	if len(req.GroupIDs) == 0 {
+		Error(c, codeInvalidPayload, "group_ids 为必填项；使用 null 表示全部群组")
+		return
+	}
+	allGroups := bytes.Equal(bytes.TrimSpace(req.GroupIDs), []byte("null"))
+	groupIDs := make([]int64, 0)
+	if !allGroups {
+		if err := json.Unmarshal(req.GroupIDs, &groupIDs); err != nil {
+			Error(c, codeInvalidPayload, "group_ids 必须是群号数组或 null")
+			return
+		}
+		if len(groupIDs) == 0 {
+			Error(c, codeInvalidPayload, "group_ids 不能为空数组；使用 null 表示全部群组")
+			return
+		}
+	}
+
+	var updated int64
+	err := database.DB.Transaction(func(tx *gorm.DB) error {
+		query := tx.Model(&models.GroupSwitch{})
+		if !allGroups {
+			query = query.Where("group_id IN ?", groupIDs)
+		} else {
+			query = query.Where("1 = 1")
+		}
+		result := query.Update("is_active", *req.IsActive)
+		updated = result.RowsAffected
+		return result.Error
+	})
+	if err != nil {
+		Error(c, codeInternalError, "批量更新群组状态失败: "+err.Error())
+		return
+	}
+
+	groups := make([]models.GroupSwitch, 0)
+	if err := database.DB.Order("group_id asc").Find(&groups).Error; err != nil {
+		Error(c, codeInternalError, "读取群组状态失败: "+err.Error())
+		return
+	}
+	Success(c, gin.H{"updated": updated, "groups": groups})
+}
+
 // DeleteGroup deletes a group switch record
 func DeleteGroup(c *gin.Context) {
 	id := c.Param("id")
@@ -719,31 +780,25 @@ func GetConfigs(c *gin.Context) {
 	var petConfigs []models.PetSpeciesConfig
 	var itemConfigs []models.ItemConfig
 	var shopConfigs []models.ShopItemConfig
-	var workConfigs []models.WorkSettingConfig
 	var menuConfigs []models.MenuConfig
 	var imgConfigs []models.ImageConfig
-	var checkinConfigs []models.CheckinRewardConfig
 
 	database.DB.Order("key asc").Find(&sysConfigs)
 	database.DB.Order("func_name asc").Find(&cmdConfigs)
 	database.DB.Order("name asc").Find(&petConfigs)
 	database.DB.Order("name asc").Find(&itemConfigs)
 	database.DB.Order("id asc").Find(&shopConfigs)
-	database.DB.Order("name asc").Find(&workConfigs)
 	database.DB.Order("name asc").Find(&menuConfigs)
 	database.DB.Order("name asc").Find(&imgConfigs)
-	database.DB.Order("id asc").Find(&checkinConfigs)
 
 	c.JSON(http.StatusOK, gin.H{
-		"system_configs":         sysConfigs,
-		"command_configs":        cmdConfigs,
-		"pet_species_configs":    petConfigs,
-		"item_configs":           itemConfigs,
-		"shop_item_configs":      shopConfigs,
-		"work_setting_configs":   workConfigs,
-		"menu_configs":           menuConfigs,
-		"image_configs":          imgConfigs,
-		"checkin_reward_configs": checkinConfigs,
+		"system_configs":      sysConfigs,
+		"command_configs":     cmdConfigs,
+		"pet_species_configs": petConfigs,
+		"item_configs":        itemConfigs,
+		"shop_item_configs":   shopConfigs,
+		"menu_configs":        menuConfigs,
+		"image_configs":       imgConfigs,
 	})
 }
 
@@ -761,7 +816,7 @@ func UpdateSystemConfigs(c *gin.Context) {
 				return err
 			}
 		}
-		return nil
+		return config.MarkConfigSaved(tx)
 	})
 
 	if err != nil {
@@ -785,7 +840,7 @@ func UpdateCommandConfigs(c *gin.Context) {
 				return err
 			}
 		}
-		return nil
+		return config.MarkConfigSaved(tx)
 	})
 
 	if err != nil {
@@ -809,7 +864,7 @@ func UpdatePetSpeciesConfigs(c *gin.Context) {
 				return err
 			}
 		}
-		return nil
+		return config.MarkConfigSaved(tx)
 	})
 
 	if err != nil {
@@ -833,7 +888,7 @@ func UpdateItemConfigs(c *gin.Context) {
 				return err
 			}
 		}
-		return nil
+		return config.MarkConfigSaved(tx)
 	})
 
 	if err != nil {
@@ -857,7 +912,7 @@ func UpdateMenuConfigs(c *gin.Context) {
 				return err
 			}
 		}
-		return nil
+		return config.MarkConfigSaved(tx)
 	})
 
 	if err != nil {
@@ -881,7 +936,7 @@ func UpdateShopItemConfigs(c *gin.Context) {
 				return err
 			}
 		}
-		return nil
+		return config.MarkConfigSaved(tx)
 	})
 
 	if err != nil {
@@ -905,7 +960,7 @@ func UpdateWorkSettingConfigs(c *gin.Context) {
 				return err
 			}
 		}
-		return nil
+		return config.MarkConfigSaved(tx)
 	})
 
 	if err != nil {
@@ -929,7 +984,7 @@ func UpdateImageConfigs(c *gin.Context) {
 				return err
 			}
 		}
-		return nil
+		return config.MarkConfigSaved(tx)
 	})
 
 	if err != nil {
@@ -953,7 +1008,7 @@ func UpdateCheckinRewardConfigs(c *gin.Context) {
 				return err
 			}
 		}
-		return nil
+		return config.MarkConfigSaved(tx)
 	})
 
 	if err != nil {
@@ -968,35 +1023,38 @@ func DeleteConfig(c *gin.Context) {
 	cfgType := c.Param("type")
 	key := c.Param("key")
 
-	var err error
-	switch cfgType {
-	case "pet_species":
-		err = database.DB.Where("name = ?", key).Delete(&models.PetSpeciesConfig{}).Error
-	case "item":
-		err = database.DB.Where("name = ?", key).Delete(&models.ItemConfig{}).Error
-	case "shop_item":
-		if id, parseErr := strconv.ParseUint(key, 10, 32); parseErr == nil {
-			err = database.DB.Where("id = ?", uint(id)).Delete(&models.ShopItemConfig{}).Error
-		} else {
-			err = database.DB.Where("name = ?", key).Delete(&models.ShopItemConfig{}).Error
+	errUnknownType := errors.New("未知的配置类型")
+	err := database.DB.Transaction(func(tx *gorm.DB) error {
+		var deleteErr error
+		switch cfgType {
+		case "pet_species":
+			deleteErr = tx.Where("name = ?", key).Delete(&models.PetSpeciesConfig{}).Error
+		case "item":
+			deleteErr = tx.Where("name = ?", key).Delete(&models.ItemConfig{}).Error
+		case "shop_item":
+			if id, parseErr := strconv.ParseUint(key, 10, 32); parseErr == nil {
+				deleteErr = tx.Where("id = ?", uint(id)).Delete(&models.ShopItemConfig{}).Error
+			} else {
+				deleteErr = tx.Where("name = ?", key).Delete(&models.ShopItemConfig{}).Error
+			}
+		case "menu":
+			deleteErr = tx.Where("name = ?", key).Delete(&models.MenuConfig{}).Error
+		case "command":
+			deleteErr = tx.Where("func_name = ?", key).Delete(&models.CommandConfig{}).Error
+		case "image":
+			deleteErr = tx.Where("name = ?", key).Delete(&models.ImageConfig{}).Error
+		default:
+			return errUnknownType
 		}
-	case "work_setting":
-		err = database.DB.Where("name = ?", key).Delete(&models.WorkSettingConfig{}).Error
-	case "menu":
-		err = database.DB.Where("name = ?", key).Delete(&models.MenuConfig{}).Error
-	case "command":
-		err = database.DB.Where("func_name = ?", key).Delete(&models.CommandConfig{}).Error
-	case "image":
-		err = database.DB.Where("name = ?", key).Delete(&models.ImageConfig{}).Error
-	case "checkin_reward":
-		if id, parseErr := strconv.ParseUint(key, 10, 32); parseErr == nil {
-			err = database.DB.Where("id = ?", uint(id)).Delete(&models.CheckinRewardConfig{}).Error
+		if deleteErr != nil {
+			return deleteErr
 		}
-	default:
+		return config.MarkConfigSaved(tx)
+	})
+	if errors.Is(err, errUnknownType) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "未知的配置类型"})
 		return
 	}
-
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除配置项失败: " + err.Error()})
 		return
@@ -1006,8 +1064,23 @@ func DeleteConfig(c *gin.Context) {
 
 // ReloadConfigs loads current SQLite config records into in-memory struct fields
 func ReloadConfigs(c *gin.Context) {
+	status, err := config.GetConfigStatus(database.DB)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取待加载配置版本失败: " + err.Error()})
+		return
+	}
 	if err := config.LoadAllConfigsFromDB(database.DB); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "加载最新配置覆盖内存失败: " + err.Error()})
+		return
+	}
+	if ReloadCommandRoutesFunc != nil {
+		if err := ReloadCommandRoutesFunc(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "基础配置已加载，但命令路由重建失败: " + err.Error()})
+			return
+		}
+	}
+	if err := config.MarkConfigLoaded(database.DB, status.DBRevision); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "配置已加载，但记录版本状态失败: " + err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "所有配置热重载同步成功"})
@@ -1017,6 +1090,16 @@ func ReloadConfigs(c *gin.Context) {
 func ResetConfigs(c *gin.Context) {
 	if err := config.ResetConfigsFromSeed(database.DB); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "恢复出厂种子设置失败: " + err.Error()})
+		return
+	}
+	if PrepareModernContentFunc != nil {
+		if err := PrepareModernContentFunc(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "出厂配置已恢复，但新版内容目录初始化失败: " + err.Error()})
+			return
+		}
+	}
+	if err := config.MarkConfigReset(database.DB); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "配置已重置，但记录版本状态失败: " + err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "配置数据已重置为系统默认出厂配置并重载成功"})

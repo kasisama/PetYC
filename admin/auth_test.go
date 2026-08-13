@@ -2,9 +2,11 @@ package admin
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -13,7 +15,7 @@ import (
 )
 
 func TestSessionManagerCreatesAndRevokesSession(t *testing.T) {
-	manager := NewSessionManager()
+	manager := newMemorySessionManager()
 	token, _, err := manager.Create(false)
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
@@ -33,7 +35,7 @@ func TestSessionManagerCreatesAndRevokesSession(t *testing.T) {
 
 func TestSessionManagerRejectsExpiredSession(t *testing.T) {
 	now := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
-	manager := NewSessionManager()
+	manager := newMemorySessionManager()
 	manager.now = func() time.Time { return now }
 
 	token, expiresAt, err := manager.Create(true)
@@ -51,7 +53,7 @@ func TestSessionManagerRejectsExpiredSession(t *testing.T) {
 }
 
 func TestSessionManagerDeleteAllRevokesEverySession(t *testing.T) {
-	manager := NewSessionManager()
+	manager := newMemorySessionManager()
 	first, _, err := manager.Create(false)
 	if err != nil {
 		t.Fatalf("first Create() error = %v", err)
@@ -67,20 +69,72 @@ func TestSessionManagerDeleteAllRevokesEverySession(t *testing.T) {
 	}
 }
 
+func newMemorySessionManager() *SessionManager {
+	return &SessionManager{
+		sessions: make(map[[sha256.Size]byte]adminSession),
+		now:      time.Now,
+	}
+}
+
 func TestSessionManagerCreatePrunesExpiredSessions(t *testing.T) {
 	now := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
-	manager := NewSessionManager()
+	manager := newMemorySessionManager()
 	manager.now = func() time.Time { return now }
 	if _, _, err := manager.Create(false); err != nil {
 		t.Fatalf("first Create() error = %v", err)
 	}
 
-	now = now.Add(rememberedSessionDuration + time.Second)
+	now = now.Add(browserSessionDuration + time.Second)
 	if _, _, err := manager.Create(false); err != nil {
 		t.Fatalf("second Create() error = %v", err)
 	}
 	if len(manager.sessions) != 1 {
 		t.Fatalf("session count = %d, want 1 active session", len(manager.sessions))
+	}
+}
+
+func TestSessionManagerRememberMeSurvivesReload(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, adminSessionsFileName)
+	now := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
+
+	first := &SessionManager{
+		sessions:  make(map[[sha256.Size]byte]adminSession),
+		now:       func() time.Time { return now },
+		storePath: path,
+	}
+	token, _, err := first.Create(true)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	// 模拟 go run 重启：新的 SessionManager 从磁盘恢复
+	second := &SessionManager{
+		sessions:  make(map[[sha256.Size]byte]adminSession),
+		now:       func() time.Time { return now },
+		storePath: path,
+	}
+	second.loadFromDisk()
+	if !second.Validate(token) {
+		t.Fatal("remembered session was lost after manager reload")
+	}
+
+	// 未勾选记住我的会话不应落盘
+	ephemeral, _, err := first.Create(false)
+	if err != nil {
+		t.Fatalf("ephemeral Create() error = %v", err)
+	}
+	third := &SessionManager{
+		sessions:  make(map[[sha256.Size]byte]adminSession),
+		now:       func() time.Time { return now },
+		storePath: path,
+	}
+	third.loadFromDisk()
+	if third.Validate(ephemeral) {
+		t.Fatal("non-remember session should not survive reload")
+	}
+	if !third.Validate(token) {
+		t.Fatal("remembered session should still be valid")
 	}
 }
 

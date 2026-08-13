@@ -107,8 +107,13 @@ type SystemConfig struct {
 
 // CommandConfig 自定义指令配置表
 type CommandConfig struct {
-	FuncName string `gorm:"primaryKey;size:128;comment:功能名称(EPL中)"`
-	Command  string `gorm:"size:128;comment:用户自定义触发指令"`
+	FuncName    string `gorm:"primaryKey;size:128;comment:稳定功能键" json:"func_name"`
+	Command     string `gorm:"size:128;not null;comment:用户自定义触发指令" json:"command"`
+	DisplayName string `gorm:"size:64;not null;default:''" json:"display_name"`
+	Category    string `gorm:"size:32;not null;default:'基础';index" json:"category"`
+	Description string `gorm:"size:255;not null;default:''" json:"description"`
+	Enabled     bool   `gorm:"not null;default:true;index" json:"enabled"`
+	SortOrder   int    `gorm:"not null;default:0;index" json:"sort_order"`
 }
 
 // PetSpeciesConfig 宠物属性与进化配置表
@@ -154,6 +159,7 @@ type PetSpeciesConfig struct {
 // ItemConfig 道具配置表
 type ItemConfig struct {
 	Name        string `gorm:"primaryKey;size:64;comment:道具名称"`
+	Status      string `gorm:"size:16;not null;default:'active';index;comment:active/limited/hidden/disabled"`
 	Type        string `gorm:"size:64;comment:道具类型"`
 	RewardType  string `gorm:"size:64;comment:礼包类型"`
 	ObtainType  int    `gorm:"comment:获取类型(1为单次，0为多次)"`
@@ -167,13 +173,14 @@ type ItemConfig struct {
 
 // ShopItemConfig 商店商品配置表
 type ShopItemConfig struct {
-	ID          uint   `gorm:"primaryKey"`
-	ShopType    string `gorm:"size:32;index;comment:shop_normal或shop_affection"`
-	Name        string `gorm:"size:64;index;comment:商品名称"`
-	Image       string `gorm:"size:255;comment:商品配图"`
-	Stock       int64  `gorm:"comment:库存(-1为无限)"`
-	Price       int64  `gorm:"comment:价格"`
-	Description string `gorm:"type:text;comment:商品描述"`
+	ID            uint   `gorm:"primaryKey"`
+	ShopType      string `gorm:"size:32;index;comment:shop_normal或shop_affection"`
+	Name          string `gorm:"size:64;index;comment:商品名称"`
+	Image         string `gorm:"size:255;comment:商品配图"`
+	Stock         int64  `gorm:"comment:库存(-1为无限)"`
+	RestockTarget int64  `gorm:"not null;default:0;comment:一键补货目标库存"`
+	Price         int64  `gorm:"comment:价格"`
+	Description   string `gorm:"type:text;comment:商品描述"`
 }
 
 // CheckinRewardConfig 签到奖励配置表
@@ -216,4 +223,13 @@ type GroupSwitch struct {
 	GroupID   int64  `gorm:"primaryKey;comment:群号"`
 	GroupName string `gorm:"size:128;comment:群名称"`
 	IsActive  bool   `gorm:"default:true;comment:是否开启"`
+}
+
+// AdminConfigState 记录数据库配置与机器人内存配置的版本关系。
+type AdminConfigState struct {
+	ID             uint       `gorm:"primaryKey" json:"-"`
+	DBRevision     uint64     `gorm:"not null;default:0" json:"db_revision"`
+	LoadedRevision uint64     `gorm:"not null;default:0" json:"loaded_revision"`
+	SavedAt        *time.Time `json:"saved_at"`
+	LoadedAt       *time.Time `json:"loaded_at"`
 }

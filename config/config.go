@@ -187,6 +187,7 @@ type PetSpecies struct {
 // ItemConfig 对应 物品配置.ini 中的各个物品
 type ItemConfig struct {
 	Name        string
+	Status      string
 	Type        string
 	RewardType  string // 礼包类型 (固定/随机)
 	ObtainType  int    // 获得类型
@@ -200,11 +201,12 @@ type ItemConfig struct {
 
 // ShopItem 对应 商店配置.ini / 好感商店配置.ini
 type ShopItem struct {
-	Name        string
-	Image       string
-	Stock       int64
-	Price       int64
-	Description string
+	Name          string
+	Image         string
+	Stock         int64
+	RestockTarget int64
+	Price         int64
+	Description   string
 }
 
 // CheckinReward 对应 签到配置.ini / 新手签到配置.ini
@@ -253,8 +255,6 @@ func init() {
 
 // LoadAllConfigs loads all game configs from GlobalConfigPath
 func LoadAllConfigs() {
-	log.Printf("[Config] 开始加载配置文件目录: %s", GlobalConfigPath)
-
 	// 1. 加载核心配置
 	corePath := filepath.Join(GlobalConfigPath, "核心配置.ini")
 	if cfg, err := LoadIniFile(corePath); err == nil {
@@ -343,9 +343,8 @@ func LoadAllConfigs() {
 			Images[key.Name()] = key.String()
 		}
 
-		log.Println("[Config] 核心配置与互动配置加载成功。")
 	} else {
-		log.Printf("[Config] 警告: 加载核心配置失败: %v", err)
+		log.Printf("[配置] 警告：加载核心配置失败：%v", err)
 	}
 
 	// 2. 加载指令配置
@@ -360,9 +359,8 @@ func LoadAllConfigs() {
 				Commands[sec.Name()] = sec.Key("指令").String()
 			}
 		}
-		log.Printf("[Config] 指令配置加载成功，共 %d 个指令。", len(Commands))
 	} else {
-		log.Printf("[Config] 警告: 加载指令配置失败: %v", err)
+		log.Printf("[配置] 警告：加载指令配置失败：%v", err)
 	}
 
 	// 3. 加载宠物配置
@@ -412,9 +410,8 @@ func LoadAllConfigs() {
 				CurrencyBonus:   sec.Key("货币加成").MustInt(0),
 			}
 		}
-		log.Printf("[Config] 宠物种类配置加载成功，共 %d 种宠物。", len(Pets))
 	} else {
-		log.Printf("[Config] 警告: 加载宠物配置失败: %v", err)
+		log.Printf("[配置] 警告：加载宠物配置失败：%v", err)
 	}
 
 	// 4. 加载物品配置
@@ -438,9 +435,8 @@ func LoadAllConfigs() {
 				SellPrice:   sec.Key("出售价格").MustInt64(0),
 			}
 		}
-		log.Printf("[Config] 物品配置加载成功，共 %d 种物品。", len(Items))
 	} else {
-		log.Printf("[Config] 警告: 加载物品配置失败: %v", err)
+		log.Printf("[配置] 警告：加载物品配置失败：%v", err)
 	}
 
 	// 5. 加载商店配置
@@ -459,9 +455,8 @@ func LoadAllConfigs() {
 				Description: sec.Key("描述").String(),
 			}
 		}
-		log.Printf("[Config] 商店商品加载成功，共 %d 种商品。", len(Shop))
 	} else {
-		log.Printf("[Config] 警告: 加载商店配置失败: %v", err)
+		log.Printf("[配置] 警告：加载商店配置失败：%v", err)
 	}
 
 	// 6. 加载好感商店配置
@@ -480,9 +475,8 @@ func LoadAllConfigs() {
 				Description: sec.Key("描述").String(),
 			}
 		}
-		log.Printf("[Config] 好感商店商品加载成功，共 %d 种商品。", len(AffectionShop))
 	} else {
-		log.Printf("[Config] 警告: 加载好感商店配置失败: %v", err)
+		log.Printf("[配置] 警告：加载好感商店配置失败：%v", err)
 	}
 
 	// 7. 加载新手签到配置
@@ -501,9 +495,8 @@ func LoadAllConfigs() {
 				Image:     sec.Key("图片").String(),
 			}
 		}
-		log.Printf("[Config] 新手签到天数加载成功，共 %d 天。", len(NewbieCheckin))
 	} else {
-		log.Printf("[Config] 警告: 加载新手签到配置失败: %v", err)
+		log.Printf("[配置] 警告：加载新手签到配置失败：%v", err)
 	}
 
 	// 8. 加载签到配置
@@ -522,9 +515,8 @@ func LoadAllConfigs() {
 				Image:     sec.Key("图片").String(),
 			}
 		}
-		log.Printf("[Config] 按周签到加载成功，共 %d 天。", len(WeeklyCheckin))
 	} else {
-		log.Printf("[Config] 警告: 加载周签到配置失败: %v", err)
+		log.Printf("[配置] 警告：加载周签到配置失败：%v", err)
 	}
 
 	// 9. 加载打工配置
@@ -546,9 +538,8 @@ func LoadAllConfigs() {
 				EndImage:    sec.Key("结束图片").String(),
 			}
 		}
-		log.Printf("[Config] 打工配置加载成功，共 %d 种工作。", len(WorkSettings))
 	} else {
-		log.Printf("[Config] 警告: 加载打工配置失败: %v", err)
+		log.Printf("[配置] 警告：加载打工配置失败：%v", err)
 	}
 
 	// 10. 加载菜单配置
@@ -564,10 +555,10 @@ func LoadAllConfigs() {
 				Menus[sec.Name()] = unescapeMenuText(rawReply)
 			}
 		}
-		log.Printf("[Config] 菜单配置加载成功，共 %d 个菜单。", len(Menus))
 	} else {
-		log.Printf("[Config] 警告: 加载菜单配置失败: %v", err)
+		log.Printf("[配置] 警告：加载菜单配置失败：%v", err)
 	}
+	log.Printf("[配置] 本地配置已加载：指令 %d · 宠物 %d · 物品 %d · 商店 %d · 菜单 %d", len(Commands), len(Pets), len(Items), len(Shop)+len(AffectionShop), len(Menus))
 }
 
 // unescapeMenuText 解密菜单配置文本中包含的 \t, \n, 以及 \uXXXX 格式的表情符号
@@ -626,7 +617,7 @@ func SyncWithDB(db *gorm.DB, seedFS embed.FS) error {
 		return fmt.Errorf("统计系统配置失败: %w", err)
 	}
 	if count == 0 {
-		log.Println("[Config] SQLite 配置表为空，开始从嵌入资源中加载初始数据并进行种子迁移...")
+		log.Println("[配置] 首次启动，正在初始化 SQLite 配置…")
 		if err := LoadAllConfigsFromFS(seedFS); err != nil {
 			return fmt.Errorf("从嵌入资源加载初始配置失败: %w", err)
 		}
@@ -647,13 +638,14 @@ func SyncWithDB(db *gorm.DB, seedFS embed.FS) error {
 		if err := tx.Commit().Error; err != nil {
 			return fmt.Errorf("提交种子配置事务失败: %w", err)
 		}
-		log.Println("[Config] 种子数据已成功导入 SQLite 数据库！")
-	} else {
-		log.Println("[Config] 检测到 SQLite 配置数据已存在，开始从数据库加载配置...")
+		log.Println("[配置] 默认配置已写入 SQLite")
 	}
 
 	if err := LoadAllConfigsFromDB(db); err != nil {
 		return fmt.Errorf("从数据库加载配置失败: %w", err)
+	}
+	if count != 0 {
+		log.Println("[配置] 游戏配置已从 SQLite 加载")
 	}
 	return nil
 }
@@ -826,6 +818,7 @@ func seedItemConfig(tx *gorm.DB) {
 	for _, item := range Items {
 		tx.Create(&models.ItemConfig{
 			Name:        item.Name,
+			Status:      "active",
 			Type:        item.Type,
 			RewardType:  item.RewardType,
 			ObtainType:  item.ObtainType,
@@ -842,22 +835,24 @@ func seedItemConfig(tx *gorm.DB) {
 func seedShopItemConfig(tx *gorm.DB) {
 	for _, shopItem := range Shop {
 		tx.Create(&models.ShopItemConfig{
-			ShopType:    "shop_normal",
-			Name:        shopItem.Name,
-			Image:       shopItem.Image,
-			Stock:       shopItem.Stock,
-			Price:       shopItem.Price,
-			Description: shopItem.Description,
+			ShopType:      "shop_normal",
+			Name:          shopItem.Name,
+			Image:         shopItem.Image,
+			Stock:         shopItem.Stock,
+			RestockTarget: shopItem.Stock,
+			Price:         shopItem.Price,
+			Description:   shopItem.Description,
 		})
 	}
 	for _, affItem := range AffectionShop {
 		tx.Create(&models.ShopItemConfig{
-			ShopType:    "shop_affection",
-			Name:        affItem.Name,
-			Image:       affItem.Image,
-			Stock:       affItem.Stock,
-			Price:       affItem.Price,
-			Description: affItem.Description,
+			ShopType:      "shop_affection",
+			Name:          affItem.Name,
+			Image:         affItem.Image,
+			Stock:         affItem.Stock,
+			RestockTarget: affItem.Stock,
+			Price:         affItem.Price,
+			Description:   affItem.Description,
 		})
 	}
 }
@@ -1109,6 +1104,7 @@ func LoadAllConfigsFromDB(db *gorm.DB) error {
 	for _, it := range itemConfigs {
 		Items[it.Name] = ItemConfig{
 			Name:        it.Name,
+			Status:      it.Status,
 			Type:        it.Type,
 			RewardType:  it.RewardType,
 			ObtainType:  it.ObtainType,
@@ -1130,11 +1126,12 @@ func LoadAllConfigsFromDB(db *gorm.DB) error {
 	AffectionShop = make(map[string]ShopItem)
 	for _, s := range shopItemConfigs {
 		sitem := ShopItem{
-			Name:        s.Name,
-			Image:       s.Image,
-			Stock:       s.Stock,
-			Price:       s.Price,
-			Description: s.Description,
+			Name:          s.Name,
+			Image:         s.Image,
+			Stock:         s.Stock,
+			RestockTarget: s.RestockTarget,
+			Price:         s.Price,
+			Description:   s.Description,
 		}
 		if s.ShopType == "shop_normal" {
 			Shop[s.Name] = sitem

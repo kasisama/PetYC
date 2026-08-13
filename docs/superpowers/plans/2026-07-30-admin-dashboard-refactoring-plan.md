@@ -167,7 +167,7 @@ git commit -m "feat(admin): implement standard json response format"
 - 创建：新建 `admin-ui` 目录和其中的 `package.json`, `vite.config.ts`, `tsconfig.json` 
 - 创建：`admin-ui/index.html`, `admin-ui/src/main.ts`, `admin-ui/src/App.vue`.
 
-- [ ] **步骤 1: 脚手架生成 Vite 环境**
+- [x] **步骤 1: 脚手架生成 Vite 环境**
 
 在 `E:\MyFile\MyProject\Go\Pet\admin-ui` 执行:
 ```bash
@@ -176,7 +176,7 @@ npm install
 npm install vue-router@4
 ```
 
-- [ ] **步骤 2: 配置 Vite 构建目标**
+- [x] **步骤 2: 配置 Vite 构建目标**
 
 修改 `vite.config.ts`, 将 `outDir` 设置为 `../admin/dist` 确保由 Go 自动打包:
 ```typescript
@@ -192,17 +192,17 @@ export default defineConfig({
 })
 ```
 
-- [ ] **步骤 3: 替代旧的构建目录**
+- [x] **步骤 3: 替代旧的构建目录**
 
 删除旧的 `admin/dist/index.html`。
 在 `admin-ui` 下运行 `npm run build`。
 确保新生成的产物能成功被 Go `embed` 发现。
 
-- [ ] **步骤 4: 编译检查**
+- [x] **步骤 4: 编译检查**
 
 运行：`go test ./admin -run TestEmbeddedAdminUsesAccountLoginInsteadOfPromptToken` （该测试目前会爆 FAIL，由于删除了带登录表单 HTML，我们先把它略过直到我们在任务4做新的 Vue Login 版面再修好它）
 
-- [ ] **步骤 5: Commit**
+- [x] **步骤 5: Commit**
 
 ```bash
 git add admin-ui/ admin/dist/
@@ -219,7 +219,7 @@ git commit -m "chore(ui): initialize vite vue3 ts project for admin panel"
 - 创建：`admin-ui/src/components/layout/Sidebar.vue`
 - 创建：`admin-ui/src/components/layout/Topbar.vue`
 
-- [ ] **步骤 1: 设定 CSS 主题变量及深色模式**
+- [x] **步骤 1: 设定 CSS 主题变量及深色模式**
 
 在 `theme.css`:
 ```css
@@ -253,7 +253,7 @@ body {
 }
 ```
 
-- [ ] **步骤 2: 实现 AdminLayout.vue 布局**
+- [x] **步骤 2: 实现 AdminLayout.vue 布局**
 
 ```vue
 <template>
@@ -269,15 +269,15 @@ body {
 </template>
 ```
 
-- [ ] **步骤 3: 在前端的 Topbar 植入多主题切换 Hook**
+- [x] **步骤 3: 在前端的 Topbar 植入多主题切换 Hook**
 
 通过读取 `localStorage.getItem('adminTheme')`，动态利用 `document.documentElement.setAttribute('data-theme', theme)` 进行 3 种颜色体系切换。
 
-- [ ] **步骤 4: 打包测试**
+- [x] **步骤 4: 打包测试**
 
 在 `admin-ui` 下运行 `npm run build`，确保包含布局结构的 `dist` 建立完成。
 
-- [ ] **步骤 5: Commit**
+- [x] **步骤 5: Commit**
 
 ```bash
 git add admin-ui/src/
@@ -293,24 +293,24 @@ git commit -m "feat(ui): implement base layout and dark theme switcher"
 - 修改：`admin-ui/src/router/index.ts`
 - 修改：`admin/frontend_auth_test.go` (调整针对最新 Vue 产物的构建字符串断言)
 
-- [ ] **步骤 1: 编写 LoginView 交互**
+- [x] **步骤 1: 编写 LoginView 交互**
 
 接入昨天建立好了的 `/api/admin/auth/login` 等新管理接口进行真实表单登陆。
 
-- [ ] **步骤 2: 构建全局 401 全局登出拦截器**
+- [x] **步骤 2: 构建全局 401 全局登出拦截器**
 
 在基于浏览器原生的 `fetch` 调用处或 `axios` 中捕获 `401 Unauthorized` 服务端踢下线，将页面直接用 router 跳转重定位到 `/login` 以及清除 `localStorage`。
 
-- [ ] **步骤 3: 让打包断言重新变绿**
+- [x] **步骤 3: 让打包断言重新变绿**
 
 修改之前用于检验硬编码字符串的 `admin/frontend_auth_test.go`，由于我们现在采用 Vite 动态加载 chunk，改为检验核心 JS/CSS 模块的挂载。
 
-- [ ] **步骤 4: 运行 Go tests 测试无误**
+- [x] **步骤 4: 运行 Go tests 测试无误**
 
 运行：`go test ./admin -run TestEmbeddedAdminUsesAccountLoginInsteadOfPromptToken -v`
 预期结果：PASS
 
-- [ ] **步骤 5: Commit**
+- [x] **步骤 5: Commit**
 
 ```bash
 git add admin-ui/src/ admin/frontend_auth_test.go

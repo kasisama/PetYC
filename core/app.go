@@ -1,36 +1,84 @@
 package core
 
 import (
+	"fmt"
 	"log"
 
 	"github.com/gin-gonic/gin"
 	"qq-pet-saas/admin"
+	"qq-pet-saas/config"
+	"qq-pet-saas/database"
+	"qq-pet-saas/security"
 )
 
-// StartApp 启动服务框架并监听指定的地址与端口
-func StartApp(addr string) {
-	// 设置为生产模式以提高运行性能
+func NewAppRouter() *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
+	router := gin.New()
+	router.Use(gin.Recovery())
+	router.Static("/images", "./图片")
 
-	r := gin.New()
-
-	// 全局安全崩溃恢复中间件，防止单个协程崩溃导致主进程退出
-	r.Use(gin.Recovery())
-
-	// 静态图片服务，支持远程 SaaS OneBot 客户端通过 HTTP 拉取图片
-	r.Static("/images", "./图片")
-
-	// 绑定群发广播回调以解耦核心与后台，避免循环引用
 	admin.BroadcastMessageFunc = BroadcastGroupMessage
+	admin.OneBotStatusFunc = OneBotStatusSnapshot
+	admin.ReloadCommandRoutesFunc = func() error { return RebuildUnifiedRouter(database.DB) }
+	admin.PrepareModernContentFunc = func() error {
+		if err := config.EnsureModernMenus(database.DB); err != nil {
+			return err
+		}
+		if err := SyncUnifiedCommandConfigs(database.DB); err != nil {
+			return err
+		}
+		return config.LoadAllConfigsFromDB(database.DB)
+	}
+	admin.RegisterRoutes(router)
+	router.GET("/v1/ws", HandleWebSocket)
+	return router
+}
 
-	// 注册管理后台静态资源和 API 路由
-	admin.RegisterRoutes(r)
+// StartApp 启动服务框架并监听指定端口。
+func StartApp(listenAddress string, port int) {
+	manager := NewServerManagerWithEndpoint(NewAppRouter(), persistRuntimeEndpoint)
+	admin.PlatformPortChangeFunc = func(port int) (admin.PortHandoffResult, error) {
+		handoff, err := manager.BeginPortHandoff(port)
+		if err != nil {
+			return admin.PortHandoffResult{}, err
+		}
+		return admin.PortHandoffResult{
+			Address: handoff.Address, ConfirmationToken: handoff.ConfirmationToken, ExpiresAt: handoff.ExpiresAt,
+		}, nil
+	}
+	admin.PlatformEndpointChangeFunc = func(address string, port int) (admin.PortHandoffResult, error) {
+		handoff, err := manager.BeginEndpointHandoff(address, port)
+		if err != nil {
+			return admin.PortHandoffResult{}, err
+		}
+		return admin.PortHandoffResult{
+			Address: handoff.Address, ConfirmationToken: handoff.ConfirmationToken, ExpiresAt: handoff.ExpiresAt,
+		}, nil
+	}
+	admin.PlatformPortConfirmFunc = manager.ConfirmPortHandoff
 
-	// WebSocket 接入路由
-	r.GET("/v1/ws", HandleWebSocket)
-
-	log.Printf("[App] Go QQ-Pet SaaS 平台已安全启动，正在监听 %s 端口...", addr)
-	if err := r.Run(addr); err != nil {
+	if err := manager.StartEndpoint(listenAddress, port); err != nil {
 		log.Fatalf("[App] 启动服务器失败: %v", err)
 	}
+	log.Print(startupSummary(manager.Address()))
+	if err := manager.Wait(); err != nil {
+		log.Fatalf("[App] 服务器运行失败: %v", err)
+	}
+}
+
+func startupSummary(address string) string {
+	return fmt.Sprintf("[启动] QQ-Pet SaaS 已就绪\n  管理后台：http://%s/admin\n  OneBot：  ws://%s/v1/ws", address, address)
+}
+
+func persistRuntimeEndpoint(address string, port int) error {
+	config, err := security.LoadRuntimeConfig()
+	if err != nil {
+		return err
+	}
+	config.ListenAddress = address
+	config.Port = port
+	if err := security.SaveRuntimeConfig(config); err != nil {
+		return fmt.Errorf("save runtime port: %w", err)
+	}
+	return nil
 }

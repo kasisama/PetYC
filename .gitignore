@@ -15,6 +15,9 @@ worktrees/
 
 # 前端依赖（admin/dist 下的构建产物需要随仓库提交，供 go:embed 使用）
 node_modules/
+admin-ui/test-results/
+admin-ui/playwright-report/
+.codex-tmp/
 
 # Editor and operating-system files
 .idea/

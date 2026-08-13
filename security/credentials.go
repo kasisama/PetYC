@@ -43,6 +43,11 @@ func dataDir() (string, error) {
 	return filepath.Join(dir, "qq-pet-saas"), nil
 }
 
+// DataDir returns the application data directory (credentials, sessions, etc.).
+func DataDir() (string, error) {
+	return dataDir()
+}
+
 // CredentialsPath returns the location of the generated credentials file.
 func CredentialsPath() string {
 	dir, err := dataDir()
@@ -52,8 +57,7 @@ func CredentialsPath() string {
 	return filepath.Join(dir, credentialsFileName)
 }
 
-// LoadCredentials loads persisted credentials, initializes missing admin
-// fields, and lets QQPET_WS_TOKEN override the local WebSocket token.
+// LoadCredentials loads persisted credentials and initializes missing fields.
 func LoadCredentials() (Credentials, error) {
 	credentialsMu.Lock()
 	defer credentialsMu.Unlock()
@@ -74,10 +78,6 @@ func loadCredentialsLocked() (Credentials, error) {
 		}
 	} else if !os.IsNotExist(readErr) {
 		return Credentials{}, fmt.Errorf("read credentials file: %w", readErr)
-	}
-
-	if token := os.Getenv("QQPET_WS_TOKEN"); token != "" {
-		credentials.WebSocketToken = token
 	}
 
 	changed := false

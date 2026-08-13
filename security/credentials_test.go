@@ -40,16 +40,23 @@ func TestLoadCredentialsGeneratesAndPersistsAdminLoginAndWebSocketToken(t *testi
 	}
 }
 
-func TestLoadCredentialsEnvironmentOverridesPersistedTokens(t *testing.T) {
+func TestLoadCredentialsEnvironmentIsOnlyUsedByRuntimeConfigImport(t *testing.T) {
 	t.Setenv("QQPET_DATA_DIR", t.TempDir())
 	t.Setenv("QQPET_WS_TOKEN", "ws-from-env")
 
+	runtimeConfig, err := LoadRuntimeConfig()
+	if err != nil {
+		t.Fatalf("LoadRuntimeConfig() error = %v", err)
+	}
 	credentials, err := LoadCredentials()
 	if err != nil {
 		t.Fatalf("LoadCredentials() error = %v", err)
 	}
+	if runtimeConfig.OneBotToken != "ws-from-env" {
+		t.Fatalf("runtime config token = %q", runtimeConfig.OneBotToken)
+	}
 	if credentials.WebSocketToken != "ws-from-env" {
-		t.Fatalf("LoadCredentials() = %#v, want environment values", credentials)
+		t.Fatalf("LoadCredentials() = %#v, want imported runtime value", credentials)
 	}
 }
 
