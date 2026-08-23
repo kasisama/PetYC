@@ -33,21 +33,25 @@ import {
   emptyPetSpecies,
   emptyShopItem,
   fetchConfig,
+  fetchConfigMeta,
   fetchConfigStatus,
   fetchGameSettings,
+  fetchPlayerMessages,
   normalizeCommand,
   normalizeItem,
   normalizeImage,
   normalizeMenu,
   normalizePetSpecies,
   normalizeShopItem,
+  previewPlayerMessage,
   reloadConfigs,
-  imagePreviewUrl,
   saveConfig,
   saveEventBundle,
   saveGameSettings,
   uploadImage,
   type CommandConfigRow,
+  type ConfigMeta,
+  type ConfigSchema,
   type ConfigStatus,
   type ContentEventRow,
   type ContentRewardRow,
@@ -56,19 +60,23 @@ import {
   type ItemStatus,
   type ImageConfigRow,
   type MenuConfigRow,
+  type PlayerMessageDefinition,
+  type PlayerMessagePreview,
   type PetSpeciesConfigRow,
   type ShopItemConfigRow,
 } from '../api/config'
-import PageHeader from '../components/ui/PageHeader.vue'
 import UiDrawer from '../components/ui/UiDrawer.vue'
 import UiState from '../components/ui/UiState.vue'
+import UiModal from '../components/ui/UiModal.vue'
+import AssetThumbnail from '../components/content/AssetThumbnail.vue'
+import ImageDropzone from '../components/content/ImageDropzone.vue'
 import { useToast } from '../composables/useToast'
 import { useUnsavedChanges } from '../composables/useUnsavedChanges'
 import { cloneConfigValue } from '../utils/configClone'
 
 type MainTab = 'events' | 'assets' | 'text' | 'game'
 type AssetTab = 'pets' | 'items' | 'shop' | 'images'
-type TextTab = 'commands' | 'menus'
+type TextTab = 'commands' | 'menus' | 'messages'
 type EditorKind = 'event' | 'pet' | 'item' | 'shop' | 'image' | 'command' | 'menu'
 type RewardItemDraft = { item_name: string; quantity: number }
 type RewardGroupDraft = { milestone: number; description: string; items: RewardItemDraft[] }
@@ -87,9 +95,14 @@ const tab = ref<MainTab>(initialTab)
 const assetTab = ref<AssetTab>('pets')
 const textTab = ref<TextTab>('commands')
 const search = ref('')
+const itemTypeFilter = ref('')
+const itemStatusFilter = ref('')
+const shopTypeFilter = ref('')
 const loading = ref(false)
 const saving = ref(false)
+const uploading = ref(false)
 const status = ref<ConfigStatus | null>(null)
+const configMeta = ref<Partial<Record<ConfigSchema, ConfigMeta>>>({})
 const events = ref<ContentEventRow[]>([])
 const rewards = ref<ContentRewardRow[]>([])
 const pets = ref<PetSpeciesConfigRow[]>([])
@@ -98,6 +111,12 @@ const shops = ref<ShopItemConfigRow[]>([])
 const images = ref<ImageConfigRow[]>([])
 const commands = ref<CommandConfigRow[]>([])
 const menus = ref<MenuConfigRow[]>([])
+const playerMessages = ref<PlayerMessageDefinition[]>([])
+const selectedMessageKey = ref('')
+const messageVariables = ref<Record<string, string>>({})
+const messagePlatform = ref('onebot')
+const messagePreview = ref<PlayerMessagePreview | null>(null)
+const previewingMessage = ref(false)
 const gameSettings = ref<GameSettingRow[]>([])
 const snapshot = ref('')
 const editorSnapshot = ref('')
@@ -110,6 +129,18 @@ const editor = reactive<{ kind: EditorKind | null; index: number; draft: any }>(
   index: -1,
   draft: null,
 })
+const confirmation = reactive<{ open: boolean; title: string; description: string; action: null | (() => void | Promise<void>) }>({ open: false, title: '', description: '', action: null })
+
+function askConfirmation(title: string, description: string, action: () => void | Promise<void>) {
+  Object.assign(confirmation, { open: true, title, description, action })
+}
+
+async function confirmRequestedAction() {
+  const action = confirmation.action
+  confirmation.open = false
+  confirmation.action = null
+  if (action) await action()
+}
 const editorTitle = computed(() => {
   if (editor.kind === 'event') return editor.index < 0 ? '新建活动' : '编辑活动'
   const labels: Record<string, string> = { pet: '宠物种类', item: '物品', shop: '商品', image: '图片资产', command: '命令', menu: '菜单场景' }
@@ -133,9 +164,20 @@ useUnsavedChanges(hasUnsavedChanges)
 const query = computed(() => search.value.trim().toLowerCase())
 const visibleEvents = computed(() => events.value.filter((row) => `${row.name} ${row.region}`.toLowerCase().includes(query.value)))
 const visiblePets = computed(() => pets.value.filter((row) => `${row.Name} ${row.Description} ${row.FavoriteFood}`.toLowerCase().includes(query.value)))
-const visibleItems = computed(() => items.value.filter((row) => `${row.Name} ${row.Type} ${row.Description}`.toLowerCase().includes(query.value)))
-const visibleShops = computed(() => shops.value.filter((row) => `${row.Name} ${shopTypeLabel(row.ShopType)} ${row.Description}`.toLowerCase().includes(query.value)))
+const itemTypes = computed(() => [...new Set(items.value.map((row) => row.Type).filter(Boolean))].sort((left, right) => left.localeCompare(right, 'zh-CN')))
+const visibleItems = computed(() => items.value.filter((row) => {
+  if (itemTypeFilter.value && row.Type !== itemTypeFilter.value) return false
+  if (itemStatusFilter.value && row.Status !== itemStatusFilter.value) return false
+  return `${row.Name} ${row.Type} ${row.Description}`.toLowerCase().includes(query.value)
+}))
+const visibleShops = computed(() => shops.value.filter((row) => {
+  if (shopTypeFilter.value && row.ShopType !== shopTypeFilter.value) return false
+  return `${row.Name} ${shopTypeLabel(row.ShopType)} ${row.Description}`.toLowerCase().includes(query.value)
+}))
 const visibleImages = computed(() => images.value.filter((row) => `${row.Name} ${row.Path}`.toLowerCase().includes(query.value)))
+const itemActiveCount = computed(() => items.value.filter((row) => row.Status === 'active').length)
+const petsMissingFood = computed(() => visiblePets.value.filter((row) => !String(row.FavoriteFood || '').trim()).length)
+const canSave = computed(() => dirty.value && tab.value !== 'events' && !(tab.value === 'text' && textTab.value === 'messages'))
 const commandGroups = computed(() => {
   const groups = new Map<string, CommandConfigRow[]>()
   commands.value
@@ -150,6 +192,21 @@ const commandGroups = computed(() => {
   return [...groups.entries()].map(([category, rows]) => ({ category, rows }))
 })
 const visibleMenus = computed(() => menus.value.filter((row) => `${menuScene(row.Name)} ${row.Reply}`.toLowerCase().includes(query.value)))
+const visiblePlayerMessages = computed(() => playerMessages.value.filter((row) => `${row.key} ${row.description} ${row.template}`.toLowerCase().includes(query.value)))
+const selectedPlayerMessage = computed(() => playerMessages.value.find((row) => row.key === selectedMessageKey.value) ?? null)
+const currentSchema = computed<ConfigSchema>(() => {
+  if (tab.value === 'events') return 'live_events'
+  if (tab.value === 'game') return 'system'
+  if (tab.value === 'text') return textTab.value === 'menus' ? 'menus' : 'commands'
+  const schemas: Record<AssetTab, ConfigSchema> = {
+    pets: 'pet_species',
+    items: 'items',
+    shop: 'shop_items',
+    images: 'images',
+  }
+  return schemas[assetTab.value]
+})
+const currentMeta = computed(() => configMeta.value[currentSchema.value] ?? null)
 const gameGroups = computed(() => {
   const groups = new Map<string, GameSettingRow[]>()
   gameSettings.value.forEach((row) => {
@@ -173,6 +230,49 @@ function shopTypeLabel(value: string) {
 
 function itemStatusLabel(value: ItemStatus) {
   return itemStatusOptions.find((option) => option.value === value)?.label ?? '正常上架'
+}
+
+function shopImagePath(row: ShopItemConfigRow) {
+  return row.Image || items.value.find((item) => item.Name === row.Name)?.Image || ''
+}
+
+function stockShare(row: ShopItemConfigRow) {
+  const target = Number(row.RestockTarget)
+  const stock = Number(row.Stock)
+  if (stock < 0) return 1
+  if (target <= 0) return stock > 0 ? 1 : 0
+  return Math.min(1, Math.max(0, stock / target))
+}
+
+function stockTone(row: ShopItemConfigRow) {
+  if (Number(row.Stock) < 0) return 'full'
+  const share = stockShare(row)
+  if (share <= 0.2) return 'low'
+  if (share < 1) return 'mid'
+  return 'full'
+}
+
+function stockLabel(row: ShopItemConfigRow) {
+  if (Number(row.Stock) < 0) return '不限'
+  return `${row.Stock} / ${row.RestockTarget}`
+}
+
+function editorImagePath() {
+  if (!editor.draft) return ''
+  if (editor.kind === 'image') return String(editor.draft.Path || '')
+  if (editor.kind === 'shop') return String(editor.draft.Image || items.value.find((item) => item.Name === editor.draft.Name)?.Image || '')
+  if (editor.kind === 'pet' || editor.kind === 'item') return String(editor.draft.Image || '')
+  return ''
+}
+
+function editorImageLabel() {
+  return String(editor.draft?.Name || (editor.kind === 'pet' ? '新宠物' : editor.kind === 'shop' ? '新商品' : editor.kind === 'item' ? '新物品' : '新图片'))
+}
+
+function clearEditorImage() {
+  if (!editor.draft) return
+  if (editor.kind === 'image') editor.draft.Path = ''
+  if (editor.kind === 'pet' || editor.kind === 'item' || editor.kind === 'shop') editor.draft.Image = ''
 }
 
 function menuScene(name: string) {
@@ -293,8 +393,15 @@ function openEditor(kind: Exclude<EditorKind, 'event'>, row?: any) {
 }
 
 function closeEditor() {
-  if (saving.value) return
-  if (editorDirty.value && !confirm('当前编辑内容尚未应用，确定关闭吗？')) return
+	if (saving.value || uploading.value) return
+	if (editorDirty.value) {
+		askConfirmation('放弃当前编辑？', '尚未应用到列表的修改将会丢失。', forceCloseEditor)
+		return
+	}
+	forceCloseEditor()
+}
+
+function forceCloseEditor() {
   editor.kind = null
   editorSnapshot.value = ''
 }
@@ -387,8 +494,12 @@ async function saveCurrentEvent() {
   }
 }
 
-async function removeCurrentEvent() {
-  if (editor.kind !== 'event' || editor.index < 0 || !confirm('确定删除该活动及全部里程碑奖励吗？')) return
+async function removeCurrentEvent(confirmed = false) {
+	if (editor.kind !== 'event' || editor.index < 0) return
+	if (!confirmed) {
+		askConfirmation('删除活动及全部奖励？', '该活动与所有里程碑奖励会一起删除，此操作不可撤销。', () => removeCurrentEvent(true))
+		return
+	}
   saving.value = true
   try {
     const key = editor.draft.key as string
@@ -420,11 +531,15 @@ function commitEditor() {
   editorSnapshot.value = ''
 }
 
-async function deleteCurrentConfig() {
-  if (!editor.kind || editor.kind === 'event' || editor.index < 0 || !confirm('确定删除当前配置吗？')) return
+async function deleteCurrentConfig(confirmed = false) {
+	if (!editor.kind || editor.kind === 'event' || editor.index < 0) return
+	if (!confirmed) {
+		askConfirmation('删除当前配置？', '删除后需要重新创建才能恢复。', () => deleteCurrentConfig(true))
+		return
+	}
   const kind = editor.kind
   const collection = kind === 'pet' ? pets.value : kind === 'image' ? images.value : kind === 'command' ? commands.value : menus.value
-  const type = kind === 'pet' ? 'pet_species' : kind === 'image' ? 'image' : kind === 'command' ? 'command' : 'menu'
+	const type = kind === 'pet' ? 'pet_species' : kind === 'image' ? 'images' : kind === 'command' ? 'commands' : 'menus'
   const key = kind === 'pet' || kind === 'image' ? editor.draft.Name : kind === 'command' ? editor.draft.FuncName : editor.draft.Name
   saving.value = true
   try {
@@ -449,9 +564,15 @@ function toggleAllShops(checked: boolean) {
   selectedShops.value = checked ? visibleShops.value.map((row) => row.ID).filter(Boolean) : []
 }
 
-async function applyItemBulk(action: 'delete' | 'set_status') {
-  if (!selectedItems.value.length) return toast.warning('请先选择物品')
-  if (action === 'delete' && !confirm('确定删除所选物品吗？被引用的物品会由后端阻止删除。')) return
+async function applyItemBulk(action: 'delete' | 'set_status', confirmed = false) {
+	if (!selectedItems.value.length) {
+		toast.warning('请先选择物品')
+		return
+	}
+	if (action === 'delete' && !confirmed) {
+		askConfirmation('批量删除所选物品？', '仍被玩法或商店引用的物品会由后端阻止删除。', () => applyItemBulk(action, true))
+		return
+	}
   saving.value = true
   try {
     const result = await bulkItems(selectedItems.value, action, action === 'set_status' ? bulkItemStatus.value : undefined)
@@ -466,9 +587,15 @@ async function applyItemBulk(action: 'delete' | 'set_status') {
   }
 }
 
-async function applyShopBulk(action: 'delete' | 'restock' | 'set_target') {
-  if (!selectedShops.value.length) return toast.warning('请先选择商品')
-  if (action === 'delete' && !confirm('确定删除所选商品吗？')) return
+async function applyShopBulk(action: 'delete' | 'restock' | 'set_target', confirmed = false) {
+	if (!selectedShops.value.length) {
+		toast.warning('请先选择商品')
+		return
+	}
+	if (action === 'delete' && !confirmed) {
+		askConfirmation('批量删除所选商品？', '商品会从对应商店货架中移除。', () => applyShopBulk(action, true))
+		return
+	}
   saving.value = true
   try {
     const result = await bulkShopItems(selectedShops.value, action, action === 'set_target' ? bulkShopTarget.value : undefined)
@@ -500,26 +627,49 @@ async function saveAssets() {
   }
 }
 
+async function uploadFile(file: File, intoEditor = false, editorField = 'Image') {
+  const supportedTypes = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
+  if (!supportedTypes.has(file.type)) return toast.error('只支持 JPG、PNG、GIF 或 WEBP 图片')
+  if (file.size > 10 * 1024 * 1024) return toast.error('图片不能超过 10MB')
+  uploading.value = true
+  try {
+    const result = await uploadImage(file)
+    if (intoEditor && editor.draft) {
+      if (editor.kind === 'image') {
+        editor.draft.Path = result.path
+        if (!editor.draft.Name) editor.draft.Name = file.name.replace(/\.[^.]+$/, '')
+      } else if (editor.kind === 'pet' || editor.kind === 'item' || editor.kind === 'shop') {
+        editor.draft[editorField] = result.path
+      }
+    } else {
+      images.value.push({ Name: file.name.replace(/\.[^.]+$/, ''), Path: result.path })
+    }
+    toast.success('图片已上传，请应用到列表后保存当前配置')
+  } catch (reason) {
+    toast.error(reason instanceof Error ? reason.message : '图片上传失败')
+  } finally {
+    uploading.value = false
+  }
+}
+
 async function uploadAsset(event: Event, intoEditor = false) {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
   if (!file) return
-  saving.value = true
-  try {
-    const result = await uploadImage(file)
-    if (intoEditor && editor.kind === 'image') {
-      editor.draft.Path = result.path
-      if (!editor.draft.Name) editor.draft.Name = file.name.replace(/\.[^.]+$/, '')
-    } else {
-      images.value.push({ Name: file.name.replace(/\.[^.]+$/, ''), Path: result.path })
-    }
-    toast.success('图片已上传，请确认名称后保存配置')
-  } catch (reason) {
-    toast.error(reason instanceof Error ? reason.message : '图片上传失败')
-  } finally {
-    saving.value = false
-    input.value = ''
-  }
+  await uploadFile(file, intoEditor)
+  input.value = ''
+}
+
+async function uploadEditorAsset(file: File) {
+  await uploadFile(file, true)
+}
+
+async function uploadPetAsset(file: File, field: keyof PetSpeciesConfigRow) {
+  await uploadFile(file, true, field)
+}
+
+function clearPetAsset(field: keyof PetSpeciesConfigRow) {
+  if (editor.kind === 'pet' && editor.draft) editor.draft[field] = ''
 }
 
 async function copyImagePath(path: string) {
@@ -543,6 +693,24 @@ async function saveText() {
     toast.error(reason instanceof Error ? reason.message : '保存失败')
   } finally {
     saving.value = false
+  }
+}
+
+async function selectPlayerMessage(row: PlayerMessageDefinition) {
+  selectedMessageKey.value = row.key
+  messageVariables.value = { ...row.variables }
+  await refreshPlayerMessagePreview()
+}
+
+async function refreshPlayerMessagePreview() {
+  if (!selectedMessageKey.value) return
+  previewingMessage.value = true
+  try {
+    messagePreview.value = await previewPlayerMessage(selectedMessageKey.value, messagePlatform.value, messageVariables.value)
+  } catch (reason) {
+    toast.error(reason instanceof Error ? reason.message : '文案预览失败')
+  } finally {
+    previewingMessage.value = false
   }
 }
 
@@ -572,20 +740,48 @@ function listSettingText(row: GameSettingRow) {
 }
 
 function setTab(value: MainTab) {
-  if (hasUnsavedChanges.value && !confirm('当前页面有未保存修改，确定切换吗？')) return
+	if (hasUnsavedChanges.value) {
+		askConfirmation('放弃未保存修改并切换？', '当前页面尚未保存的内容将会丢失。', () => switchTab(value))
+		return
+	}
+	switchTab(value)
+}
+
+function switchTab(value: MainTab) {
   tab.value = value
   search.value = ''
   router.replace({ query: { tab: value } })
+  void loadCurrentMeta()
 }
 
 function setAssetTab(value: AssetTab) {
   assetTab.value = value
   search.value = ''
+  itemTypeFilter.value = ''
+  itemStatusFilter.value = ''
+  shopTypeFilter.value = ''
+  void loadCurrentMeta()
+}
+
+function saveCurrentWorkspace() {
+  if (tab.value === 'assets') return saveAssets()
+  if (tab.value === 'text') return saveText()
+  if (tab.value === 'game') return saveGame()
 }
 
 function setTextTab(value: TextTab) {
   textTab.value = value
   search.value = ''
+  void loadCurrentMeta()
+}
+
+async function loadCurrentMeta() {
+  const schema = currentSchema.value
+  try {
+    configMeta.value[schema] = await fetchConfigMeta(schema)
+  } catch (reason) {
+    toast.error(reason instanceof Error ? reason.message : '配置消费者信息加载失败')
+  }
 }
 
 function syncSnapshot() {
@@ -595,7 +791,7 @@ function syncSnapshot() {
 async function load() {
   loading.value = true
   try {
-    const [eventRows, rewardRows, petRows, itemRows, shopRows, imageRows, commandRows, menuRows, settings, currentStatus] = await Promise.all([
+    const [eventRows, rewardRows, petRows, itemRows, shopRows, imageRows, commandRows, menuRows, messages, settings, currentStatus] = await Promise.all([
       fetchConfig('live_events'),
       fetchConfig('reward_tracks'),
       fetchConfig('pet_species'),
@@ -604,6 +800,7 @@ async function load() {
       fetchConfig('images'),
       fetchConfig('commands'),
       fetchConfig('menus'),
+      fetchPlayerMessages(),
       fetchGameSettings(),
       fetchConfigStatus(),
     ])
@@ -615,10 +812,13 @@ async function load() {
     images.value = imageRows.map(normalizeImage)
     commands.value = commandRows.map(normalizeCommand)
     menus.value = menuRows.map(normalizeMenu)
+    playerMessages.value = messages
     gameSettings.value = settings
     status.value = currentStatus
+    await loadCurrentMeta()
     selectedItems.value = []
     selectedShops.value = []
+    if (!selectedMessageKey.value && messages.length > 0) await selectPlayerMessage(messages[0])
     syncSnapshot()
   } catch (reason) {
     toast.error(reason instanceof Error ? reason.message : '内容工作台加载失败')
@@ -642,41 +842,37 @@ onMounted(load)
 
 <template>
   <section class="content-page">
-    <PageHeader
-      eyebrow="Content Studio"
-      title="内容工作台"
-      description="把活动、宠物资产、玩家文案与游戏规则放在同一条运营链路中维护。"
-    >
-      <template #actions>
-        <button class="btn btn-ghost" :disabled="loading || saving" @click="load"><IconRefresh :size="17" />刷新数据</button>
+    <div class="workspace-bar">
+      <nav class="page-tabs" aria-label="内容工作台导航">
+        <button :class="{ active: tab === 'events' }" @click="setTab('events')"><IconCalendarEvent :size="17" />活动运营</button>
+        <button :class="{ active: tab === 'assets' }" @click="setTab('assets')"><IconPackage :size="17" />宠物与物品</button>
+        <button :class="{ active: tab === 'text' }" @click="setTab('text')"><IconMessageCircle :size="17" />文本与命令</button>
+        <button :class="{ active: tab === 'game' }" @click="setTab('game')"><IconAdjustments :size="17" />游戏参数</button>
+      </nav>
+      <div class="workspace-actions">
+        <button class="btn btn-ghost" :disabled="loading || saving" @click="load"><IconRefresh :size="17" />刷新</button>
         <button class="btn btn-ghost" :disabled="loading || saving" @click="reload"><IconReload :size="17" />重载生效</button>
-      </template>
-    </PageHeader>
-
-    <nav class="page-tabs" aria-label="内容工作台导航">
-      <button :class="{ active: tab === 'events' }" @click="setTab('events')"><IconCalendarEvent :size="17" />活动运营</button>
-      <button :class="{ active: tab === 'assets' }" @click="setTab('assets')"><IconPackage :size="17" />宠物与物品</button>
-      <button :class="{ active: tab === 'text' }" @click="setTab('text')"><IconMessageCircle :size="17" />文本与命令</button>
-      <button :class="{ active: tab === 'game' }" @click="setTab('game')"><IconAdjustments :size="17" />游戏参数</button>
-    </nav>
-
-    <div v-if="status" class="revision-bar" :class="{ pending: status.pending_reload }">
-      <span><i />{{ status.pending_reload ? '有配置等待重载' : '当前配置已生效' }}</span>
-      <small>数据库版本 {{ status.db_revision }} · 已加载 {{ status.loaded_revision }}</small>
+        <button v-if="canSave" class="btn btn-primary" :disabled="saving" @click="saveCurrentWorkspace"><IconDeviceFloppy :size="17" />保存当前配置</button>
+      </div>
     </div>
+    <p v-if="status" class="revision-chip" :class="{ pending: status.pending_reload }">
+      <i />{{ status.pending_reload ? '有配置等待重载' : '当前配置已生效' }}
+      <span v-if="currentMeta">
+        {{ currentMeta.consumers?.length ? currentMeta.consumers.join('、') : '无运行时消费者' }}
+        · 生效 {{ currentMeta.effective_revision }} / 数据库 {{ currentMeta.db_revision }}
+      </span>
+      <span v-else>数据库 {{ status.db_revision }} · 已加载 {{ status.loaded_revision }}</span>
+    </p>
 
     <UiState v-if="loading" tone="loading" title="正在准备内容工作台" description="活动、物品与游戏参数正在并行读取。" />
 
     <template v-else-if="tab === 'events'">
-      <div class="section-heading">
-        <div><span class="section-kicker">活动排期与奖励</span><h2>活动运营</h2><p>一个抽屉完成故事分支、里程碑和奖励配置，保存时由后端事务统一提交。</p></div>
-        <button class="btn btn-primary" @click="openEvent()"><IconPlus :size="17" />新建活动</button>
-      </div>
       <div class="toolbar">
         <label class="searchbox"><IconSearch :size="17" /><input v-model="search" placeholder="搜索活动名称或区域" /></label>
-        <span>{{ visibleEvents.length }} 场活动 · {{ rewards.length }} 条物品奖励</span>
+        <span class="toolbar-count">{{ visibleEvents.length }} 场活动 · {{ rewards.length }} 条奖励</span>
+        <button class="btn btn-primary" @click="openEvent()"><IconPlus :size="17" />新建活动</button>
       </div>
-      <UiState v-if="visibleEvents.length === 0" title="还没有活动" description="创建第一场活动，并在同一抽屉中配置奖励。" action-label="新建活动" @action="openEvent()" />
+      <UiState v-if="visibleEvents.length === 0" class="compact-state" title="还没有活动" description="新建后可在同一抽屉里配置故事分支、里程碑和奖励。" action-label="新建活动" @action="openEvent()" />
       <div v-else class="event-list">
         <article v-for="row in visibleEvents" :key="row.key" class="event-card">
           <div class="event-date"><strong>{{ new Date(row.starts_at).getDate() }}</strong><span>{{ new Date(row.starts_at).toLocaleDateString('zh-CN', { month: 'short' }) }}</span></div>
@@ -688,10 +884,6 @@ onMounted(load)
     </template>
 
     <template v-else-if="tab === 'assets'">
-      <div class="section-heading compact">
-        <div><span class="section-kicker">可运营资产</span><h2>宠物与物品</h2><p>维护宠物资料、物品可见性与商店补货策略。</p></div>
-        <button class="btn btn-primary" :disabled="saving || !dirty" @click="saveAssets"><IconDeviceFloppy :size="17" />保存当前配置</button>
-      </div>
       <nav class="sub-tabs" aria-label="宠物与物品分类">
         <button :class="{ active: assetTab === 'pets' }" @click="setAssetTab('pets')"><IconPaw :size="16" />宠物</button>
         <button :class="{ active: assetTab === 'items' }" @click="setAssetTab('items')"><IconBox :size="16" />物品</button>
@@ -700,38 +892,97 @@ onMounted(load)
       </nav>
       <div class="toolbar">
         <label class="searchbox"><IconSearch :size="17" /><input v-model="search" :placeholder="assetTab === 'pets' ? '搜索宠物' : assetTab === 'items' ? '搜索物品' : assetTab === 'shop' ? '搜索商品' : '搜索图片名称或路径'" /></label>
-        <div class="toolbar-actions"><label v-if="assetTab === 'images'" class="btn btn-ghost upload-button"><IconPhoto :size="16" />上传图片<input type="file" accept="image/png,image/jpeg,image/gif,image/webp" @change="uploadAsset($event)" /></label><button class="btn btn-ghost" @click="openEditor(assetTab === 'pets' ? 'pet' : assetTab === 'items' ? 'item' : assetTab === 'shop' ? 'shop' : 'image')"><IconPlus :size="16" />新增</button></div>
-      </div>
-
-      <div v-if="assetTab === 'pets'" class="pet-grid">
-        <article v-for="row in visiblePets" :key="row.Name" class="pet-card" @click="openEditor('pet', row)">
-          <div class="pet-avatar"><img v-if="row.Image" :src="row.Image" :alt="`${row.Name}形象`" /><IconPaw v-else :size="28" /></div>
-          <div><h3>{{ row.Name }}</h3><p>{{ row.Description || '尚未填写宠物介绍' }}</p><small>偏爱食物：{{ row.FavoriteFood || '未设置' }}</small></div>
-          <IconChevronRight :size="18" />
-        </article>
-      </div>
-
-      <template v-else-if="assetTab === 'items'">
-        <div class="bulk-bar">
-          <label class="check-all"><input type="checkbox" :checked="selectedItems.length === visibleItems.length && visibleItems.length > 0" @change="toggleAllItems(($event.target as HTMLInputElement).checked)" />选择全部</label>
-          <span>已选 {{ selectedItems.length }} 项</span>
-          <select v-model="bulkItemStatus"><option v-for="option in itemStatusOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select>
-          <button class="btn btn-ghost" :disabled="saving" @click="applyItemBulk('set_status')">批量设置状态</button>
-          <button class="btn btn-danger" :disabled="saving" @click="applyItemBulk('delete')"><IconTrash :size="15" />批量删除</button>
+        <select v-if="assetTab === 'items'" v-model="itemTypeFilter" aria-label="物品类型">
+          <option value="">全部类型</option>
+          <option v-for="type in itemTypes" :key="type" :value="type">{{ type }}</option>
+        </select>
+        <select v-if="assetTab === 'items'" v-model="itemStatusFilter" aria-label="物品状态">
+          <option value="">全部状态</option>
+          <option v-for="option in itemStatusOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+        </select>
+        <select v-if="assetTab === 'shop'" v-model="shopTypeFilter" aria-label="商店类型">
+          <option value="">全部商店</option>
+          <option value="shop_normal">普通商店</option>
+          <option value="shop_affection">羁绊商店</option>
+        </select>
+        <span class="toolbar-count">
+          <template v-if="assetTab === 'pets'">{{ visiblePets.length }} 只{{ petsMissingFood ? ` · ${petsMissingFood} 只缺食物` : '' }}</template>
+          <template v-else-if="assetTab === 'items'">{{ visibleItems.length }} 件 · 上架 {{ itemActiveCount }}</template>
+          <template v-else-if="assetTab === 'shop'">{{ visibleShops.length }} 件商品</template>
+          <template v-else>{{ visibleImages.length }} 张图片</template>
+        </span>
+        <div class="toolbar-actions">
+          <label v-if="assetTab === 'images'" class="btn btn-ghost upload-button"><IconPhoto :size="16" />上传图片<input type="file" accept="image/png,image/jpeg,image/gif,image/webp" @change="uploadAsset($event)" /></label>
+          <button class="btn btn-ghost" @click="openEditor(assetTab === 'pets' ? 'pet' : assetTab === 'items' ? 'item' : assetTab === 'shop' ? 'shop' : 'image')"><IconPlus :size="16" />新增</button>
         </div>
-        <div class="responsive-list">
-          <article v-for="row in visibleItems" :key="row.Name" class="asset-row">
-            <input v-model="selectedItems" type="checkbox" :value="row.Name" :aria-label="`选择${row.Name}`" />
-            <div class="asset-main"><strong>{{ row.Name }}</strong><small>{{ row.Type || '未分类' }} · {{ row.Description || '暂无说明' }}</small></div>
-            <span class="status-mark" :data-status="row.Status">{{ itemStatusLabel(row.Status) }}</span>
-            <span class="price-copy">回收价 <b>{{ row.SellPrice }}</b></span>
-            <button class="btn btn-ghost btn-small" @click="openEditor('item', row)">详情</button>
+      </div>
+
+      <template v-if="assetTab === 'pets'">
+        <UiState v-if="visiblePets.length === 0" class="compact-state" title="没有匹配的宠物" description="调整搜索词，或新增一个宠物种类。" />
+        <div v-else class="pet-grid">
+          <article v-for="row in visiblePets" :key="row.Name" class="pet-card" @click="openEditor('pet', row)">
+            <AssetThumbnail :path="row.Image" :label="row.Name" kind="pet" size="catalog" />
+            <div class="pet-meta">
+              <h3>{{ row.Name }}</h3>
+              <p>{{ row.Description || '尚未填写宠物介绍' }}</p>
+              <div class="pet-chips">
+                <span v-if="row.FavoriteFood" class="chip">{{ row.FavoriteFood }}</span>
+                <span v-else class="chip is-warn">缺偏爱食物</span>
+                <span v-if="row.Evolution" class="chip">{{ row.Evolution }}</span>
+              </div>
+            </div>
           </article>
         </div>
       </template>
 
+      <template v-else-if="assetTab === 'items'">
+        <div v-if="selectedItems.length" class="bulk-bar">
+          <label class="check-all"><input type="checkbox" :checked="selectedItems.length === visibleItems.length && visibleItems.length > 0" @change="toggleAllItems(($event.target as HTMLInputElement).checked)" />选择全部</label>
+          <span>已选 {{ selectedItems.length }} 项</span>
+          <select v-model="bulkItemStatus" aria-label="批量物品状态"><option v-for="option in itemStatusOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select>
+          <button class="btn btn-ghost" :disabled="saving" @click="applyItemBulk('set_status')">批量设置状态</button>
+          <button class="btn btn-danger" :disabled="saving" @click="applyItemBulk('delete')"><IconTrash :size="15" />批量删除</button>
+        </div>
+        <UiState v-if="visibleItems.length === 0" class="compact-state" title="没有匹配的物品" description="换个类型或状态筛选，或新增物品。" />
+        <div v-else class="data-panel">
+          <div class="desktop-table">
+            <table>
+              <thead>
+                <tr>
+                  <th class="check-col"><input type="checkbox" :checked="selectedItems.length === visibleItems.length && visibleItems.length > 0" :aria-label="'选择全部物品'" @change="toggleAllItems(($event.target as HTMLInputElement).checked)" /></th>
+                  <th class="thumb-col"></th>
+                  <th>名称</th>
+                  <th>类型</th>
+                  <th>状态</th>
+                  <th class="num-col">回收价</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in visibleItems" :key="row.Name">
+                  <td><input v-model="selectedItems" type="checkbox" :value="row.Name" :aria-label="`选择${row.Name}`" /></td>
+                  <td><AssetThumbnail :path="row.Image" :label="row.Name" kind="item" size="small" /></td>
+                  <td><div class="asset-main"><strong>{{ row.Name }}</strong><small>{{ row.Description || '暂无说明' }}</small></div></td>
+                  <td>{{ row.Type || '未分类' }}</td>
+                  <td><span class="status-mark" :data-status="row.Status">{{ itemStatusLabel(row.Status) }}</span></td>
+                  <td class="num-col">{{ row.SellPrice }}</td>
+                  <td><button class="btn btn-ghost btn-small" @click="openEditor('item', row)">编辑</button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="mobile-list">
+            <article v-for="row in visibleItems" :key="row.Name" class="summary-card" @click="openEditor('item', row)">
+              <label class="check-all" @click.stop><input v-model="selectedItems" type="checkbox" :value="row.Name" :aria-label="`选择${row.Name}`" />选择</label>
+              <span class="pet-cell"><AssetThumbnail :path="row.Image" :label="row.Name" kind="item" size="small" /><span><strong>{{ row.Name }}</strong><small>{{ row.Description || '暂无说明' }}</small></span></span>
+              <span>{{ row.Type || '未分类' }} · {{ itemStatusLabel(row.Status) }} · 回收 {{ row.SellPrice }}</span>
+            </article>
+          </div>
+        </div>
+      </template>
+
       <template v-else-if="assetTab === 'shop'">
-        <div class="bulk-bar">
+        <div v-if="selectedShops.length" class="bulk-bar">
           <label class="check-all"><input type="checkbox" :checked="selectedShops.length === visibleShops.length && visibleShops.length > 0" @change="toggleAllShops(($event.target as HTMLInputElement).checked)" />选择全部</label>
           <span>已选 {{ selectedShops.length }} 项</span>
           <button class="btn btn-ghost" :disabled="saving" @click="applyShopBulk('restock')">一键补货</button>
@@ -739,38 +990,82 @@ onMounted(load)
           <button class="btn btn-ghost" :disabled="saving" @click="applyShopBulk('set_target')">设置目标</button>
           <button class="btn btn-danger" :disabled="saving" @click="applyShopBulk('delete')"><IconTrash :size="15" />批量删除</button>
         </div>
-        <div class="responsive-list shop-list">
-          <article v-for="row in visibleShops" :key="row.ID || row.Name" class="asset-row shop-row">
-            <input v-model="selectedShops" type="checkbox" :value="row.ID" :aria-label="`选择${row.Name}`" />
-            <div class="asset-main"><strong>{{ row.Name }}</strong><small>{{ shopTypeLabel(row.ShopType) }} · {{ row.Description || '暂无说明' }}</small></div>
-            <label><span>价格</span><input v-model.number="row.Price" type="number" min="0" :aria-label="`${row.Name}价格`" /></label>
-            <label><span>库存</span><input v-model.number="row.Stock" type="number" min="-1" :aria-label="`${row.Name}库存`" /></label>
-            <label><span>目标库存</span><input v-model.number="row.RestockTarget" type="number" min="-1" :aria-label="`${row.Name}目标库存`" /></label>
-            <button class="btn btn-ghost btn-small" @click="openEditor('shop', row)">详情</button>
+        <UiState v-if="visibleShops.length === 0" class="compact-state" title="没有匹配的商品" description="换个商店类型，或新增货架商品。" />
+        <div v-else class="data-panel">
+          <div class="desktop-table">
+            <table>
+              <thead>
+                <tr>
+                  <th class="check-col"><input type="checkbox" :checked="selectedShops.length === visibleShops.length && visibleShops.length > 0" :aria-label="'选择全部商品'" @change="toggleAllShops(($event.target as HTMLInputElement).checked)" /></th>
+                  <th class="thumb-col"></th>
+                  <th>名称</th>
+                  <th>商店</th>
+                  <th class="num-col">价格</th>
+                  <th>库存</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in visibleShops" :key="row.ID || row.Name">
+                  <td><input v-model="selectedShops" type="checkbox" :value="row.ID" :aria-label="`选择${row.Name}`" /></td>
+                  <td><AssetThumbnail :path="shopImagePath(row)" :label="row.Name" kind="shop" size="small" /></td>
+                  <td><div class="asset-main"><strong>{{ row.Name }}</strong><small>{{ row.Description || '暂无说明' }}</small></div></td>
+                  <td>{{ shopTypeLabel(row.ShopType) }}</td>
+                  <td class="num-col"><input v-model.number="row.Price" class="cell-input" type="number" min="0" :aria-label="`${row.Name}价格`" /></td>
+                  <td>
+                    <div class="stock-cell">
+                      <div class="stock-meter" :data-tone="stockTone(row)"><i :style="{ width: `${stockShare(row) * 100}%` }" /><span>{{ stockLabel(row) }}</span></div>
+                      <div class="stock-edits">
+                        <input v-model.number="row.Stock" class="cell-input" type="number" min="-1" :aria-label="`${row.Name}库存`" />
+                        <input v-model.number="row.RestockTarget" class="cell-input" type="number" min="-1" :aria-label="`${row.Name}目标库存`" />
+                      </div>
+                    </div>
+                  </td>
+                  <td><button class="btn btn-ghost btn-small" @click="openEditor('shop', row)">编辑</button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="mobile-list">
+            <article v-for="row in visibleShops" :key="row.ID || row.Name" class="summary-card">
+              <label class="check-all"><input v-model="selectedShops" type="checkbox" :value="row.ID" :aria-label="`选择${row.Name}`" />选择</label>
+              <span class="pet-cell"><AssetThumbnail :path="shopImagePath(row)" :label="row.Name" kind="shop" size="small" /><span><strong>{{ row.Name }}</strong><small>{{ shopTypeLabel(row.ShopType) }}</small></span></span>
+              <label>价格<input v-model.number="row.Price" type="number" min="0" :aria-label="`${row.Name}价格`" /></label>
+              <label>库存<input v-model.number="row.Stock" type="number" min="-1" :aria-label="`${row.Name}库存`" /></label>
+              <label>目标<input v-model.number="row.RestockTarget" type="number" min="-1" :aria-label="`${row.Name}目标库存`" /></label>
+              <button class="btn btn-ghost btn-small" @click="openEditor('shop', row)">编辑</button>
+            </article>
+          </div>
+        </div>
+      </template>
+
+      <template v-else>
+        <UiState v-if="visibleImages.length === 0" class="compact-state" title="没有匹配的图片" description="上传一张图片，或新增图片资产条目。" />
+        <div v-else class="image-gallery">
+          <article v-for="row in visibleImages" :key="row.Name" class="image-tile" :class="{ 'is-empty': !row.Path }" @click="openEditor('image', row)">
+            <AssetThumbnail :path="row.Path" :label="row.Name" kind="image" size="tile" />
+            <div class="image-caption">
+              <strong>{{ row.Name }}</strong>
+              <small>{{ row.Path || '尚未选择图片' }}</small>
+              <div class="image-actions" @click.stop>
+                <button class="btn btn-ghost btn-small" type="button" @click="copyImagePath(row.Path)">复制路径</button>
+                <button class="btn btn-ghost btn-small" type="button" @click="openEditor('image', row)">编辑</button>
+              </div>
+            </div>
           </article>
         </div>
       </template>
-      <div v-else class="image-grid">
-        <article v-for="row in visibleImages" :key="row.Name" class="image-card">
-          <div class="image-preview"><img v-if="row.Path" :src="imagePreviewUrl(row.Path)" :alt="row.Name" /><IconPhoto v-else :size="30" /></div>
-          <div><strong>{{ row.Name }}</strong><small>{{ row.Path || '尚未选择图片' }}</small></div>
-          <div class="image-actions"><button class="btn btn-ghost btn-small" @click="copyImagePath(row.Path)">复制路径</button><button class="btn btn-ghost btn-small" @click="openEditor('image', row)">编辑</button></div>
-        </article>
-      </div>
     </template>
 
     <template v-else-if="tab === 'text'">
-      <div class="section-heading compact">
-        <div><span class="section-kicker">玩家看到的语言</span><h2>文本与命令</h2><p>按中文业务分类维护命令，并用聊天气泡检查菜单回复。</p></div>
-        <button class="btn btn-primary" :disabled="saving || !dirty" @click="saveText"><IconDeviceFloppy :size="17" />保存当前配置</button>
-      </div>
       <nav class="sub-tabs" aria-label="文本与命令分类">
         <button :class="{ active: textTab === 'commands' }" @click="setTextTab('commands')"><IconBolt :size="16" />命令</button>
         <button :class="{ active: textTab === 'menus' }" @click="setTextTab('menus')"><IconMessageCircle :size="16" />菜单场景</button>
+        <button :class="{ active: textTab === 'messages' }" @click="setTextTab('messages')"><IconSparkles :size="16" />系统文案预览</button>
       </nav>
       <div class="toolbar">
-        <label class="searchbox"><IconSearch :size="17" /><input v-model="search" :placeholder="textTab === 'commands' ? '搜索名称、触发词或分类' : '搜索场景或回复内容'" /></label>
-        <button class="btn btn-ghost" @click="openEditor(textTab === 'commands' ? 'command' : 'menu')"><IconPlus :size="16" />新增</button>
+        <label class="searchbox"><IconSearch :size="17" /><input v-model="search" :placeholder="textTab === 'commands' ? '搜索名称、触发词或分类' : textTab === 'menus' ? '搜索场景或回复内容' : '搜索系统文案、用途或模板'" /></label>
+        <button v-if="textTab !== 'messages'" class="btn btn-ghost" @click="openEditor(textTab === 'commands' ? 'command' : 'menu')"><IconPlus :size="16" />新增</button>
       </div>
 
       <div v-if="textTab === 'commands'" class="command-groups">
@@ -786,19 +1081,30 @@ onMounted(load)
         </section>
       </div>
 
-      <div v-else class="menu-grid">
+      <div v-else-if="textTab === 'menus'" class="menu-grid">
         <article v-for="row in visibleMenus" :key="row.Name" class="menu-card">
           <header><div><span>QQ 菜单场景</span><h3>{{ menuScene(row.Name) }}</h3></div><button class="btn btn-ghost btn-small" @click="openEditor('menu', row)">编辑</button></header>
           <div class="qq-preview"><div class="qq-avatar"><IconPaw :size="19" /></div><div class="qq-message">{{ row.Reply || '这里会显示机器人发送给玩家的菜单回复。' }}</div></div>
         </article>
       </div>
+      <div v-else class="message-studio">
+        <aside class="message-catalog">
+          <button v-for="row in visiblePlayerMessages" :key="row.key" :class="{ active: selectedMessageKey === row.key }" @click="selectPlayerMessage(row)">
+            <strong>{{ row.description }}</strong><small>{{ row.key }}</small><span>{{ row.sample }}</span>
+          </button>
+        </aside>
+        <section v-if="selectedPlayerMessage" class="message-preview-panel">
+          <header><div><span>只读系统文案</span><h3>{{ selectedPlayerMessage.description }}</h3><code>{{ selectedPlayerMessage.key }}</code></div><label>平台<select v-model="messagePlatform" @change="refreshPlayerMessagePreview"><option value="onebot">OneBot</option><option value="qq_group">QQ 官方群</option><option value="qq_guild">QQ 官方频道</option></select></label></header>
+          <div v-if="Object.keys(messageVariables).length" class="message-variable-grid">
+            <label v-for="(_, name) in messageVariables" :key="name"><span>{{ name }}</span><input v-model="messageVariables[name]" @input="refreshPlayerMessagePreview" /></label>
+          </div>
+          <div class="template-note"><span>模板</span><code>{{ selectedPlayerMessage.template }}</code></div>
+          <div class="qq-preview large"><div class="qq-avatar"><IconPaw :size="19" /></div><div class="qq-message">{{ previewingMessage ? '正在生成预览…' : messagePreview?.text || selectedPlayerMessage.sample }}</div></div>
+        </section>
+      </div>
     </template>
 
     <template v-else>
-      <div class="section-heading compact">
-        <div><span class="section-kicker">核心规则</span><h2>游戏参数</h2><p>所有参数使用中文名称与类型化控件，不直接暴露内部配置键。</p></div>
-        <button class="btn btn-primary" :disabled="saving || !dirty" @click="saveGame"><IconDeviceFloppy :size="17" />保存游戏参数</button>
-      </div>
       <div class="game-groups">
         <section v-for="group in gameGroups" :key="group.group" class="game-group">
           <header><span>{{ group.rows.length }} 项</span><h3>{{ group.group }}</h3></header>
@@ -844,17 +1150,78 @@ onMounted(load)
         </section>
       </template>
 
-      <div v-else-if="editor.kind === 'pet' && editor.draft" class="form-grid">
-        <label><span>宠物名称</span><input v-model="editor.draft.Name" :disabled="editor.index >= 0" /></label><label><span>形象路径</span><input v-model="editor.draft.Image" /></label><label><span>偏爱食物</span><input v-model="editor.draft.FavoriteFood" /></label><label><span>偏爱礼物</span><input v-model="editor.draft.FavoriteGift" /></label><label><span>宠物介绍</span><textarea v-model="editor.draft.Description" rows="4" /></label>
+      <div v-else-if="editor.kind === 'pet' && editor.draft" class="pet-editor">
+        <section class="drawer-section pet-step">
+          <header><div><span>步骤 1</span><h3>基础资料</h3></div><b>名称、介绍与偏好</b></header>
+          <ImageDropzone :path="editor.draft.Image" :label="editorImageLabel()" kind="pet" size="medium" :busy="uploading" @file="uploadPetAsset($event, 'Image')" @clear="clearPetAsset('Image')" />
+          <div class="form-grid two">
+            <label><span>宠物名称</span><input v-model="editor.draft.Name" :disabled="editor.index >= 0" /></label>
+            <label><span>默认形象路径</span><input v-model="editor.draft.Image" placeholder="上传后自动填写，也可输入相对路径" /></label>
+            <label><span>偏爱食物</span><input v-model="editor.draft.FavoriteFood" placeholder="与物品名称一致" /></label>
+            <label><span>偏爱礼物</span><input v-model="editor.draft.FavoriteGift" placeholder="与物品名称一致" /></label>
+            <label class="wide-field"><span>宠物介绍</span><textarea v-model="editor.draft.Description" rows="4" /></label>
+          </div>
+        </section>
+
+        <section class="drawer-section pet-step">
+          <header><div><span>步骤 2</span><h3>初始属性与上限</h3></div><b>决定领养后的基础数值</b></header>
+          <div class="attribute-grid">
+            <label><span>初始血量</span><input v-model.number="editor.draft.Health" type="number" min="0" /></label><label><span>血量上限</span><input v-model.number="editor.draft.HealthMax" type="number" min="1" /></label>
+            <label><span>初始饱食</span><input v-model.number="editor.draft.Hunger" type="number" min="0" /></label><label><span>饱食上限</span><input v-model.number="editor.draft.HungerMax" type="number" min="1" /></label>
+            <label><span>初始智慧</span><input v-model.number="editor.draft.Wisdom" type="number" min="0" /></label><label><span>智慧上限</span><input v-model.number="editor.draft.WisdomMax" type="number" min="1" /></label>
+            <label><span>初始力量</span><input v-model.number="editor.draft.Strength" type="number" min="0" /></label><label><span>力量上限</span><input v-model.number="editor.draft.StrengthMax" type="number" min="1" /></label>
+            <label><span>初始防御</span><input v-model.number="editor.draft.Defense" type="number" min="0" /></label><label><span>防御上限</span><input v-model.number="editor.draft.DefenseMax" type="number" min="1" /></label>
+          </div>
+          <div class="form-grid two bonus-grid">
+            <label><span>好感加成 %</span><input v-model.number="editor.draft.AffectionBonus" type="number" /></label><label><span>成长加成 %</span><input v-model.number="editor.draft.GrowthBonus" type="number" /></label>
+            <label><span>属性加成 %</span><input v-model.number="editor.draft.AttributeBonus" type="number" /></label><label><span>货币加成 %</span><input v-model.number="editor.draft.CurrencyBonus" type="number" /></label>
+          </div>
+        </section>
+
+        <section class="drawer-section pet-step">
+          <header><div><span>步骤 3</span><h3>进化配置</h3></div><b>形态、门槛与预览图</b></header>
+          <div class="form-grid two">
+            <label><span>进化形态名称</span><input v-model="editor.draft.Evolution" placeholder="留空表示不配置" /></label><label><span>进化分支</span><input v-model.number="editor.draft.EvolutionBranch" type="number" min="0" /></label>
+            <label><span>所需成长</span><input v-model.number="editor.draft.EvolutionGrowth" type="number" min="0" /></label><label><span>所需好感</span><input v-model.number="editor.draft.EvolutionAffect" type="number" min="0" /></label>
+          </div>
+          <ImageDropzone :path="editor.draft.EvolutionImage" :label="`${editorImageLabel()}进化形态`" kind="pet" size="medium" :busy="uploading" @file="uploadPetAsset($event, 'EvolutionImage')" @clear="clearPetAsset('EvolutionImage')" />
+          <label class="path-field"><span>进化图片路径</span><input v-model="editor.draft.EvolutionImage" placeholder="上传后自动填写，也可输入相对路径" /></label>
+        </section>
+
+        <section class="drawer-section pet-step">
+          <header><div><span>步骤 4</span><h3>觉醒配置</h3></div><b>形态、条件与预览图</b></header>
+          <div class="form-grid two">
+            <label><span>觉醒形态名称</span><input v-model="editor.draft.Awaken" placeholder="留空表示不配置" /></label><label><span>所需物品</span><input v-model="editor.draft.AwakenItems" placeholder="按现有规则填写物品" /></label>
+            <label><span>所需成长</span><input v-model.number="editor.draft.AwakenGrowth" type="number" min="0" /></label><label><span>所需好感</span><input v-model.number="editor.draft.AwakenAffect" type="number" min="0" /></label>
+          </div>
+          <ImageDropzone :path="editor.draft.AwakenImage" :label="`${editorImageLabel()}觉醒形态`" kind="pet" size="medium" :busy="uploading" @file="uploadPetAsset($event, 'AwakenImage')" @clear="clearPetAsset('AwakenImage')" />
+          <label class="path-field"><span>觉醒图片路径</span><input v-model="editor.draft.AwakenImage" placeholder="上传后自动填写，也可输入相对路径" /></label>
+        </section>
+
+        <section class="drawer-section pet-step">
+          <header><div><span>步骤 5</span><h3>场景图片</h3></div><b>每张图都可预览、点击或拖拽上传</b></header>
+          <div class="pet-image-grid">
+            <article><h4>领养配图</h4><ImageDropzone :path="editor.draft.AdoptImage" :label="`${editorImageLabel()}领养`" kind="pet" size="medium" :busy="uploading" @file="uploadPetAsset($event, 'AdoptImage')" @clear="clearPetAsset('AdoptImage')" /><input v-model="editor.draft.AdoptImage" aria-label="领养配图路径" placeholder="图片路径" /></article>
+            <article><h4>锻炼开始</h4><ImageDropzone :path="editor.draft.TrainStartImg" :label="`${editorImageLabel()}锻炼开始`" kind="pet" size="medium" :busy="uploading" @file="uploadPetAsset($event, 'TrainStartImg')" @clear="clearPetAsset('TrainStartImg')" /><input v-model="editor.draft.TrainStartImg" aria-label="锻炼开始图片路径" placeholder="图片路径" /></article>
+            <article><h4>锻炼完成</h4><ImageDropzone :path="editor.draft.TrainEndImg" :label="`${editorImageLabel()}锻炼完成`" kind="pet" size="medium" :busy="uploading" @file="uploadPetAsset($event, 'TrainEndImg')" @clear="clearPetAsset('TrainEndImg')" /><input v-model="editor.draft.TrainEndImg" aria-label="锻炼完成图片路径" placeholder="图片路径" /></article>
+            <article><h4>学习开始</h4><ImageDropzone :path="editor.draft.StudyStartImg" :label="`${editorImageLabel()}学习开始`" kind="pet" size="medium" :busy="uploading" @file="uploadPetAsset($event, 'StudyStartImg')" @clear="clearPetAsset('StudyStartImg')" /><input v-model="editor.draft.StudyStartImg" aria-label="学习开始图片路径" placeholder="图片路径" /></article>
+            <article><h4>学习完成</h4><ImageDropzone :path="editor.draft.StudyEndImg" :label="`${editorImageLabel()}学习完成`" kind="pet" size="medium" :busy="uploading" @file="uploadPetAsset($event, 'StudyEndImg')" @clear="clearPetAsset('StudyEndImg')" /><input v-model="editor.draft.StudyEndImg" aria-label="学习完成图片路径" placeholder="图片路径" /></article>
+            <article><h4>健身开始</h4><ImageDropzone :path="editor.draft.FitnessStartImg" :label="`${editorImageLabel()}健身开始`" kind="pet" size="medium" :busy="uploading" @file="uploadPetAsset($event, 'FitnessStartImg')" @clear="clearPetAsset('FitnessStartImg')" /><input v-model="editor.draft.FitnessStartImg" aria-label="健身开始图片路径" placeholder="图片路径" /></article>
+            <article><h4>健身完成</h4><ImageDropzone :path="editor.draft.FitnessEndImg" :label="`${editorImageLabel()}健身完成`" kind="pet" size="medium" :busy="uploading" @file="uploadPetAsset($event, 'FitnessEndImg')" @clear="clearPetAsset('FitnessEndImg')" /><input v-model="editor.draft.FitnessEndImg" aria-label="健身完成图片路径" placeholder="图片路径" /></article>
+          </div>
+        </section>
       </div>
       <div v-else-if="editor.kind === 'item' && editor.draft" class="form-grid">
-        <label><span>物品名称</span><input v-model="editor.draft.Name" :disabled="editor.index >= 0" /></label><label><span>运营状态</span><select v-model="editor.draft.Status"><option v-for="option in itemStatusOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select></label><label><span>物品类型</span><input v-model="editor.draft.Type" /></label><label><span>回收价格</span><input v-model.number="editor.draft.SellPrice" type="number" min="0" /></label><label><span>形象路径</span><input v-model="editor.draft.Image" /></label><label><span>物品说明</span><textarea v-model="editor.draft.Description" rows="4" /></label>
+        <ImageDropzone class="editor-image" :path="editorImagePath()" :label="editorImageLabel()" kind="item" :busy="uploading" @file="uploadEditorAsset" @clear="clearEditorImage" />
+        <label><span>物品名称</span><input v-model="editor.draft.Name" :disabled="editor.index >= 0" /></label><label><span>运营状态</span><select v-model="editor.draft.Status"><option v-for="option in itemStatusOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select></label><label><span>物品类型</span><input v-model="editor.draft.Type" /></label><label><span>回收价格</span><input v-model.number="editor.draft.SellPrice" type="number" min="0" /></label><label><span>图片路径</span><input v-model="editor.draft.Image" placeholder="上传后自动填写，也可输入相对路径" /></label><label><span>物品说明</span><textarea v-model="editor.draft.Description" rows="4" /></label>
       </div>
       <div v-else-if="editor.kind === 'shop' && editor.draft" class="form-grid">
-        <label><span>商品名称</span><input v-model="editor.draft.Name" /></label><label><span>商店类型</span><select v-model="editor.draft.ShopType"><option value="shop_normal">普通商店</option><option value="shop_affection">羁绊商店</option></select></label><label><span>价格</span><input v-model.number="editor.draft.Price" type="number" min="0" /></label><label><span>当前库存</span><input v-model.number="editor.draft.Stock" type="number" min="-1" /></label><label><span>目标库存</span><input v-model.number="editor.draft.RestockTarget" type="number" min="-1" /></label><label><span>商品说明</span><textarea v-model="editor.draft.Description" rows="4" /></label>
+        <ImageDropzone class="editor-image" :path="editorImagePath()" :label="editorImageLabel()" kind="shop" :busy="uploading" @file="uploadEditorAsset" @clear="clearEditorImage" />
+        <label><span>商品名称</span><input v-model="editor.draft.Name" /></label><label><span>商店类型</span><select v-model="editor.draft.ShopType"><option value="shop_normal">普通商店</option><option value="shop_affection">羁绊商店</option></select></label><label><span>价格</span><input v-model.number="editor.draft.Price" type="number" min="0" /></label><label><span>当前库存</span><input v-model.number="editor.draft.Stock" type="number" min="-1" /></label><label><span>目标库存</span><input v-model.number="editor.draft.RestockTarget" type="number" min="-1" /></label><label><span>图片路径</span><input v-model="editor.draft.Image" placeholder="留空时自动使用同名物品图" /></label><label><span>商品说明</span><textarea v-model="editor.draft.Description" rows="4" /></label>
       </div>
       <div v-else-if="editor.kind === 'image' && editor.draft" class="form-grid">
-        <label><span>图片名称</span><input v-model="editor.draft.Name" :disabled="editor.index >= 0" /></label><label><span>图片路径</span><input v-model="editor.draft.Path" /></label><label class="upload-field"><span>上传或替换</span><input type="file" accept="image/png,image/jpeg,image/gif,image/webp" @change="uploadAsset($event, true)" /></label><div class="image-preview large"><img v-if="editor.draft.Path" :src="imagePreviewUrl(editor.draft.Path)" :alt="editor.draft.Name" /><IconPhoto v-else :size="38" /></div>
+        <ImageDropzone class="editor-image" :path="editorImagePath()" :label="editorImageLabel()" kind="image" :busy="uploading" @file="uploadEditorAsset" @clear="clearEditorImage" />
+        <label><span>图片名称</span><input v-model="editor.draft.Name" :disabled="editor.index >= 0" /></label><label><span>图片路径</span><input v-model="editor.draft.Path" placeholder="上传后自动填写" /></label>
       </div>
       <div v-else-if="editor.kind === 'command' && editor.draft" class="form-grid">
         <label><span>显示名称</span><input v-model="editor.draft.DisplayName" /></label><label><span>中文分类</span><input v-model="editor.draft.Category" /></label><label><span>玩家触发词</span><input v-model="editor.draft.Command" /></label><label><span>排序</span><input v-model.number="editor.draft.SortOrder" type="number" /></label><label class="switch-field"><span>命令状态</span><input v-model="editor.draft.Enabled" type="checkbox" /><b>{{ editor.draft.Enabled ? '启用命令' : '停用命令' }}</b></label><label><span>使用说明</span><textarea v-model="editor.draft.Description" rows="4" /></label><details class="technical-field"><summary>高级设置</summary><label><span>稳定功能标识</span><input v-model="editor.draft.FuncName" :disabled="editor.index >= 0" /></label></details>
@@ -873,13 +1240,71 @@ onMounted(load)
         </div>
       </template>
     </UiDrawer>
+    <UiModal :open="confirmation.open" :title="confirmation.title" :description="confirmation.description" size="small" @close="confirmation.open = false">
+      <template #footer><button class="btn btn-ghost" @click="confirmation.open = false">取消</button><button class="btn btn-danger" @click="confirmRequestedAction">确认继续</button></template>
+    </UiModal>
   </section>
 </template>
 
 <style scoped>
-.content-page{display:grid;gap:16px;max-width:1440px;margin:0 auto;padding-bottom:48px}.page-tabs button{display:inline-flex;align-items:center;gap:7px}.revision-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;border:1px solid color-mix(in srgb,var(--success) 45%,var(--border-color));border-radius:var(--radius-input);background:var(--success-soft);color:var(--success-strong)}.revision-bar.pending{border-color:color-mix(in srgb,var(--warning) 45%,var(--border-color));background:var(--warning-soft);color:var(--warning-strong)}.revision-bar span{display:flex;align-items:center;gap:8px;font-weight:600}.revision-bar i{width:7px;height:7px;border-radius:50%;background:currentColor}.revision-bar small{color:var(--text-muted)}.section-heading{display:flex;align-items:end;justify-content:space-between;gap:24px;padding:24px 0 6px}.section-heading.compact{padding-top:10px}.section-heading h2{margin:2px 0 4px;font-size:clamp(24px,3vw,34px);line-height:1.15;letter-spacing:-.03em}.section-heading p{max-width:680px;margin:0;color:var(--text-muted)}.section-kicker{color:var(--accent);font-size:12px;font-weight:700;letter-spacing:.08em}.toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border:1px solid var(--border-color);border-radius:var(--radius-card);background:var(--bg-surface)}.toolbar>span{color:var(--text-muted);font-size:12px}.searchbox{display:flex;align-items:center;gap:8px;min-width:min(420px,100%);padding:0 11px;border:1px solid var(--border-color);border-radius:var(--radius-input);background:var(--bg-base);color:var(--text-muted)}.searchbox input{width:100%;min-height:38px;border:0;outline:0;background:transparent;color:var(--text-main);font:inherit}.event-list{display:grid;gap:10px}.event-card{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;align-items:center;gap:18px;padding:16px;border:1px solid var(--border-color);border-radius:var(--radius-card);background:var(--bg-surface);box-shadow:var(--shadow-card);transition:transform .2s var(--ease-out),border-color .2s ease}.event-card:hover{transform:translateY(-1px);border-color:var(--border-strong)}.event-date{display:grid;place-items:center;width:58px;height:64px;border-radius:12px;background:var(--accent-soft);color:var(--accent)}.event-date strong{font-size:24px;line-height:1}.event-date span{font-size:11px}.title-line{display:flex;align-items:center;gap:9px}.title-line h3,.pet-card h3,.menu-card h3,.command-group h3,.game-group h3{margin:0}.event-copy p{margin:4px 0 0;color:var(--text-muted);font-size:12px}.event-metric{display:grid;text-align:center}.event-metric span{color:var(--text-muted);font-size:11px}.event-metric strong{font-size:22px;font-variant-numeric:tabular-nums}.status-mark{display:inline-flex;width:max-content;align-items:center;padding:3px 8px;border-radius:6px;background:var(--bg-elevated);color:var(--text-muted);font-size:11px;font-weight:700}.status-mark[data-status='进行中'],.status-mark[data-status='active']{background:var(--success-soft);color:var(--success-strong)}.status-mark[data-status='待开始'],.status-mark[data-status='limited']{background:var(--warning-soft);color:var(--warning-strong)}.status-mark[data-status='hidden']{background:var(--accent-soft);color:var(--accent)}.status-mark[data-status='disabled'],.status-mark[data-status='已停用']{background:var(--danger-soft);color:var(--danger)}.sub-tabs{display:flex;gap:6px}.sub-tabs button{display:inline-flex;align-items:center;gap:6px;padding:8px 13px;border:1px solid transparent;border-radius:var(--radius-btn);background:transparent;color:var(--text-muted);font:inherit;cursor:pointer}.sub-tabs button.active{border-color:var(--border-color);background:var(--bg-surface);color:var(--text-main);box-shadow:var(--shadow-card)}.pet-grid,.menu-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.pet-card{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:14px;padding:16px;border:1px solid var(--border-color);border-radius:var(--radius-card);background:var(--bg-surface);color:inherit;text-align:left;cursor:pointer}.pet-card p{margin:3px 0;color:var(--text-muted)}.pet-card small{color:var(--text-muted)}.pet-avatar{display:grid;place-items:center;width:54px;height:54px;overflow:hidden;border-radius:15px;background:var(--accent-soft);color:var(--accent)}.pet-avatar img{width:100%;height:100%;object-fit:cover}.bulk-bar{display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding:12px 14px;border:1px solid var(--border-color);border-radius:var(--radius-card);background:var(--bg-elevated)}.bulk-bar>span{margin-right:auto;color:var(--text-muted)}.bulk-bar select,.bulk-bar>input{min-height:36px;padding:6px 9px;border:1px solid var(--border-color);border-radius:var(--radius-input);background:var(--bg-base);color:var(--text-main)}.check-all{display:flex;align-items:center;gap:7px;font-weight:600}.responsive-list{display:grid;gap:8px}.asset-row{display:grid;grid-template-columns:auto minmax(190px,1fr) auto auto auto;align-items:center;gap:14px;padding:13px 15px;border:1px solid var(--border-color);border-radius:12px;background:var(--bg-surface)}.asset-main{display:grid;min-width:0}.asset-main small{overflow:hidden;color:var(--text-muted);text-overflow:ellipsis;white-space:nowrap}.price-copy{color:var(--text-muted);font-size:12px}.price-copy b{color:var(--text-main);font-size:15px}.shop-row{grid-template-columns:auto minmax(180px,1fr) repeat(3,minmax(90px,120px)) auto}.shop-row label{display:grid;gap:3px}.shop-row label span{color:var(--text-muted);font-size:10px}.shop-row label input{width:100%;min-height:34px;padding:5px 8px;border:1px solid var(--border-color);border-radius:7px;background:var(--bg-base);color:var(--text-main)}.command-groups,.game-groups{display:grid;gap:16px}.command-group,.game-group{overflow:hidden;border:1px solid var(--border-color);border-radius:var(--radius-card);background:var(--bg-surface)}.command-group>header,.game-group>header{padding:14px 16px;background:var(--bg-elevated)}.command-group header span,.game-group header span{color:var(--text-muted);font-size:11px}.command-row{display:grid;width:100%;grid-template-columns:auto minmax(0,1fr) auto auto auto;align-items:center;gap:14px;padding:13px 16px;border:0;border-top:1px solid var(--border-color);background:transparent;color:inherit;text-align:left;cursor:pointer}.command-row:hover{background:var(--bg-hover)}.command-icon{display:grid;place-items:center;width:34px;height:34px;border-radius:9px;background:var(--accent-soft);color:var(--accent)}.command-copy{display:grid}.command-copy small{color:var(--text-muted)}.command-trigger{padding:5px 8px;border-radius:7px;background:var(--bg-base);color:var(--text-muted);font-size:12px}.menu-card{overflow:hidden;border:1px solid var(--border-color);border-radius:var(--radius-card);background:var(--bg-surface)}.menu-card>header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border-bottom:1px solid var(--border-color)}.menu-card header span{color:var(--text-muted);font-size:10px}.qq-preview{display:flex;align-items:flex-start;gap:10px;min-height:150px;padding:18px;background:color-mix(in srgb,var(--bg-base) 84%,#95afc7)}.qq-preview.large{min-height:190px;border-radius:12px}.qq-avatar{display:grid;flex:0 0 auto;place-items:center;width:38px;height:38px;border-radius:11px;background:var(--accent);color:var(--accent-ink)}.qq-message{position:relative;max-width:78%;padding:10px 12px;border-radius:3px 12px 12px;background:var(--bg-surface);box-shadow:var(--shadow-soft);white-space:pre-wrap}.setting-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;background:var(--border-color)}.setting-card{display:grid;align-content:space-between;gap:16px;min-height:150px;padding:17px;background:var(--bg-surface)}.setting-copy p{margin:4px 0 0;color:var(--text-muted);font-size:12px}.switch-control{display:flex;align-items:center;gap:9px;cursor:pointer}.switch-control>input{position:absolute;opacity:0}.switch-track{position:relative;width:42px;height:24px;border-radius:12px;background:var(--border-strong);transition:background .2s}.switch-track i{position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:var(--bg-surface);box-shadow:0 2px 6px rgba(0,0,0,.18);transition:transform .2s}.switch-control input:checked+.switch-track{background:var(--accent)}.switch-control input:checked+.switch-track i{transform:translateX(18px)}.switch-control input:focus-visible+.switch-track{outline:2px solid var(--accent);outline-offset:2px}.switch-control b{font-size:12px}.number-control{display:flex;align-items:center;width:min(220px,100%);border:1px solid var(--border-color);border-radius:var(--radius-input);background:var(--bg-base)}.number-control input{width:100%;min-width:0;padding:8px 10px;border:0;outline:0;background:transparent;color:var(--text-main);font:inherit;font-variant-numeric:tabular-nums}.number-control span{padding-right:10px;color:var(--text-muted);font-size:12px}.list-control{display:grid;gap:9px}.tag-list{display:flex;gap:6px;flex-wrap:wrap}.tag-list span{padding:3px 8px;border-radius:6px;background:var(--accent-soft);color:var(--accent);font-size:11px;font-weight:600}.list-control input,.text-control{width:100%;min-height:38px;padding:7px 9px;border:1px solid var(--border-color);border-radius:var(--radius-input);background:var(--bg-base);color:var(--text-main);font:inherit}.drawer-help{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:start;gap:11px;padding:14px;border-radius:12px;background:var(--accent-soft);color:var(--accent)}.drawer-help p{margin:3px 0 0;color:var(--text-muted);font-size:12px}.form-grid{display:grid;gap:14px;margin-top:16px}.form-grid.two{grid-template-columns:repeat(2,minmax(0,1fr))}.form-grid label,.reward-meta label{display:grid;gap:5px}.form-grid label>span,.reward-meta label>span{color:var(--text-muted);font-size:11px}.form-grid input,.form-grid select,.form-grid textarea,.reward-meta input,.reward-items input,.reward-items select{width:100%;min-height:40px;padding:8px 10px;border:1px solid var(--border-color);border-radius:var(--radius-input);background:var(--bg-base);color:var(--text-main);font:inherit}.form-grid textarea{resize:vertical}.switch-field{grid-template-columns:auto 1fr;align-items:center}.switch-field>span{grid-column:1/-1}.switch-field input{width:auto;min-height:auto}.switch-field b{font-size:12px}.drawer-section{display:grid;gap:11px;margin-top:22px}.drawer-section>header{display:flex;align-items:end;justify-content:space-between;gap:12px;padding-bottom:8px;border-bottom:1px solid var(--border-color)}.drawer-section h3{margin:0}.drawer-section header span{color:var(--text-muted);font-size:10px}.text-button{display:inline-flex;align-items:center;gap:5px;padding:5px;border:0;background:transparent;color:var(--accent);font:inherit;font-size:12px;font-weight:600;cursor:pointer}.choice-list{display:grid;gap:7px}.choice-list label{display:grid;grid-template-columns:28px 1fr auto;align-items:center;gap:7px}.choice-list label b{display:grid;place-items:center;width:28px;height:28px;border-radius:8px;background:var(--accent-soft);color:var(--accent)}.choice-list input{min-height:38px;padding:7px 9px;border:1px solid var(--border-color);border-radius:var(--radius-input);background:var(--bg-base);color:var(--text-main)}.choice-list button,.reward-group button,.reward-items button{border:0;background:transparent;color:var(--text-muted);cursor:pointer}.reward-group{display:grid;gap:10px;padding:13px;border:1px solid var(--border-color);border-radius:12px}.reward-group>header{display:flex;align-items:center;justify-content:space-between}.reward-meta{display:grid;grid-template-columns:130px 1fr;gap:9px}.reward-items{display:grid;gap:7px}.reward-items>div{display:grid;grid-template-columns:1fr 90px auto;gap:7px}.cumulative-preview{display:grid;gap:6px;padding:10px;border-radius:9px;background:var(--bg-elevated)}.cumulative-preview>span{color:var(--text-muted);font-size:10px}.cumulative-preview>div{display:flex;gap:6px;flex-wrap:wrap}.cumulative-preview b{padding:3px 7px;border-radius:6px;background:var(--bg-surface);font-size:11px}.technical-field{padding:11px;border:1px dashed var(--border-color);border-radius:10px}.technical-field summary{cursor:pointer;color:var(--text-muted)}.technical-field label{margin-top:10px}.drawer-actions{display:flex;align-items:center;gap:8px}.drawer-actions>span{flex:1}.btn-small{min-height:32px!important;padding:5px 9px!important;font-size:12px!important}
-.toolbar-actions{display:flex;gap:8px}.upload-button{position:relative;overflow:hidden}.upload-button input{position:absolute;inset:0;opacity:0;cursor:pointer}.image-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.image-card{display:grid;grid-template-columns:84px minmax(0,1fr);gap:12px;padding:13px;border:1px solid var(--border-color);border-radius:var(--radius-card);background:var(--bg-surface)}.image-card>div:nth-child(2){display:grid;align-content:center;min-width:0}.image-card small{overflow:hidden;color:var(--text-muted);text-overflow:ellipsis;white-space:nowrap}.image-preview{display:grid;place-items:center;min-height:76px;overflow:hidden;border-radius:11px;background:var(--bg-elevated);color:var(--text-muted)}.image-preview img{width:100%;height:100%;object-fit:cover}.image-preview.large{min-height:240px}.image-actions{display:flex;grid-column:1/-1;gap:7px}.upload-field input{padding:10px}
-@media(max-width:900px){.shop-row{grid-template-columns:auto minmax(160px,1fr) repeat(3,86px) auto}.pet-grid,.menu-grid{grid-template-columns:1fr}.image-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:700px){.content-page{gap:12px}.section-heading{align-items:stretch;flex-direction:column}.section-heading>.btn{width:100%}.revision-bar,.toolbar{align-items:stretch;flex-direction:column}.searchbox{min-width:0;width:100%}.event-card{grid-template-columns:auto minmax(0,1fr)}.event-metric{display:none}.event-card>.btn{grid-column:1/-1;width:100%}.bulk-bar{align-items:stretch}.bulk-bar>*{width:100%}.responsive-list{gap:10px}.asset-row,.shop-row{grid-template-columns:auto minmax(0,1fr);align-items:start}.asset-row>.status-mark,.asset-row>.price-copy,.asset-row>.btn,.shop-row>label{grid-column:2}.shop-row>label{display:grid;grid-template-columns:90px minmax(0,1fr);align-items:center}.command-row{grid-template-columns:auto minmax(0,1fr) auto}.command-trigger{grid-column:2}.command-row>.status-mark{grid-column:2}.setting-grid{grid-template-columns:1fr}.form-grid.two,.reward-meta{grid-template-columns:1fr}.drawer-help{grid-template-columns:auto 1fr}.drawer-help>.btn{grid-column:1/-1}.reward-items>div{grid-template-columns:minmax(0,1fr) 72px auto}.drawer-actions{flex-wrap:wrap}.drawer-actions>span{display:none}.drawer-actions .btn{flex:1 1 auto}}
-@media(max-width:600px){.image-grid{grid-template-columns:1fr}.toolbar-actions{width:100%}.toolbar-actions>*{flex:1}}
+.content-page{display:grid;gap:12px;max-width:1440px;margin:0 auto;padding-bottom:48px}
+.workspace-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.workspace-bar .page-tabs{margin:0;flex:1;min-width:min(520px,100%)}
+.page-tabs button{display:inline-flex;align-items:center;gap:7px}
+.workspace-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.revision-chip{display:flex;align-items:center;gap:8px;margin:0;color:var(--text-muted);font-size:12px}
+.revision-chip i{width:7px;height:7px;border-radius:50%;background:var(--success-strong)}
+.revision-chip.pending i{background:var(--warning-strong)}
+.revision-chip.pending{color:var(--warning-strong)}
+.compact-state{min-height:120px!important;padding:22px!important}
+.toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;border:1px solid var(--border-color);border-radius:var(--radius-card);background:var(--bg-surface)}
+.toolbar-count{color:var(--text-muted);font-size:12px;white-space:nowrap}
+.toolbar select{min-height:38px;padding:0 10px;border:1px solid var(--border-color);border-radius:var(--radius-input);background:var(--bg-base);color:var(--text-main);font:inherit}
+.searchbox{display:flex;align-items:center;gap:8px;flex:1;min-width:min(220px,100%);padding:0 11px;border:1px solid var(--border-color);border-radius:var(--radius-input);background:var(--bg-base);color:var(--text-muted)}
+.searchbox input{width:100%;min-height:38px;border:0;outline:0;background:transparent;color:var(--text-main);font:inherit}.event-list{display:grid;gap:10px}.event-card{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;align-items:center;gap:18px;padding:16px;border:1px solid var(--border-color);border-radius:var(--radius-card);background:var(--bg-surface);box-shadow:var(--shadow-card);transition:transform .2s var(--ease-out),border-color .2s ease}.event-card:hover{transform:translateY(-1px);border-color:var(--border-strong)}.event-date{display:grid;place-items:center;width:58px;height:64px;border-radius:12px;background:var(--accent-soft);color:var(--accent)}.event-date strong{font-size:24px;line-height:1}.event-date span{font-size:11px}.title-line{display:flex;align-items:center;gap:9px}.title-line h3,.pet-card h3,.menu-card h3,.command-group h3,.game-group h3{margin:0}.event-copy p{margin:4px 0 0;color:var(--text-muted);font-size:12px}.event-metric{display:grid;text-align:center}.event-metric span{color:var(--text-muted);font-size:11px}.event-metric strong{font-size:22px;font-variant-numeric:tabular-nums}.status-mark{display:inline-flex;width:max-content;align-items:center;padding:3px 8px;border-radius:6px;background:var(--bg-elevated);color:var(--text-muted);font-size:11px;font-weight:700}.status-mark[data-status='进行中'],.status-mark[data-status='active']{background:var(--success-soft);color:var(--success-strong)}.status-mark[data-status='待开始'],.status-mark[data-status='limited']{background:var(--warning-soft);color:var(--warning-strong)}.status-mark[data-status='hidden']{background:var(--accent-soft);color:var(--accent)}.status-mark[data-status='disabled'],.status-mark[data-status='已停用']{background:var(--danger-soft);color:var(--danger)}.sub-tabs{display:flex;gap:6px}.sub-tabs button{display:inline-flex;align-items:center;gap:6px;padding:8px 13px;border:1px solid transparent;border-radius:var(--radius-btn);background:transparent;color:var(--text-muted);font:inherit;cursor:pointer}.sub-tabs button.active{border-color:var(--border-color);background:var(--bg-surface);color:var(--text-main);box-shadow:var(--shadow-card)}
+.pet-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.menu-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.pet-card{display:grid;overflow:hidden;padding:0;border:1px solid var(--border-color);border-radius:var(--radius-card);background:var(--bg-surface);color:inherit;text-align:left;cursor:pointer;transition:border-color .2s ease,transform .2s var(--ease-out)}
+.pet-card:hover{border-color:var(--border-strong);transform:translateY(-1px)}
+.pet-meta{display:grid;gap:6px;padding:12px 14px 14px}
+.pet-card p{display:-webkit-box;margin:0;overflow:hidden;color:var(--text-muted);-webkit-box-orient:vertical;-webkit-line-clamp:2}
+.pet-chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{padding:3px 8px;border-radius:999px;background:var(--bg-elevated);color:var(--text-muted);font-size:11px;font-weight:600}
+.chip.is-warn{background:var(--warning-soft);color:var(--warning-strong)}
+.bulk-bar{display:flex;position:sticky;top:8px;z-index:5;align-items:center;gap:9px;flex-wrap:wrap;padding:10px 12px;border:1px solid var(--border-color);border-radius:var(--radius-card);background:var(--bg-elevated)}
+.bulk-bar>span{margin-right:auto;color:var(--text-muted)}
+.bulk-bar select,.bulk-bar>input{min-height:36px;padding:6px 9px;border:1px solid var(--border-color);border-radius:var(--radius-input);background:var(--bg-base);color:var(--text-main)}
+.check-all{display:flex;align-items:center;gap:7px;font-weight:600}
+.check-col,.thumb-col{width:44px}
+.num-col{font-variant-numeric:tabular-nums;text-align:right}
+.asset-main{display:grid;min-width:0}
+.asset-main small{overflow:hidden;color:var(--text-muted);text-overflow:ellipsis;white-space:nowrap}
+.cell-input{width:88px;min-height:34px;padding:5px 8px;border:1px solid var(--border-color);border-radius:7px;background:var(--bg-base);color:var(--text-main);font:inherit;font-variant-numeric:tabular-nums}
+.stock-cell{display:grid;gap:6px;min-width:160px}
+.stock-edits{display:flex;gap:6px}
+.stock-meter{position:relative;display:grid;align-items:center;height:22px;overflow:hidden;border-radius:6px;background:var(--bg-elevated)}
+.stock-meter i{position:absolute;inset:0 auto 0 0;background:var(--success-soft)}
+.stock-meter[data-tone=mid] i{background:var(--warning-soft)}
+.stock-meter[data-tone=low] i{background:var(--danger-soft)}
+.stock-meter span{position:relative;padding:0 8px;font-size:11px;font-variant-numeric:tabular-nums}
+.pet-cell{display:flex;align-items:center;gap:10px}
+.image-gallery{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.image-tile{position:relative;overflow:hidden;aspect-ratio:4/3;border:1px solid var(--border-color);border-radius:var(--radius-card);background:var(--bg-surface);cursor:pointer}
+.image-tile.is-empty{border-style:dashed}
+.image-caption{position:absolute;right:0;bottom:0;left:0;display:grid;gap:2px;padding:10px 12px;background:linear-gradient(transparent,color-mix(in srgb,var(--bg-base) 88%,transparent));}
+.image-caption small{overflow:hidden;color:var(--text-muted);text-overflow:ellipsis;white-space:nowrap;font-size:11px}
+.image-actions{display:flex;gap:6px;opacity:0;transition:opacity .15s ease}
+.image-tile:hover .image-actions,.image-tile:focus-within .image-actions{opacity:1}
+.command-groups,.game-groups{display:grid;gap:16px}.command-group,.game-group{overflow:hidden;border:1px solid var(--border-color);border-radius:var(--radius-card);background:var(--bg-surface)}.command-group>header,.game-group>header{padding:14px 16px;background:var(--bg-elevated)}.command-group header span,.game-group header span{color:var(--text-muted);font-size:11px}.command-row{display:grid;width:100%;grid-template-columns:auto minmax(0,1fr) auto auto auto;align-items:center;gap:14px;padding:13px 16px;border:0;border-top:1px solid var(--border-color);background:transparent;color:inherit;text-align:left;cursor:pointer}.command-row:hover{background:var(--bg-hover)}.command-icon{display:grid;place-items:center;width:34px;height:34px;border-radius:9px;background:var(--accent-soft);color:var(--accent)}.command-copy{display:grid}.command-copy small{color:var(--text-muted)}.command-trigger{padding:5px 8px;border-radius:7px;background:var(--bg-base);color:var(--text-muted);font-size:12px}.menu-card{overflow:hidden;border:1px solid var(--border-color);border-radius:var(--radius-card);background:var(--bg-surface)}.menu-card>header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border-bottom:1px solid var(--border-color)}.menu-card header span{color:var(--text-muted);font-size:10px}.qq-preview{display:flex;align-items:flex-start;gap:10px;min-height:150px;padding:18px;background:color-mix(in srgb,var(--bg-base) 84%,#95afc7)}.qq-preview.large{min-height:190px;border-radius:12px}.qq-avatar{display:grid;flex:0 0 auto;place-items:center;width:38px;height:38px;border-radius:11px;background:var(--accent);color:var(--accent-ink)}.qq-message{position:relative;max-width:78%;padding:10px 12px;border-radius:3px 12px 12px;background:var(--bg-surface);box-shadow:var(--shadow-soft);white-space:pre-wrap}.setting-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;background:var(--border-color)}.setting-card{display:grid;align-content:space-between;gap:16px;min-height:150px;padding:17px;background:var(--bg-surface)}.setting-copy p{margin:4px 0 0;color:var(--text-muted);font-size:12px}.switch-control{display:flex;align-items:center;gap:9px;cursor:pointer}.switch-control>input{position:absolute;opacity:0}.switch-track{position:relative;width:42px;height:24px;border-radius:12px;background:var(--border-strong);transition:background .2s}.switch-track i{position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:var(--bg-surface);box-shadow:0 2px 6px rgba(0,0,0,.18);transition:transform .2s}.switch-control input:checked+.switch-track{background:var(--accent)}.switch-control input:checked+.switch-track i{transform:translateX(18px)}.switch-control input:focus-visible+.switch-track{outline:2px solid var(--accent);outline-offset:2px}.switch-control b{font-size:12px}.number-control{display:flex;align-items:center;width:min(220px,100%);border:1px solid var(--border-color);border-radius:var(--radius-input);background:var(--bg-base)}.number-control input{width:100%;min-width:0;padding:8px 10px;border:0;outline:0;background:transparent;color:var(--text-main);font:inherit;font-variant-numeric:tabular-nums}.number-control span{padding-right:10px;color:var(--text-muted);font-size:12px}.list-control{display:grid;gap:9px}.tag-list{display:flex;gap:6px;flex-wrap:wrap}.tag-list span{padding:3px 8px;border-radius:6px;background:var(--accent-soft);color:var(--accent);font-size:11px;font-weight:600}.list-control input,.text-control{width:100%;min-height:38px;padding:7px 9px;border:1px solid var(--border-color);border-radius:var(--radius-input);background:var(--bg-base);color:var(--text-main);font:inherit}.drawer-help{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:start;gap:11px;padding:14px;border-radius:12px;background:var(--accent-soft);color:var(--accent)}.drawer-help p{margin:3px 0 0;color:var(--text-muted);font-size:12px}.form-grid{display:grid;gap:14px;margin-top:16px}.form-grid.two{grid-template-columns:repeat(2,minmax(0,1fr))}.form-grid label,.reward-meta label{display:grid;gap:5px}.form-grid label>span,.reward-meta label>span{color:var(--text-muted);font-size:11px}.form-grid input,.form-grid select,.form-grid textarea,.reward-meta input,.reward-items input,.reward-items select{width:100%;min-height:40px;padding:8px 10px;border:1px solid var(--border-color);border-radius:var(--radius-input);background:var(--bg-base);color:var(--text-main);font:inherit}.form-grid textarea{resize:vertical}.switch-field{grid-template-columns:auto 1fr;align-items:center}.switch-field>span{grid-column:1/-1}.switch-field input{width:auto;min-height:auto}.switch-field b{font-size:12px}.drawer-section{display:grid;gap:11px;margin-top:22px}.drawer-section>header{display:flex;align-items:end;justify-content:space-between;gap:12px;padding-bottom:8px;border-bottom:1px solid var(--border-color)}.drawer-section h3{margin:0}.drawer-section header span{color:var(--text-muted);font-size:10px}.text-button{display:inline-flex;align-items:center;gap:5px;padding:5px;border:0;background:transparent;color:var(--accent);font:inherit;font-size:12px;font-weight:600;cursor:pointer}.choice-list{display:grid;gap:7px}.choice-list label{display:grid;grid-template-columns:28px 1fr auto;align-items:center;gap:7px}.choice-list label b{display:grid;place-items:center;width:28px;height:28px;border-radius:8px;background:var(--accent-soft);color:var(--accent)}.choice-list input{min-height:38px;padding:7px 9px;border:1px solid var(--border-color);border-radius:var(--radius-input);background:var(--bg-base);color:var(--text-main)}.choice-list button,.reward-group button,.reward-items button{border:0;background:transparent;color:var(--text-muted);cursor:pointer}.reward-group{display:grid;gap:10px;padding:13px;border:1px solid var(--border-color);border-radius:12px}.reward-group>header{display:flex;align-items:center;justify-content:space-between}.reward-meta{display:grid;grid-template-columns:130px 1fr;gap:9px}.reward-items{display:grid;gap:7px}.reward-items>div{display:grid;grid-template-columns:1fr 90px auto;gap:7px}.cumulative-preview{display:grid;gap:6px;padding:10px;border-radius:9px;background:var(--bg-elevated)}.cumulative-preview>span{color:var(--text-muted);font-size:10px}.cumulative-preview>div{display:flex;gap:6px;flex-wrap:wrap}.cumulative-preview b{padding:3px 7px;border-radius:6px;background:var(--bg-surface);font-size:11px}.technical-field{padding:11px;border:1px dashed var(--border-color);border-radius:10px}.technical-field summary{cursor:pointer;color:var(--text-muted)}.technical-field label{margin-top:10px}.drawer-actions{display:flex;align-items:center;gap:8px}.drawer-actions>span{flex:1}.btn-small{min-height:32px!important;padding:5px 9px!important;font-size:12px!important}
+.toolbar-actions{display:flex;gap:8px}.upload-button{position:relative;overflow:hidden}.upload-button input{position:absolute;inset:0;opacity:0;cursor:pointer}.image-preview{display:grid;place-items:center;min-height:76px;overflow:hidden;border-radius:11px;background:var(--bg-elevated);color:var(--text-muted)}.image-preview img{width:100%;height:100%;object-fit:cover}.image-preview.large{min-height:240px}.upload-field input{padding:10px}
+@media(max-width:1100px){.pet-grid,.image-gallery{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:900px){.menu-grid{grid-template-columns:1fr}}
+@media(max-width:700px){.content-page{gap:12px}.workspace-bar,.toolbar{align-items:stretch;flex-direction:column}.searchbox{min-width:0;width:100%}.event-card{grid-template-columns:auto minmax(0,1fr)}.event-metric{display:none}.event-card>.btn{grid-column:1/-1;width:100%}.bulk-bar{align-items:stretch}.bulk-bar>*{width:100%}.pet-grid,.image-gallery{grid-template-columns:1fr}.command-row{grid-template-columns:auto minmax(0,1fr) auto}.command-trigger{grid-column:2}.command-row>.status-mark{grid-column:2}.setting-grid{grid-template-columns:1fr}.form-grid.two,.reward-meta{grid-template-columns:1fr}.drawer-help{grid-template-columns:auto 1fr}.drawer-help>.btn{grid-column:1/-1}.reward-items>div{grid-template-columns:minmax(0,1fr) 72px auto}.drawer-actions{flex-wrap:wrap}.drawer-actions>span{display:none}.drawer-actions .btn{flex:1 1 auto}.image-actions{opacity:1}}
+@media(max-width:600px){.toolbar-actions{width:100%}.toolbar-actions>*{flex:1}}
+.editor-image{margin-bottom:4px}
+.message-studio{display:grid;grid-template-columns:minmax(260px,360px) minmax(0,1fr);gap:14px}.message-catalog{display:grid;align-content:start;gap:7px;max-height:680px;overflow:auto}.message-catalog button{display:grid;gap:4px;padding:12px;border:1px solid var(--border-color);border-radius:11px;background:var(--bg-surface);color:inherit;text-align:left;cursor:pointer}.message-catalog button.active{border-color:var(--accent);background:var(--accent-soft)}.message-catalog small,.message-catalog span{color:var(--text-muted);font-size:11px}.message-catalog span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.message-preview-panel{display:grid;align-content:start;gap:14px;padding:17px;border:1px solid var(--border-color);border-radius:var(--radius-card);background:var(--bg-surface)}.message-preview-panel>header{display:flex;align-items:start;justify-content:space-between;gap:12px}.message-preview-panel h3{margin:2px 0 5px}.message-preview-panel header span,.template-note>span,.message-variable-grid span{color:var(--text-muted);font-size:10px}.message-preview-panel header label{display:grid;gap:4px}.message-preview-panel select,.message-variable-grid input{min-height:36px;padding:6px 9px;border:1px solid var(--border-color);border-radius:var(--radius-input);background:var(--bg-base);color:var(--text-main)}.message-variable-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.message-variable-grid label{display:grid;gap:4px}.template-note{display:grid;gap:5px;padding:10px;border-radius:9px;background:var(--bg-elevated)}.template-note code{white-space:pre-wrap}
+@media(max-width:900px){.message-studio{grid-template-columns:1fr}.message-catalog{grid-template-columns:repeat(2,minmax(0,1fr));max-height:none}}
+@media(max-width:700px){.message-catalog,.message-variable-grid{grid-template-columns:1fr}.message-preview-panel>header{flex-direction:column}.message-preview-panel header label{width:100%}}
+.pet-editor{display:grid;gap:4px}.pet-step{padding:14px;border:1px solid var(--border-color);border-radius:var(--radius-card);background:var(--bg-elevated)}.pet-step>header b{color:var(--text-muted);font-size:11px;font-weight:500}.wide-field{grid-column:1/-1}.attribute-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.attribute-grid label{display:grid;grid-template-columns:minmax(90px,1fr) minmax(90px,1fr);align-items:center;gap:8px;padding:8px 10px;border-radius:9px;background:var(--bg-surface)}.attribute-grid span,.path-field span{color:var(--text-muted);font-size:11px}.attribute-grid input,.path-field input,.pet-image-grid>article>input{width:100%;min-height:36px;padding:6px 9px;border:1px solid var(--border-color);border-radius:var(--radius-input);background:var(--bg-base);color:var(--text-main);font:inherit}.bonus-grid{margin-top:0}.path-field{display:grid;gap:5px}.pet-image-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.pet-image-grid article{display:grid;align-content:start;gap:8px;padding:11px;border:1px solid var(--border-color);border-radius:11px;background:var(--bg-surface)}.pet-image-grid h4{margin:0;font-size:13px}
+@media(max-width:700px){.attribute-grid,.pet-image-grid{grid-template-columns:1fr}.pet-step>header{align-items:start;flex-direction:column}.wide-field{grid-column:auto}}
 </style>

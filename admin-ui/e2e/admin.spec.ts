@@ -16,7 +16,10 @@ async function mockAdminApi(page: Page) {
     if(path==='/api/admin/communities') return ok({items:[{ID:'qq_group:app:group-1',Platform:'qq_group',SceneType:'group',Level:2,Materials:300,NotificationsEnabled:true,member_count:8,squad_count:2,open_help_count:1}],total:1,page:1,limit:100})
     if(path.startsWith('/api/admin/communities/')) return ok({community:{ID:'qq_group:app:group-1',Level:2,Materials:300,NotificationsEnabled:true},members:[],facilities:[],squads:[],bosses:[],help_requests:[],votes:[]})
     if(path==='/api/admin/platforms/status') return ok({onebot:{connected:true,connection_count:1},qq_official:{configured:true,connected:true,masked_app_id:'***6789',app_secret_configured:true,session_state:'running',connected_shards:1,recommended_shards:1,queue_depth:0,capabilities:{group:true,guild:true,markdown:false,keyboard:false,interaction:false}}})
-    if(path==='/api/admin/groups') return route.fulfill({status:200,contentType:'application/json',body:'[]'})
+    if(path==='/api/admin/groups') return ok([])
+    if(path==='/api/admin/content/messages') return ok([{key:'pet.status',description:'宠物状态',template:'🐾 {pet_name}的近况',variables:{pet_name:'诺诺'},sample:'🐾 诺诺的近况'}])
+    if(path.startsWith('/api/admin/content/messages/')&&path.endsWith('/preview')) return ok({key:'pet.status',platform:'onebot',sender:'QQ 宠物机器人',text:'🐾 诺诺的近况'})
+    if(path.startsWith('/api/admin/config/')&&path.endsWith('/meta')) return ok({schema:path.split('/').at(-2),consumers:['统一领域服务'],effective_revision:2,db_revision:2,pending_reload:false})
     if(path==='/api/admin/config/live_events') return ok([{id:1,key:'forest-week',name:'森林调查周',region:'森林',story_choices:'["记录线索","继续调查","呼叫支援"]',starts_at:'2026-08-12T00:00:00Z',ends_at:'2026-08-19T00:00:00Z',active:true}])
     if(path==='/api/admin/config/reward_tracks') return ok([{id:1,event_key:'forest-week',milestone:100,item_name:'调查记录',quantity:10,description:'基础调查奖励'}])
     if(path==='/api/admin/config/pet_species') return ok([{Name:'诺诺',Image:'',FavoriteFood:'小鱼干',FavoriteGift:'铃铛',Health:100,Wisdom:20,Strength:18,Defense:16,Hunger:100,Description:'活泼的探索伙伴'}])
@@ -26,7 +29,7 @@ async function mockAdminApi(page: Page) {
     if(path==='/api/admin/config/commands') return ok([{FuncName:'status',Command:'状态',DisplayName:'查看宠物状态',Category:'基础',Description:'查看宠物近况与当前远征',Enabled:true,SortOrder:1}])
     if(path==='/api/admin/config/menus') return ok([{Name:'主菜单',Reply:'【宠物远征生态】\n状态｜今日｜远征'}])
     if(path==='/api/admin/settings/game') return ok([{key:'Core.InitialCoin',label:'初始货币',group:'基础设置',type:'number',unit:'枚',description:'新玩家建立存档时获得的基础货币。',value:100}])
-    if(path==='/api/admin/platforms/config') return ok({listen_address:'0.0.0.0',port:8080,onebot:{token_configured:true},qq_official:{app_id:'12345678',app_secret_configured:true,api_base:'https://api.sgroup.qq.com',token_url:'https://bots.qq.com/app/getAppAccessToken',shard_count:1,markdown_enabled:false,keyboard_enabled:false,interaction_enabled:false,audit_enabled:false,group_events_enabled:true,guild_events_enabled:true}})
+    if(path==='/api/admin/platforms/config') return ok({listen_address:'127.0.0.1',port:8080,onebot:{token_configured:true},qq_official:{app_id:'12345678',app_secret_configured:true,api_base:'https://api.sgroup.qq.com',token_url:'https://bots.qq.com/app/getAppAccessToken',shard_count:1,markdown_enabled:false,keyboard_enabled:false,interaction_enabled:false,audit_enabled:false,group_events_enabled:true,guild_events_enabled:true}})
     if(path==='/api/admin/config/system') return ok([{Key:'Text.Welcome',Value:'欢迎来到宠物远征生态'}])
     if(path==='/api/admin/config/work_settings') return ok([{Name:'旧打工',Time:60,HungerCost:10,RewardCoin:20,RewardItems:''}])
     if(path==='/api/admin/config/checkin_rewards') return ok([{ID:1,Type:'checkin_weekly',Day:'1',Currency:10,Affection:1,Items:''}])
@@ -41,7 +44,10 @@ test.beforeEach(async({page})=>{await mockAdminApi(page)})
 test('七大领域导航与核心数据可用',async({page})=>{
   await page.goto('')
   await expect(page.getByRole('heading',{name:'宠物远征运营总览'})).toBeVisible()
-  for(const [path,heading] of [['players','玩家管理'],['gameplay','玩法运营'],['communities','社群运营'],['content','内容工作台'],['platforms','机器人平台状态'],['system','系统设置']] as const){await page.goto(path);await expect(page.getByRole('heading',{name:heading,exact:true}).first()).toBeVisible()}
+  for(const [path,heading] of [['players','玩家管理'],['gameplay','玩法运营'],['communities','社群运营'],['platforms','机器人平台状态'],['system','系统设置']] as const){await page.goto(path);await expect(page.getByRole('heading',{name:heading,exact:true}).first()).toBeVisible()}
+  await page.goto('content')
+  await expect(page.getByRole('button',{name:'活动运营'})).toBeVisible()
+  await expect(page.getByRole('button',{name:'宠物与物品'})).toBeVisible()
 })
 
 test('成长零数据与内容配置均为完整产品页面',async({page})=>{
@@ -68,12 +74,12 @@ test('成长零数据与内容配置均为完整产品页面',async({page})=>{
   await expect(page.getByRole('dialog',{name:'编辑宠物种类'})).toBeVisible()
   await page.getByRole('button',{name:'关闭'}).click()
   await page.getByRole('button',{name:'物品',exact:true}).click()
-  await page.locator('.asset-row').filter({hasText:'调查记录'}).getByRole('button',{name:'详情'}).click()
+  await page.locator('.desktop-table tr').filter({hasText:'调查记录'}).getByRole('button',{name:'编辑'}).click()
   await expect(page.getByRole('dialog',{name:'编辑物品'})).toBeVisible()
   await page.getByRole('button',{name:'关闭'}).click()
 
   await page.getByRole('button',{name:'商店'}).click()
-  await expect(page.getByLabel('调查记录价格')).toBeVisible()
+  await expect(page.getByLabel('调查记录价格').first()).toBeVisible()
   await page.getByRole('button',{name:'图片资产'}).click()
   await expect(page.getByText('默认宠物图')).toBeVisible()
 
@@ -89,7 +95,25 @@ test('玩家、玩法和平台关键操作入口存在',async({page})=>{
 })
 
 test('当前视口无业务横向溢出且无严重可访问性问题',async({page})=>{
-  for(const path of ['','players','gameplay','communities','content','platforms']){await page.goto(path);expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(await page.evaluate(()=>window.innerWidth));const result=await new AxeBuilder({page}).analyze();expect(result.violations.filter(item=>item.impact==='critical')).toEqual([])}
+  for(const path of ['','players','gameplay','communities','content','platforms']){
+    await page.goto(path)
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(await page.evaluate(()=>window.innerWidth))
+    const coveredByMobileNav=await page.evaluate(()=>{
+      if(window.innerWidth>700)return [] as string[]
+      const content=document.querySelector<HTMLElement>('.content'),nav=document.querySelector<HTMLElement>('.mobile-nav')
+      if(!content||!nav)return ['缺少内容区或移动导航']
+      window.scrollTo(0,document.documentElement.scrollHeight)
+      content.scrollTop=content.scrollHeight
+      const navRect=nav.getBoundingClientRect()
+      return [...content.querySelectorAll<HTMLElement>('button,a,input,select,textarea')]
+        .filter(element=>element.offsetParent!==null&&!element.closest('[role="dialog"]'))
+        .filter(element=>{const rect=element.getBoundingClientRect();return rect.width>0&&rect.height>0&&rect.bottom>navRect.top&&rect.top<navRect.bottom})
+        .map(element=>`${element.tagName.toLowerCase()}.${element.className}:${element.textContent?.trim().slice(0,30)}`)
+    })
+    expect(coveredByMobileNav, `${path||'dashboard'} 有操作被底部导航遮挡`).toEqual([])
+    const result=await new AxeBuilder({page}).analyze()
+    expect(result.violations.filter(item=>item.impact==='critical')).toEqual([])
+  }
 })
 
 test('三套主题关键页面截图验收',async({page},testInfo)=>{

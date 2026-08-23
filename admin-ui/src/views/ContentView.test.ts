@@ -33,10 +33,10 @@ function installApiMock() {
       { id: 1, event_key: 'forest-week', milestone: 100, item_name: '木材', quantity: 2, description: '基础补给' },
       { id: 2, event_key: 'forest-week', milestone: 100, item_name: '绷带', quantity: 1, description: '基础补给' },
     ],
-    pet_species: [{ Name: '团子', Description: '活泼的初始宠物' }],
-    items: [
-      { Name: '木材', Status: 'active', Type: '材料', Description: '森林采集材料' },
-      { Name: '绷带', Status: 'limited', Type: '消耗品', Description: '恢复状态' },
+	pet_species: [{ Name: '团子', Image: '宠物图片\\团子.png', Description: '活泼的初始宠物' }],
+	items: [
+		{ Name: '木材', Status: 'active', Type: '材料', Image: '物品图片\\木材.png', Description: '森林采集材料' },
+		{ Name: '绷带', Status: 'limited', Type: '消耗品', Image: '物品图片\\绷带.png', Description: '恢复状态' },
     ],
     shop_items: [
       { ID: 3, ShopType: 'shop_normal', Name: '绷带', Stock: 4, RestockTarget: 50, Price: 12, Description: '应急用品' },
@@ -88,7 +88,8 @@ function installApiMock() {
     if (path === '/api/admin/config/status') {
       return json({ db_revision: 2, loaded_revision: 2, pending_reload: false, saved_at: null, loaded_at: null })
     }
-    if (path === '/api/admin/settings/game') return json(gameSettings)
+	if (path === '/api/admin/settings/game') return json(gameSettings)
+	if (path === '/api/admin/upload') return json({ message: '图片上传成功', path: '上传/new-pet.png', url: '/images/上传/new-pet.png' })
     if (path.startsWith('/api/admin/config/')) {
       return json(schemas[path.replace('/api/admin/config/', '')] ?? [])
     }
@@ -156,16 +157,15 @@ describe('ContentView 内容工作台', () => {
     wrapper.unmount()
   })
 
-  it('关闭有修改的活动抽屉前要求确认', async () => {
+  it('关闭有修改的活动抽屉前使用应用内确认弹窗', async () => {
     const wrapper = await mountView()
-    const confirm = vi.fn(() => false)
-    vi.stubGlobal('confirm', confirm)
 
     await clickByText(wrapper, '新建活动')
     await clickDocumentButton('填充测试示例')
     await clickDocumentButton('取消')
 
-    expect(confirm).toHaveBeenCalledWith('当前编辑内容尚未应用，确定关闭吗？')
+    expect(document.body.textContent).toContain('放弃当前编辑？')
+    expect(document.body.textContent).toContain('尚未应用到列表的修改将会丢失。')
     expect(document.body.textContent).toContain('一次保存活动与奖励')
     wrapper.unmount()
   })
@@ -220,21 +220,62 @@ describe('ContentView 内容工作台', () => {
     wrapper.unmount()
   })
 
-  it('物品与商店支持多选和列表内联库存字段', async () => {
+	it('物品与商店支持多选和列表内联库存字段', async () => {
     const wrapper = await mountView()
     await clickByText(wrapper, '宠物与物品')
     await clickByText(wrapper, '物品')
 
-    expect(wrapper.findAll('input[type="checkbox"]').length).toBeGreaterThanOrEqual(3)
-    expect(wrapper.text()).toContain('批量设置状态')
+		expect(wrapper.findAll('input[type="checkbox"]').length).toBeGreaterThanOrEqual(3)
+		expect(wrapper.text()).not.toContain('批量设置状态')
+		expect(wrapper.get('img[alt="木材图片"]').attributes('src')).toBe('/images/物品图片/木材.png')
+		await wrapper.get('.desktop-table input[aria-label="选择木材"]').setValue(true)
+		expect(wrapper.text()).toContain('批量设置状态')
+		expect(wrapper.text()).toContain('批量删除')
 
     await clickByText(wrapper, '商店')
+    expect(wrapper.text()).not.toContain('一键补货')
     expect(wrapper.find('input[aria-label="绷带价格"]').exists()).toBe(true)
     expect(wrapper.find('input[aria-label="绷带库存"]').exists()).toBe(true)
-    expect(wrapper.find('input[aria-label="绷带目标库存"]').exists()).toBe(true)
+		expect(wrapper.find('input[aria-label="绷带目标库存"]').exists()).toBe(true)
+		expect(wrapper.get('img[alt="绷带图片"]').attributes('src')).toBe('/images/物品图片/绷带.png')
+
+    wrapper.unmount()
+	})
+
+  it('物品类型筛选会收缩列表，且未修改时不出现主保存按钮', async () => {
+    const wrapper = await mountView()
+    await clickByText(wrapper, '宠物与物品')
+    await clickByText(wrapper, '物品')
+
+    expect(wrapper.text()).not.toContain('保存当前配置')
+    expect(wrapper.text()).toContain('木材')
+    expect(wrapper.text()).toContain('绷带')
+    await wrapper.get('select[aria-label="物品类型"]').setValue('材料')
+    expect(wrapper.text()).toContain('木材')
+    expect(wrapper.text()).not.toContain('绷带')
 
     wrapper.unmount()
   })
+
+	it('宠物编辑器可预览并通过拖拽上传替换图片', async () => {
+		const wrapper = await mountView()
+		await clickByText(wrapper, '宠物与物品')
+		expect(wrapper.get('img[alt="团子图片"]').attributes('src')).toBe('/images/宠物图片/团子.png')
+
+		await wrapper.get('.pet-card').trigger('click')
+		expect(document.body.textContent).toContain('点击选择或拖拽图片到这里')
+		const dropzone = document.body.querySelector('.image-dropzone') as HTMLElement
+		const file = new File([new Uint8Array([137, 80, 78, 71])], 'new-pet.png', { type: 'image/png' })
+		const drop = new Event('drop', { bubbles: true, cancelable: true })
+		Object.defineProperty(drop, 'dataTransfer', { value: { files: [file] } })
+		dropzone.dispatchEvent(drop)
+		await flushPromises()
+
+		const preview = document.body.querySelector('.image-editor img[alt="团子图片"]') as HTMLImageElement
+		expect(preview.getAttribute('src')).toBe('/images/上传/new-pet.png')
+		expect(vi.mocked(fetch).mock.calls.some(([path]) => String(path) === '/api/admin/upload')).toBe(true)
+		wrapper.unmount()
+	})
 
   it('图片资产在当前工作台直接预览、上传和编辑', async () => {
     const wrapper = await mountView()
@@ -243,7 +284,7 @@ describe('ContentView 内容工作台', () => {
 
     expect(wrapper.text()).toContain('森林背景')
     expect(wrapper.text()).toContain('上传图片')
-    expect(wrapper.find('img[alt="森林背景"]').attributes('src')).toContain('/images/')
+		expect(wrapper.find('img[alt="森林背景图片"]').attributes('src')).toContain('/images/')
     wrapper.unmount()
   })
 })
