@@ -41,11 +41,21 @@ func EnsureOfficialDefaults(db *gorm.DB) error {
 				return err
 			}
 		} else {
+			// v0.0.1 replaces the old tier-only expedition configuration with the
+			// map/zone adventure catalog. Existing runs keep their own reward
+			// snapshot, so removing these obsolete templates never touches player
+			// progress or an expedition already in flight.
+			if err := tx.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&models.ExpeditionTemplateConfig{}).Error; err != nil {
+				return err
+			}
 			var adventureCount int64
 			if err := tx.Model(&models.AdventureMapConfig{}).Count(&adventureCount).Error; err != nil {
 				return err
 			}
 			if adventureCount == 0 {
+				if err := migrateOfficialAdventureDependencies(tx, snapshot); err != nil {
+					return err
+				}
 				catalog := AdventureCatalog{Maps: snapshot.AdventureMaps, Zones: snapshot.AdventureZones, Prerequisites: snapshot.AdventurePrereqs, Objectives: snapshot.AdventureObjectives, Monsters: snapshot.AdventureMonsters, Skills: snapshot.AdventureSkills, MonsterSkills: snapshot.AdventureMonsterSkills, Encounters: snapshot.AdventureEncounters, LootPools: snapshot.AdventureLootPools, LootEntries: snapshot.AdventureLootEntries, Expeditions: snapshot.AdventureExpeditions, Bosses: snapshot.AdventureBosses, BossRewardTiers: snapshot.AdventureBossRewardTiers, EquipmentTemplates: snapshot.EquipmentTemplates, EquipmentAffixes: snapshot.EquipmentAffixes, EquipmentRecipes: snapshot.EquipmentRecipes, EquipmentRecipeMaterials: snapshot.EquipmentRecipeMaterials}
 				if err := ReplaceAdventureCatalog(tx, catalog); err != nil {
 					return err
@@ -72,6 +82,81 @@ func EnsureOfficialDefaults(db *gorm.DB) error {
 		}
 		return nil
 	})
+}
+
+// migrateOfficialAdventureDependencies adds only missing configuration rows
+// required by the new adventure catalog. Existing item definitions are never
+// overwritten, and no player/runtime table is read or changed.
+func migrateOfficialAdventureDependencies(tx *gorm.DB, snapshot ConfigSnapshot) error {
+	requiredItems := map[string]bool{}
+	for _, row := range snapshot.AdventureLootEntries {
+		if row.RewardType == "item" || row.RewardType == "blueprint_fragment" {
+			requiredItems[row.RewardKey] = true
+		}
+	}
+	for _, row := range snapshot.AdventureExpeditions {
+		if row.RequiredItem != "" {
+			requiredItems[row.RequiredItem] = true
+		}
+	}
+	for _, row := range snapshot.EquipmentTemplates {
+		if row.SalvageItem != "" {
+			requiredItems[row.SalvageItem] = true
+		}
+	}
+	for _, row := range snapshot.EquipmentRecipes {
+		if row.BlueprintFragmentItem != "" {
+			requiredItems[row.BlueprintFragmentItem] = true
+		}
+	}
+	for _, row := range snapshot.EquipmentRecipeMaterials {
+		requiredItems[row.ItemName] = true
+	}
+	officialItems := make(map[string]models.ItemConfig, len(snapshot.Items))
+	for _, row := range snapshot.Items {
+		officialItems[row.Name] = row
+	}
+	for name := range requiredItems {
+		row, ok := officialItems[name]
+		if !ok {
+			return fmt.Errorf("官方冒险配置缺少依赖物品定义 %s", name)
+		}
+		if err := tx.Where("name = ?", name).FirstOrCreate(&row).Error; err != nil {
+			return err
+		}
+	}
+
+	officialCodex := make(map[string]models.CodexCatalogConfig, len(snapshot.CodexCatalog))
+	for _, row := range snapshot.CodexCatalog {
+		officialCodex[row.Category+"\x00"+row.EntryKey] = row
+	}
+	for _, objective := range snapshot.AdventureObjectives {
+		if objective.CodexCategory == "" || objective.CodexEntry == "" {
+			continue
+		}
+		row, ok := officialCodex[objective.CodexCategory+"\x00"+objective.CodexEntry]
+		if !ok {
+			return fmt.Errorf("官方冒险目标 %s 缺少图鉴定义", objective.Key)
+		}
+		var existing models.CodexCatalogConfig
+		lookup := tx.Limit(1).Find(&existing, "category = ? AND entry_key = ?", row.Category, row.EntryKey)
+		if lookup.Error != nil {
+			return lookup.Error
+		}
+		if lookup.RowsAffected == 0 {
+			row.ID = 0
+			if err := tx.Create(&row).Error; err != nil {
+				return err
+			}
+			continue
+		}
+		if existing.SourceType == "" && existing.SourceKey == "" {
+			if err := tx.Model(&existing).Updates(map[string]any{"source_type": row.SourceType, "source_key": row.SourceKey}).Error; err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func migrateLegacyLiveEventChoices(tx *gorm.DB) error {

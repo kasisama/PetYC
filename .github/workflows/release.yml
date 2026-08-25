@@ -1,4 +1,4 @@
-name: Release v0.0.1
+name: Release
 
 on:
   push:
@@ -41,16 +41,17 @@ jobs:
           CGO_ENABLED: '0'
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          test "$VERSION" = "0.0.1"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           mkdir -p dist
           GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=$VERSION" -o "dist/qq-pet-saas_${VERSION}_windows_amd64.exe" .
           GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=$VERSION" -o "dist/qq-pet-saas_${VERSION}_linux_amd64" .
 
       - name: Check release contents
         run: |
-          ! strings dist/qq-pet-saas_0.0.1_linux_amd64 | grep -F '初始数据/'
+          VERSION="${GITHUB_REF_NAME#v}"
+          ! strings "dist/qq-pet-saas_${VERSION}_linux_amd64" | grep -F '初始数据/'
           ! grep -E -i 'app_secret|onebot.*token|masterqq|notifyqq|player_account|wallet_ledger' config/defaults/config_v0.0.1.json
-          ./dist/qq-pet-saas_0.0.1_linux_amd64 --version | grep -Fx '0.0.1'
+          "./dist/qq-pet-saas_${VERSION}_linux_amd64" --version | grep -Fx "$VERSION"
 
       - name: Publish GitHub release
         env:

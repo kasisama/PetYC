@@ -129,7 +129,7 @@ func TestOfficialDefaultsAreVersionedAndContainNoLocalKeys(t *testing.T) {
 	if err := db.First(&profile, "id = ?", OfficialProfileID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if !profile.Builtin || profile.AppVersion != "0.0.1" {
+	if !profile.Builtin || profile.AppVersion != "0.0.2" {
 		t.Fatalf("unexpected official profile: %+v", profile)
 	}
 	snapshot, err := DecodeSnapshot(profile.Payload)
@@ -143,5 +143,58 @@ func TestOfficialDefaultsAreVersionedAndContainNoLocalKeys(t *testing.T) {
 	}
 	if snapshot.Summary().Rows < 300 {
 		t.Fatalf("official defaults unexpectedly small: %+v", snapshot.Summary())
+	}
+}
+
+func TestOfficialDefaultsUpgradeRemovesInvalidLegacyExpeditionsAndSeedsDependencies(t *testing.T) {
+	db := profileTestDB(t)
+	if err := db.Create(&models.SystemConfig{Key: "Core.Currency", Value: "金币"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.CommandConfig{FuncName: "Help", Command: "帮助", DisplayName: "帮助", Enabled: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.PetSpeciesConfig{Name: "米塔"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.ItemConfig{Name: "苹果", Status: "active"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.ExpeditionTemplateConfig{Tier: 2, Name: "遗迹调查", Enabled: true, DurationMinutes: 60, RewardItem: "古代零件", RewardQuantity: 1}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.GlobalInventoryItem{AccountID: "player-1", ItemName: "苹果", Quantity: 7}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := EnsureOfficialDefaults(db); err != nil {
+		t.Fatalf("upgrade must not be blocked by an obsolete template: %v", err)
+	}
+	var legacyCount, mapCount, dependencyCount int64
+	if err := db.Model(&models.ExpeditionTemplateConfig{}).Count(&legacyCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&models.AdventureMapConfig{}).Count(&mapCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&models.ItemConfig{}).Where("name IN ?", []string{"林地样本", "古代零件", "生态样本", "辉光剑蓝图碎片", "装备粉尘"}).Count(&dependencyCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if legacyCount != 0 || mapCount == 0 || dependencyCount != 5 {
+		t.Fatalf("unexpected migration result: legacy=%d maps=%d dependencies=%d", legacyCount, mapCount, dependencyCount)
+	}
+	var inventory models.GlobalInventoryItem
+	if err := db.First(&inventory, "account_id = ? AND item_name = ?", "player-1", "苹果").Error; err != nil {
+		t.Fatal(err)
+	}
+	if inventory.Quantity != 7 {
+		t.Fatalf("player inventory changed during config migration: %+v", inventory)
+	}
+	var codex models.CodexCatalogConfig
+	if err := db.First(&codex, "category = ? AND entry_key = ?", "生物", "林间足迹").Error; err != nil {
+		t.Fatal(err)
+	}
+	if codex.SourceType != "zone" || codex.SourceKey != "forest-edge" {
+		t.Fatalf("codex source was not migrated: %+v", codex)
 	}
 }

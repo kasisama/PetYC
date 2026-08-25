@@ -16,7 +16,7 @@ import (
 
 const (
 	ProfileSchemaVersion = 1
-	ApplicationVersion   = "0.0.1"
+	ApplicationVersion   = "0.0.2"
 	OfficialProfileID    = "00000000-0000-0000-0000-000000000001"
 )
 
