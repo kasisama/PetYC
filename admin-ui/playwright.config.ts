@@ -16,10 +16,19 @@ export default defineConfig({
     { name: 'tablet', use: { ...devices['Desktop Chrome'], viewport: { width: 1024, height: 768 } } },
     { name: 'mobile', use: { ...devices['Pixel 5'], viewport: { width: 390, height: 844 } } },
   ],
-  webServer: {
-    command: 'npm run dev -- --host 127.0.0.1 --port 4173',
-    url: 'http://127.0.0.1:4173/admin/',
-    reuseExistingServer: true,
-    timeout: 120_000,
-  },
+  webServer: [
+    {
+      command: 'npm run dev -- --host 127.0.0.1 --port 4173',
+      url: 'http://127.0.0.1:4173/admin/',
+      reuseExistingServer: true,
+      timeout: 120_000,
+    },
+    {
+      command: 'go run ./testsupport/adminserver',
+      cwd: '..',
+      url: 'http://127.0.0.1:18080/api/admin/auth/session',
+      reuseExistingServer: false,
+      timeout: 120_000,
+    },
+  ],
 })

@@ -21,6 +21,7 @@ export interface PlayerSummary {
   account_id: string
   pet_name: string
   pet_type: string
+  pet_image: string
   role: string
   growth: number
   bond_level: number
@@ -37,7 +38,7 @@ export interface PageResult<T> { items: T[]; total: number; page: number; limit:
 export interface GrowthRuleRole { name:string;description:string;skill_1:string;skill_2:string;skill_3:string;enabled:boolean;sort_order:number }
 export interface GrowthRuleStance { name:string;description:string;enabled:boolean;sort_order:number }
 export interface PersonalityRule { name:string;dimension:'care'|'explore'|'support';min_threshold:number;description:string;enabled:boolean;sort_order:number }
-export interface CodexCatalogRule { id?:number;category:string;entry_key:string;region:string;description:string;enabled:boolean;sort_order:number }
+export interface CodexCatalogRule { id?:number;category:string;entry_key:string;region:string;source_type:string;source_key:string;description:string;enabled:boolean;sort_order:number }
 export interface GameplayDistribution { name:string;count:number;percentage:number;description?:string;enabled:boolean;skills?:string }
 export interface GameplayGrowth {
   summary:{player_count:number;role_coverage_rate:number;personality_formation_rate:number;personality_unformed:number;configured_rule_count:number;configuration_complete:boolean}
@@ -50,6 +51,7 @@ export interface GameplayCodex {summary:{catalog_count:number;discovered_entries
 export interface PlayerDetail {
   account: { ID: string; CreatedAt: string; UpdatedAt: string }
   pet: Record<string, unknown>
+  pet_image: string
   inventory: Array<Record<string, unknown>>
   codex: Array<Record<string, unknown>>
   identities: Array<{ id: number; platform: string; scene_type: string; app_id: string; scope_id: string; subject_id: string; created_at: string }>
@@ -141,6 +143,7 @@ export function normalizePlayerDetail(raw: unknown): PlayerDetail {
   return {
     account: (value.account ?? { ID: '', CreatedAt: '', UpdatedAt: '' }) as PlayerDetail['account'],
     pet: value.pet && typeof value.pet === 'object' ? value.pet as Record<string, unknown> : {},
+	pet_image: typeof value.pet_image === 'string' ? value.pet_image : '',
     inventory: arrayOrEmpty<Record<string, unknown>>(value.inventory),
     codex: arrayOrEmpty<Record<string, unknown>>(value.codex),
     identities: arrayOrEmpty<PlayerDetail['identities'][number]>(value.identities),

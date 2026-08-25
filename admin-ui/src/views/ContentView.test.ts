@@ -179,6 +179,7 @@ describe('ContentView 内容工作台', () => {
     const createdCard = wrapper.findAll('.event-card').find((card) => card.text().includes('森林生态联合调查'))
     expect(createdCard).toBeTruthy()
     await createdCard!.get('button').trigger('click')
+    await flushPromises()
     await clickDocumentButton('一次保存活动与奖励')
 
     const eventRequests = vi.mocked(fetch).mock.calls.filter(([path, init]) =>

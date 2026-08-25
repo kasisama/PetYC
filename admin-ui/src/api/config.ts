@@ -22,7 +22,10 @@ export type ConfigSchema =
 	| 'growth_roles'
 	| 'growth_stances'
 	| 'personality_rules'
-	| 'codex_catalog'
+  | 'codex_catalog'
+	| 'expedition_templates'
+	| 'chance_games'
+	| 'chance_rewards'
 
 export const CONFIG_SCHEMAS: ConfigSchema[] = [
   'system',
@@ -38,6 +41,9 @@ export const CONFIG_SCHEMAS: ConfigSchema[] = [
 	'growth_stances',
 	'personality_rules',
 	'codex_catalog',
+	'expedition_templates',
+	'chance_games',
+	'chance_rewards',
 ]
 
 export const SCHEMA_LABELS: Partial<Record<ConfigSchema, string>> = {
@@ -47,6 +53,9 @@ export const SCHEMA_LABELS: Partial<Record<ConfigSchema, string>> = {
 	 growth_stances: '远征姿态',
 	 personality_rules: '性格规则',
 	 codex_catalog: '图鉴目录',
+	 expedition_templates: '远征模板',
+	 chance_games: '概率玩法',
+	 chance_rewards: '概率奖励',
   system: '系统参数',
   commands: '自定义指令',
   checkin_rewards: '签到奖励',
@@ -80,11 +89,35 @@ export const DELETE_TYPE_MAP: Record<
     type: 'checkin_reward',
     keyOf: (r) => String(r.ID ?? r.id ?? ''),
   },
+	expedition_templates: {
+		type: 'expedition_template',
+		keyOf: (r) => String(r.key ?? r.Key ?? ''),
+	},
+	chance_games: { type: 'chance_game', keyOf: (r) => String(r.key ?? r.Key ?? '') },
+	chance_rewards: {
+		type: 'chance_reward',
+		keyOf: (r) => String(r.id ?? r.ID ?? ''),
+	},
 }
 
 export interface SystemConfigRow {
   Key: string
   Value: string
+}
+
+export interface PlayerMessageDefinition {
+  key: string
+  description: string
+  template: string
+  variables: Record<string, string>
+  sample: string
+}
+
+export interface PlayerMessagePreview {
+  key: string
+  platform: string
+  sender: string
+  text: string
 }
 
 export interface CommandConfigRow {
@@ -208,6 +241,14 @@ export interface ConfigStatus {
   loaded_at: string | null
 }
 
+export interface ConfigMeta {
+  schema: ConfigSchema
+  consumers: string[]
+  effective_revision: number
+  db_revision: number
+  pending_reload: boolean
+}
+
 export interface ContentEventRow {
   id?: number
   key: string
@@ -217,7 +258,12 @@ export interface ContentEventRow {
   starts_at: string
   ends_at: string
   active: boolean
+  progress_source_mode?: 'all_expeditions' | 'selected'
 }
+
+export interface ContentEventChoiceRow { event_key: string; choice_key: string; label: string; effect_type: string; effect_value: number; sort_order: number }
+export interface ContentEventSourceRow { event_key: string; zone_key: string }
+export interface ContentEventBundle { event: ContentEventRow; rewards: ContentRewardRow[]; choices: ContentEventChoiceRow[]; sources: ContentEventSourceRow[] }
 
 export interface ContentRewardRow {
   id?: number
@@ -290,11 +336,8 @@ function messageFrom(payload: unknown, fallback: string): string {
 }
 
 function asArray(res: unknown): unknown[] {
-  if (Array.isArray(res)) return res
-  if (res && typeof res === 'object' && Array.isArray((res as { data?: unknown }).data)) {
-    return (res as { data: unknown[] }).data
-  }
-  return []
+	if (!Array.isArray(res)) throw new ApiError(5000, '配置接口 data 字段必须是数组')
+	return res
 }
 
 export function normalizeSystem(raw: unknown): SystemConfigRow {
@@ -451,7 +494,33 @@ export function fetchConfigStatus(): Promise<ConfigStatus> {
   return api.get<ConfigStatus>('/api/admin/config/status')
 }
 
-/** GET /api/admin/config/:schema — 标准 {code,msg,data} 或直接数组 */
+/** GET /api/admin/config/:schema/meta — 显示真实运行时消费者与生效版本 */
+export async function fetchConfigMeta(schema: ConfigSchema): Promise<ConfigMeta> {
+  const raw = await api.get<Partial<ConfigMeta>>(`/api/admin/config/${schema}/meta`)
+  return {
+    schema,
+    consumers: Array.isArray(raw?.consumers) ? raw.consumers.map(String) : [],
+    effective_revision: asNumber(raw?.effective_revision),
+    db_revision: asNumber(raw?.db_revision),
+    pending_reload: asBoolean(raw?.pending_reload),
+  }
+}
+
+export function fetchPlayerMessages(): Promise<PlayerMessageDefinition[]> {
+  return api.get<PlayerMessageDefinition[]>('/api/admin/content/messages')
+}
+
+export function previewPlayerMessage(
+  key: string,
+  platform: string,
+  variables: Record<string, string>,
+): Promise<PlayerMessagePreview> {
+  const params = new URLSearchParams({ platform })
+  Object.entries(variables).forEach(([name, value]) => params.set(`var_${name}`, value))
+  return api.get<PlayerMessagePreview>(`/api/admin/content/messages/${encodeURIComponent(key)}/preview?${params}`)
+}
+
+/** GET /api/admin/config/:schema — 统一标准响应由 api/client.ts 解包 */
 export async function fetchConfig(schema: ConfigSchema): Promise<unknown[]> {
   const res = await api.get<unknown>(`/api/admin/config/${schema}`)
   return asArray(res)
@@ -467,8 +536,14 @@ export function saveEventBundle(
   key: string,
   event: Partial<ContentEventRow>,
   rewards: Array<Partial<ContentRewardRow>>,
-): Promise<{ event: ContentEventRow; rewards: ContentRewardRow[] }> {
-  return api.put(`/api/admin/content/events/${encodeURIComponent(key)}`, { event, rewards })
+  choices: Array<Partial<ContentEventChoiceRow>>,
+  sources: Array<Partial<ContentEventSourceRow>>,
+): Promise<{ event: ContentEventRow; rewards: ContentRewardRow[]; choices: ContentEventChoiceRow[]; sources: ContentEventSourceRow[] }> {
+  return api.put(`/api/admin/content/events/${encodeURIComponent(key)}`, { event, rewards, choices, sources })
+}
+
+export function getEventBundle(key: string): Promise<ContentEventBundle> {
+  return api.get(`/api/admin/content/events/${encodeURIComponent(key)}`)
 }
 
 /** DELETE /api/admin/content/events/:key — 同时删除活动与所属奖励 */
@@ -510,24 +585,24 @@ export function saveGameSettings(rows: GameSettingUpdate[]): Promise<GameSetting
   return api.put<GameSettingRow[]>('/api/admin/settings/game', rows)
 }
 
-/** POST /api/admin/configs/reload — 旧接口可能返回 {message} */
+/** POST /api/admin/config/reload */
 export async function reloadConfigs(): Promise<string> {
-  const res = await api.post<unknown>('/api/admin/configs/reload')
+	const res = await api.post<unknown>('/api/admin/config/reload')
   notifyConfigStatusChanged()
   return messageFrom(res, '所有配置热重载同步成功')
 }
 
-/** POST /api/admin/configs/reset — 恢复出厂配置并自动重载；旧接口可能返回 {message}/{error} */
+/** POST /api/admin/config/reset — 恢复出厂配置并自动重载 */
 export async function resetConfigs(): Promise<string> {
-  const res = await api.post<unknown>('/api/admin/configs/reset')
+	const res = await api.post<unknown>('/api/admin/config/reset')
   notifyConfigStatusChanged()
   return messageFrom(res, '配置数据已重置为系统默认出厂配置并重载成功')
 }
 
-/** DELETE /api/admin/configs/:type/:key */
+/** DELETE /api/admin/config/:schema/:key */
 export async function deleteConfigItem(type: string, key: string): Promise<string> {
   const encoded = encodeURIComponent(key)
-  const res = await api.delete<unknown>(`/api/admin/configs/${type}/${encoded}`)
+	const res = await api.delete<unknown>(`/api/admin/config/${type}/${encoded}`)
   return messageFrom(res, '配置项删除成功')
 }
 
@@ -549,38 +624,28 @@ export async function uploadImage(file: File): Promise<UploadImageResult> {
   } catch {
     throw new ApiError(response.status, '上传响应不是合法 JSON')
   }
-  if (!response.ok) {
-    const msg =
-      payload && typeof payload === 'object' && typeof (payload as { error?: string }).error === 'string'
-        ? (payload as { error: string }).error
-        : `上传失败（HTTP ${response.status}）`
-    throw new ApiError(response.status, msg)
-  }
-  if (payload && typeof payload === 'object' && 'code' in payload) {
-    const std = payload as { code: number; msg: string; data?: UploadImageResult }
-    if (std.code !== 0) throw new ApiError(std.code, std.msg || '上传失败')
-    if (std.data) return std.data
-  }
-  const o = (payload && typeof payload === 'object' ? payload : {}) as Record<string, unknown>
-  if (typeof o.error === 'string' && o.error) {
-    throw new ApiError(1, o.error)
-  }
-  return {
-    message: asString(pick(o, 'message', 'msg'), '图片上传成功'),
-    path: asString(pick(o, 'path', 'Path')),
-    url: asString(pick(o, 'url', 'Url')),
-  }
+	if (!payload || typeof payload !== 'object') throw new ApiError(response.status, '上传接口缺少标准响应')
+	const envelope = payload as { code?: unknown; msg?: unknown; data?: unknown }
+	if (typeof envelope.code !== 'number' || typeof envelope.msg !== 'string') {
+		throw new ApiError(response.status, '上传接口响应不符合 {code,msg,data} 契约')
+	}
+	if (!response.ok || envelope.code !== 0) {
+		throw new ApiError(envelope.code || response.status, envelope.msg || `上传失败（HTTP ${response.status}）`)
+	}
+	if (!envelope.data || typeof envelope.data !== 'object') throw new ApiError(5000, '上传响应缺少 data')
+	return envelope.data as UploadImageResult
 }
 
 /** 将配置中的相对路径转为可访问 URL */
 export function imagePreviewUrl(path: string): string {
-  if (!path) return ''
-  if (path.startsWith('http://') || path.startsWith('https://') || path.startsWith('/')) {
-    return path
-  }
-  // 后端静态目录 /images/ + 相对路径（兼容反斜杠）
-  const normalized = path.replace(/\\/g, '/')
-  return `/images/${normalized}`
+	const value = path.trim()
+	if (!value) return ''
+	if (value.startsWith('http://') || value.startsWith('https://') || value.startsWith('data:') || value.startsWith('blob:') || value.startsWith('/')) {
+		return value
+	}
+	// 配置可以填“宠物图片/x.png”、“图片/宠物图片/x.png”或“./图片/...”。
+	const normalized = value.replace(/\\/g, '/').replace(/^\.\//, '').replace(/^图片\//, '')
+	return `/images/${normalized}`
 }
 
 /** 系统参数中文说明（键不在表中时退回键名） */

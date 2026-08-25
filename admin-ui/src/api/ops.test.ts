@@ -23,7 +23,7 @@ describe('bulkUpdateGroupState', () => {
     const result = await bulkUpdateGroupState(null, false)
 
     expect(result.updated).toBe(2)
-    expect(result.groups[0]).toEqual({ group_id: 1001, group_name: '测试群', is_active: false })
+    expect(result.groups[0]).toEqual({ group_id: 1001, platform: 'onebot', space_id: '1001', group_name: '测试群', is_active: false })
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 })

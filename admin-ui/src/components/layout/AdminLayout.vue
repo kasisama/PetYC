@@ -4,9 +4,38 @@ import Sidebar from './Sidebar.vue'
 import Topbar from './Topbar.vue'
 import { adminNavItems } from './navigation'
 import { useShellLayout } from '../../composables/useShellLayout'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
+import UiModal from '../ui/UiModal.vue'
+import { UNSAVED_NAVIGATION_EVENT } from '../../composables/useUnsavedChanges'
+import OnboardingTour from './OnboardingTour.vue'
 
 const route = useRoute()
 const shell = useShellLayout()
+const navigationPrompt = ref(false)
+const navigationMessage = ref('')
+let resolveNavigation: ((allowed: boolean) => void) | null = null
+
+function handleNavigationPrompt(event: Event) {
+	const detail = (event as CustomEvent<{ message: string; resolve: (allowed: boolean) => void }>).detail
+	if (!detail?.resolve) return
+	if (resolveNavigation) resolveNavigation(false)
+	resolveNavigation = detail.resolve
+	navigationMessage.value = detail.message
+	navigationPrompt.value = true
+}
+
+function answerNavigation(allowed: boolean) {
+	navigationPrompt.value = false
+	const resolve = resolveNavigation
+	resolveNavigation = null
+	if (resolve) resolve(allowed)
+}
+
+onMounted(() => window.addEventListener(UNSAVED_NAVIGATION_EVENT, handleNavigationPrompt))
+onBeforeUnmount(() => {
+	window.removeEventListener(UNSAVED_NAVIGATION_EVENT, handleNavigationPrompt)
+	if (resolveNavigation) resolveNavigation(false)
+})
 </script>
 
 <template>
@@ -30,12 +59,17 @@ const shell = useShellLayout()
         v-for="item in adminNavItems"
         :key="item.name"
         :to="{ name: item.name }"
+        :data-tour="`nav-${item.name}`"
         :class="{ active: route.name === item.name }"
       >
         <component :is="item.icon" :size="20" :stroke-width="1.8" aria-hidden="true" />
         <span>{{ item.shortLabel }}</span>
       </RouterLink>
     </nav>
+    <UiModal :open="navigationPrompt" title="放弃未保存的修改？" :description="navigationMessage" size="small" @close="answerNavigation(false)">
+      <template #footer><button class="btn btn-ghost" @click="answerNavigation(false)">继续编辑</button><button class="btn btn-danger" @click="answerNavigation(true)">放弃并离开</button></template>
+    </UiModal>
+    <OnboardingTour />
   </div>
 </template>
 
@@ -86,15 +120,18 @@ const shell = useShellLayout()
 }
 
 @media (max-width: 700px) {
-  .content { padding: 18px 14px 92px; }
+	.content { padding: 18px 14px calc(116px + env(safe-area-inset-bottom)); }
   .mobile-nav {
     position: fixed;
     left: 12px;
     right: 12px;
-    bottom: 10px;
+	bottom: max(10px, env(safe-area-inset-bottom));
     z-index: var(--z-sticky);
     display: grid;
-    grid-template-columns: repeat(5, 1fr);
+	grid-template-columns: none;
+	grid-auto-flow: column;
+	grid-auto-columns: minmax(62px, 1fr);
+	overflow-x: auto;
     padding: 6px;
     border: 1px solid var(--border-strong);
     border-radius: 18px;

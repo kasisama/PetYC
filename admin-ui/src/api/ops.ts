@@ -3,6 +3,8 @@ import { api } from './client'
 /** 与 models.GroupSwitch 对齐；后端无 json tag 时可能是 PascalCase。 */
 export interface GroupSwitch {
   group_id: number
+  platform: 'onebot' | 'qq_group' | 'qq_guild'
+  space_id: string
   group_name: string
   is_active: boolean
 }
@@ -54,6 +56,8 @@ export function normalizeGroup(raw: unknown): GroupSwitch {
   const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
   return {
     group_id: asNumber(pick(o, 'group_id', 'GroupID')),
+    platform: (asString(pick(o, 'platform', 'Platform')) || 'onebot') as GroupSwitch['platform'],
+    space_id: asString(pick(o, 'space_id', 'SpaceID'), String(asNumber(pick(o, 'group_id', 'GroupID')))),
     group_name: asString(pick(o, 'group_name', 'GroupName')),
     is_active: asBool(pick(o, 'is_active', 'IsActive'), true),
   }
@@ -68,16 +72,11 @@ function messageFrom(payload: unknown, fallback: string): string {
   return fallback
 }
 
-/** GET /api/admin/groups — 旧接口直接返回数组 */
+/** GET /api/admin/groups — 标准响应已由 api/client.ts 解包 */
 export async function fetchGroups(): Promise<GroupSwitch[]> {
   const res = await api.get<unknown>('/api/admin/groups')
-  if (Array.isArray(res)) {
-    return res.map(normalizeGroup)
-  }
-  if (res && typeof res === 'object' && Array.isArray((res as { data?: unknown }).data)) {
-    return ((res as { data: unknown[] }).data).map(normalizeGroup)
-  }
-  return []
+  if (!Array.isArray(res)) throw new Error('群开关接口 data 字段必须是数组')
+  return res.map(normalizeGroup)
 }
 
 /** PUT /api/admin/groups/:id — body: group_name? / is_active? */
@@ -86,14 +85,6 @@ export async function updateGroup(
   body: { group_name?: string; is_active?: boolean },
 ): Promise<{ message: string; data: GroupSwitch }> {
   const res = await api.put<unknown>(`/api/admin/groups/${groupId}`, body)
-  if (res && typeof res === 'object') {
-    const o = res as Record<string, unknown>
-    const dataRaw = o.data !== undefined ? o.data : res
-    return {
-      message: messageFrom(res, '群开关状态更新成功'),
-      data: normalizeGroup(dataRaw),
-    }
-  }
   return { message: '群开关状态更新成功', data: normalizeGroup(res) }
 }
 

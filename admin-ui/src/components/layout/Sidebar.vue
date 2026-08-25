@@ -1,11 +1,18 @@
 <script setup lang="ts">
 import { IconChevronLeft, IconChevronRight, IconHeartFilled } from '@tabler/icons-vue'
 import { RouterLink, useRoute } from 'vue-router'
+import { computed, onMounted, ref } from 'vue'
+import { getPlatformStatus } from '../../api/ecosystem'
 import { useShellLayout } from '../../composables/useShellLayout'
+import { useTheme } from '../../composables/useTheme'
 import { adminNavItems } from './navigation'
 
 const route = useRoute()
 const shell = useShellLayout()
+const { theme, themes, setTheme } = useTheme()
+const platformHealth=ref<Record<string,any>>({})
+const online=computed(()=>Boolean(platformHealth.value.onebot?.connected||platformHealth.value.qq_official?.connected))
+onMounted(async()=>{try{platformHealth.value=await getPlatformStatus()}catch{platformHealth.value={}}})
 </script>
 
 <template>
@@ -24,6 +31,7 @@ const shell = useShellLayout()
         class="nav-item"
         :class="{ active: route.name === item.name }"
         :to="{ name: item.name }"
+        :data-tour="`nav-${item.name}`"
         :title="shell.collapsed.value ? item.label : undefined"
         @click="shell.closeDrawer"
       >
@@ -31,12 +39,13 @@ const shell = useShellLayout()
         <span class="nav-label">{{ item.label }}</span>
       </RouterLink>
     </nav>
+    <section class="mobile-theme" aria-label="主题切换"><span>显示主题</span><div><button v-for="item in themes" :key="item.id" :class="{active:theme===item.id}" @click="setTheme(item.id)">{{item.label}}</button></div></section>
     <button class="collapse-button" type="button" @click="shell.toggleCollapsed">
       <IconChevronRight v-if="shell.collapsed.value" :size="18" />
       <IconChevronLeft v-else :size="18" />
       <span>{{ shell.collapsed.value ? '展开导航' : '收起导航' }}</span>
     </button>
-    <p class="sidebar-foot"><span class="status-dot" />机器人运营中</p>
+    <p class="sidebar-foot"><span class="status-dot" :class="{offline:!online}" />{{online?'机器人在线':'机器人暂未连接'}}</p>
   </aside>
 </template>
 
@@ -176,6 +185,7 @@ const shell = useShellLayout()
   font-size: 11px;
   color: var(--text-muted);
 }
+.mobile-theme{display:none}.status-dot.offline{background:var(--text-muted);box-shadow:0 0 0 4px var(--bg-elevated)}
 
 @media (max-width: 1024px) {
   .sidebar,
@@ -197,5 +207,6 @@ const shell = useShellLayout()
   .sidebar.collapsed .nav-item { padding-inline: 12px; }
   .sidebar.collapsed .brand { padding-inline: 12px; }
   .collapse-button { display: none; }
+  .mobile-theme{display:grid;gap:8px;margin:10px 8px;padding:11px;border:1px solid var(--border-color);border-radius:12px}.mobile-theme>span{color:var(--text-muted);font-size:11px}.mobile-theme>div{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}.mobile-theme button{min-height:34px;border:0;border-radius:8px;background:var(--bg-elevated);color:var(--text-muted)}.mobile-theme button.active{background:var(--accent);color:var(--accent-ink)}
 }
 </style>

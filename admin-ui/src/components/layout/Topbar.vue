@@ -4,6 +4,7 @@ import {
   IconChevronDown,
   IconLayoutSidebarLeftExpand,
   IconLogout,
+  IconHelpCircle,
   IconUserCircle,
   IconSpacingHorizontal,
 } from '@tabler/icons-vue'
@@ -20,7 +21,7 @@ import { useToast } from '../../composables/useToast'
 const router = useRouter()
 const route = useRoute()
 const { theme, themes, setTheme } = useTheme()
-const { density, toggleDensity } = useDensity()
+const { density, densities, setDensity } = useDensity()
 const { username, clearSession } = useSession()
 const shell = useShellLayout()
 const toast = useToast()
@@ -31,6 +32,8 @@ const accountMenuOpen = ref(false)
 const accountRoot = ref<HTMLElement | null>(null)
 const accountTrigger = ref<HTMLButtonElement | null>(null)
 const logoutItem = ref<HTMLButtonElement | null>(null)
+const densityOpen = ref(false)
+const densityRoot = ref<HTMLElement | null>(null)
 
 function closeAccountMenu({ restoreFocus = false } = {}) {
   accountMenuOpen.value = false
@@ -53,6 +56,7 @@ function handlePointerDown(event: PointerEvent) {
   if (accountMenuOpen.value && !accountRoot.value?.contains(event.target as Node)) {
     closeAccountMenu()
   }
+	if (densityOpen.value && !densityRoot.value?.contains(event.target as Node)) densityOpen.value = false
 }
 
 onMounted(() => document.addEventListener('pointerdown', handlePointerDown))
@@ -78,6 +82,11 @@ async function handleReload() {
   } finally {
     reloading.value = false
   }
+}
+
+function replayTour() {
+  closeAccountMenu()
+  window.dispatchEvent(new CustomEvent('qqpet:replay-tour'))
 }
 </script>
 
@@ -106,16 +115,21 @@ async function handleReload() {
     </div>
 
     <div class="account-actions">
+      <div ref="densityRoot" class="density-control">
+        <button class="ui-icon-button topbar-action density-button" type="button" aria-label="页面密度" aria-haspopup="menu" :aria-expanded="densityOpen" @click="densityOpen = !densityOpen">
+          <IconSpacingHorizontal :size="19" />
+        </button>
+        <div v-if="densityOpen" class="density-popover" role="menu" aria-label="页面密度">
+          <span>页面密度</span>
+          <button v-for="item in densities" :key="item.id" type="button" role="menuitemradio" :aria-checked="density === item.id" :class="{ active: density === item.id }" @click="setDensity(item.id); densityOpen = false">
+            <i aria-hidden="true" />
+            <b>{{ item.label }}</b>
+            <small>{{ item.id === 'comfortable' ? '留白更多，阅读轻松' : '同屏展示更多内容' }}</small>
+          </button>
+        </div>
+      </div>
       <button
-        class="ui-icon-button topbar-action density-button"
-        type="button"
-        :title="density === 'comfortable' ? '切换紧凑密度' : '切换舒适密度'"
-        @click="toggleDensity"
-      >
-        <IconSpacingHorizontal :size="18" />
-        <span class="action-label">{{ density === 'comfortable' ? '舒适' : '紧凑' }}</span>
-      </button>
-      <button
+        data-tour="hot-reload"
         class="btn btn-ghost topbar-action reload-btn"
         type="button"
         :disabled="reloading"
@@ -143,6 +157,10 @@ async function handleReload() {
           <IconChevronDown class="account-chevron" :size="15" aria-hidden="true" />
         </button>
         <div v-if="accountMenuOpen" id="account-menu" class="account-menu" role="menu" aria-label="账号菜单">
+          <button class="account-menu-item help-item" type="button" role="menuitem" @click="replayTour">
+            <IconHelpCircle :size="18" aria-hidden="true" />
+            <span>重新播放功能导览</span>
+          </button>
           <button
             ref="logoutItem"
             class="logout-item"
@@ -226,8 +244,16 @@ async function handleReload() {
   padding: 0.45rem 0.9rem;
 }
 
-.density-button { width: auto; padding-inline: 10px; gap: 6px; }
-.density-button span { font-size: 12px; }
+.density-control { position: relative; }
+.density-button { width: 40px; padding: 0; color: var(--text-muted); }
+.density-button[aria-expanded='true'] { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.density-popover { position:absolute;top:calc(100% + 8px);right:0;z-index:calc(var(--z-sticky) + 1);display:grid;gap:5px;width:246px;padding:8px;border:1px solid var(--border-color);border-radius:14px;background:var(--bg-base);box-shadow:0 16px 40px color-mix(in srgb,var(--text-primary) 14%,transparent) }
+.density-popover>span { padding:5px 8px 3px;color:var(--text-muted);font-size:11px;font-weight:700;letter-spacing:.06em }
+.density-popover button { display:grid;grid-template-columns:14px 1fr;gap:1px 9px;padding:9px;border:0;border-radius:10px;background:transparent;color:var(--text-main);font:inherit;text-align:left;cursor:pointer }
+.density-popover button:hover,.density-popover button.active { background:var(--bg-hover) }
+.density-popover i { grid-row:1/3;align-self:center;width:10px;height:10px;border:2px solid var(--border-strong);border-radius:50% }
+.density-popover button.active i { border-color:var(--accent);box-shadow:inset 0 0 0 2px var(--bg-hover);background:var(--accent) }
+.density-popover b { font-size:13px }.density-popover small { color:var(--text-muted);font-size:11px }
 
 .account {
   position: relative;
@@ -279,6 +305,7 @@ async function handleReload() {
   font: inherit;
   text-align: left;
 }
+.account-menu-item { display:flex;align-items:center;gap:8px;width:100%;min-height:40px;padding:0 10px;border:0;border-radius:8px;background:transparent;cursor:pointer;font:inherit;text-align:left; }
 
 .logout-item:hover,
 .logout-item:focus-visible {
@@ -286,6 +313,8 @@ async function handleReload() {
   background: var(--danger-soft);
   outline: none;
 }
+.help-item { color: var(--text-main); }
+.help-item:hover, .help-item:focus-visible { color: var(--text-main); background: var(--bg-hover); }
 
 @media (max-width: 1024px) {
   .theme-switch { display: none; }

@@ -5,6 +5,25 @@
 export interface SessionInfo {
   authenticated: boolean
   username?: string
+  setup_required?: boolean
+}
+
+export async function setupInitialPassword(
+  username: string,
+  password: string,
+  confirmPassword: string,
+): Promise<string> {
+  const response = await fetch('/api/admin/auth/setup', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password, confirm_password: confirmPassword }),
+  })
+  if (!response.ok) {
+    throw new AuthError(await readError(response, '初始化管理员密码失败'))
+  }
+  const payload = (await response.json()) as { message?: string }
+  return payload.message || '管理员密码设置成功'
 }
 
 export class AuthError extends Error {}

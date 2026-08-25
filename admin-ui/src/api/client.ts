@@ -1,5 +1,4 @@
-// 后端统一响应格式：HTTP 永远是 200，业务结果由 code 表达。
-// 旧接口可能仍返回 {error}、{message,data} 或直接返回业务体，这里做兼容解包。
+// 后端统一返回 {code,msg,data}，并使用对应的 HTTP 状态码。
 export interface ApiResponse<T = unknown> {
   code: number
   msg: string
@@ -70,29 +69,12 @@ async function request<T>(
     )
   }
 
-  // 标准 {code,msg,data}
-  if (payload && typeof payload === 'object' && 'code' in payload) {
-    const std = payload as ApiResponse<T>
-    if (std.code !== 0) {
-      throw new ApiError(std.code, std.msg || '请求失败')
-    }
-    return std.data
-  }
-
-  // 旧接口错误体：HTTP 200 + {error: "..."}（少数路径仍可能如此）
-  if (
-    payload &&
-    typeof payload === 'object' &&
-    'error' in payload &&
-    typeof (payload as { error: unknown }).error === 'string' &&
-    !('data' in payload) &&
-    !('total' in payload)
-  ) {
-    throw new ApiError(1, (payload as { error: string }).error)
-  }
-
-  // 旧接口成功：整包返回（含 total/page/data 或 message/data）
-  return payload as T
+	if (!payload || typeof payload !== 'object' || !('code' in payload)) {
+	  throw new ApiError(response.status, '响应不符合后台 API 契约')
+	}
+	const std = payload as ApiResponse<T>
+	if (std.code !== 0) throw new ApiError(std.code, std.msg || '请求失败')
+	return std.data
 }
 
 export const api = {

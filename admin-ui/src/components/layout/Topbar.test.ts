@@ -64,7 +64,7 @@ describe('Topbar', () => {
     await trigger.trigger('keydown', { key: 'ArrowDown' })
     await nextTick()
 
-    const logoutItem = wrapper.get('[role="menuitem"]')
+    const logoutItem = wrapper.get('.logout-item')
     expect(trigger.attributes('aria-expanded')).toBe('true')
     expect(document.activeElement).toBe(logoutItem.element)
 

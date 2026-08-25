@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { IconEye, IconEyeOff, IconHeartFilled, IconLock, IconUser } from '@tabler/icons-vue'
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { login } from '../api/auth'
+import { fetchSession, login, setupInitialPassword } from '../api/auth'
+import { fetchOnboardingStatus } from '../api/onboarding'
 import { useSession } from '../composables/useSession'
 
 const router = useRouter()
@@ -15,6 +16,8 @@ const remember = ref(false)
 const submitting = ref(false)
 const error = ref('')
 const showPassword = ref(false)
+const setupRequired = ref(false)
+const confirmPassword = ref('')
 const sessionExpired = computed(() => route.query.reason === 'session-expired')
 
 async function handleSubmit() {
@@ -24,17 +27,29 @@ async function handleSubmit() {
   error.value = ''
   submitting.value = true
   try {
+    if (setupRequired.value) {
+      await setupInitialPassword(username.value, password.value, confirmPassword.value)
+      setupRequired.value = false
+    }
     const session = await login(username.value, password.value, remember.value)
     setSession(session.username ?? username.value)
+    const onboarding = await fetchOnboardingStatus()
     const redirect = router.currentRoute.value.query.redirect
-    await router.replace(typeof redirect === 'string' ? redirect : '/')
+    await router.replace(!onboarding.setup_completed ? '/setup' : (typeof redirect === 'string' ? redirect : '/'))
   } catch (err) {
     error.value = err instanceof Error ? err.message : '账号或密码错误'
     password.value = ''
+    confirmPassword.value = ''
   } finally {
     submitting.value = false
   }
 }
+
+onMounted(async () => {
+  const session = await fetchSession()
+  setupRequired.value = session.setup_required === true
+  if (session.username) username.value = session.username
+})
 </script>
 
 <template>
@@ -51,10 +66,10 @@ async function handleSubmit() {
         <span class="brand-heart" aria-hidden="true"><IconHeartFilled :size="20" /></span>
         <div>
           <h1 class="login-title">宠物养成</h1>
-          <p class="login-subtitle">米塔公寓运营台</p>
+          <p class="login-subtitle">运营台</p>
         </div>
       </div>
-      <p class="login-deco">灯还亮着，它在等你</p>
+      <p class="login-deco">{{ setupRequired ? '首次使用，请先设置仅你知道的管理员密码' : '灯还亮着，它在等你' }}</p>
       <p v-if="sessionExpired" class="session-notice" role="status">登录状态已过期，请重新验证管理员身份。</p>
 
       <label class="field">
@@ -67,6 +82,20 @@ async function handleSubmit() {
           required
         /></span>
       </label>
+
+      <label v-if="setupRequired" class="field">
+        <span class="field-label">确认管理员密码</span>
+        <span class="input-shell"><IconLock :size="18" aria-hidden="true" /><input
+          v-model="confirmPassword"
+          class="field-input"
+          :type="showPassword ? 'text' : 'password'"
+          autocomplete="new-password"
+          minlength="8"
+          required
+        /></span>
+      </label>
+
+      <p v-if="setupRequired" class="session-notice" role="status">密码至少 8 个字符。初始化仅允许从运行服务的本机完成，设置后才能进入后台。</p>
 
       <label class="field">
         <span class="field-label">管理员密码</span>
@@ -88,7 +117,7 @@ async function handleSubmit() {
       <p v-if="error" class="login-error" role="alert">{{ error }}</p>
 
       <button class="btn login-submit" type="submit" :disabled="submitting">
-        {{ submitting ? '登录中…' : '登录' }}
+        {{ submitting ? (setupRequired ? '正在设置…' : '登录中…') : (setupRequired ? '设置密码并进入后台' : '登录') }}
       </button>
       </form>
     </section>

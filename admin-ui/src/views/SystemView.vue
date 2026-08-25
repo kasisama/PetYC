@@ -157,7 +157,7 @@ onBeforeUnmount(() => {
       <!-- 区块1 账号安全 -->
       <form class="card" @submit.prevent="handlePasswordSubmit">
         <h2 class="card-title">账号安全</h2>
-        <p class="card-hint">密码长度至少 6 位；修改成功后全部会话失效，需使用新密码重新登录。</p>
+        <p class="card-hint">密码长度至少 8 位；修改成功后全部会话失效，需使用新密码重新登录。</p>
 
         <label class="field">
           <span class="field-label">当前密码</span>
@@ -233,6 +233,7 @@ onBeforeUnmount(() => {
         <p v-else-if="reloadMsg" class="form-message is-success" role="status">{{ reloadMsg }}</p>
 
         <button
+          data-tour="hot-reload"
           class="btn btn-reload"
           type="button"
           :disabled="reloading"
@@ -246,12 +247,12 @@ onBeforeUnmount(() => {
       <!-- 区块3 危险区 · 恢复出厂 -->
       <div class="card card-danger">
         <div class="danger-head">
-          <h2 class="card-title danger-title">危险区 · 恢复出厂配置</h2>
-          <span class="danger-badge">不可逆</span>
+          <h2 class="card-title danger-title">恢复官方默认配置</h2>
+          <span class="danger-badge">需要确认</span>
         </div>
         <p class="card-hint danger-hint">
-          将删除全部自定义游戏配置，并从程序内置种子数据重新写入默认配置，随后自动热重载。
-          此操作<strong>不可撤销</strong>。玩家宠物存档、背包与群组开关不会被本接口清除，但商店/种类/指令等配置会回到出厂默认。
+          将当前运行配置切换到只读的“官方默认 v0.0.1”方案，并自动热重载。
+          用户创建或导入的其他方案不会删除；玩家宠物存档、背包、群组开关和平台凭据均保持不变。
         </p>
 
         <p v-if="resetMsg" class="form-message is-success" role="status">{{ resetMsg }}</p>
@@ -264,10 +265,10 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- 二次确认弹窗 -->
-    <UiModal :open="resetOpen" title="确认恢复出厂配置" description="此操作不可撤销，并会在重置完成后自动热重载。" :busy="resetBusy" size="small" @close="closeResetDialog">
+    <UiModal :open="resetOpen" title="确认恢复官方默认配置" description="当前内容配置会被官方默认方案替换，并自动热重载。" :busy="resetBusy" size="small" @close="closeResetDialog">
         <p class="modal-body">
-          即将覆盖<strong>全部</strong>自定义配置（系统参数、指令、宠物种类、道具、商店、签到、打工、菜单、图片映射等），
-          并从内置种子重新生成默认数据且自动热重载。此操作<strong>不可逆</strong>。
+          即将把系统参数、指令、宠物种类、道具、商店、签到、打工、菜单和图片映射等内容切换到
+          <strong>官方默认 v0.0.1</strong>。现有玩家数据、本机参数及其他配置方案不会被删除。
         </p>
         <label class="field">
           <span class="field-label">请输入「恢复出厂」以确认</span>

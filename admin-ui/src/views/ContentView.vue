@@ -36,6 +36,7 @@ import {
   fetchConfigMeta,
   fetchConfigStatus,
   fetchGameSettings,
+  getEventBundle,
   fetchPlayerMessages,
   normalizeCommand,
   normalizeItem,
@@ -54,6 +55,7 @@ import {
   type ConfigSchema,
   type ConfigStatus,
   type ContentEventRow,
+  type ContentEventChoiceRow,
   type ContentRewardRow,
   type GameSettingRow,
   type ItemConfigRow,
@@ -80,8 +82,10 @@ type TextTab = 'commands' | 'menus' | 'messages'
 type EditorKind = 'event' | 'pet' | 'item' | 'shop' | 'image' | 'command' | 'menu'
 type RewardItemDraft = { item_name: string; quantity: number }
 type RewardGroupDraft = { milestone: number; description: string; items: RewardItemDraft[] }
+type ChoiceDraft = Omit<ContentEventChoiceRow, 'event_key'|'sort_order'>
 type EventDraft = Omit<ContentEventRow, 'story_choices'> & {
-  choices: string[]
+  choices: ChoiceDraft[]
+  sourceZones: string
   rewardGroups: RewardGroupDraft[]
 }
 
@@ -349,7 +353,12 @@ function blankEvent(): EventDraft {
     key: '',
     name: '',
     region: '森林',
-    choices: ['记录线索', '继续调查', '呼叫支援'],
+    choices: [
+      { choice_key: 'records', label: '记录线索', effect_type: 'adventure_xp_gain_percent', effect_value: 10 },
+      { choice_key: 'support', label: '呼叫支援', effect_type: 'community_material_gain_percent', effect_value: 10 },
+    ],
+    progress_source_mode: 'all_expeditions',
+    sourceZones: '',
     starts_at: start.toISOString().slice(0, 16),
     ends_at: end.toISOString().slice(0, 16),
     active: true,
@@ -357,20 +366,33 @@ function blankEvent(): EventDraft {
   }
 }
 
-function openEvent(row?: ContentEventRow) {
-  const draft = row
+async function openEvent(row?: ContentEventRow) {
+  let bundle = null
+  if (row) {
+    try { bundle = await getEventBundle(row.key) } catch { /* 旧服务端兼容：继续使用列表数据。 */ }
+  }
+  const sourceRow = bundle?.event ?? row
+  const draft = sourceRow
     ? {
-        ...cloneConfigValue(row),
-        choices: parseChoices(row.story_choices),
-        starts_at: String(row.starts_at).slice(0, 16),
-        ends_at: String(row.ends_at).slice(0, 16),
-        rewardGroups: rewardGroupsFor(row.key),
+        ...cloneConfigValue(sourceRow),
+        choices: bundle?.choices?.length ? bundle.choices.map(choice=>({choice_key:choice.choice_key,label:choice.label,effect_type:choice.effect_type,effect_value:choice.effect_value})) : parseChoices(sourceRow.story_choices).map((label,index)=>({choice_key:`choice-${index+1}`,label,effect_type:'adventure_xp_gain_percent',effect_value:0})),
+        progress_source_mode: sourceRow.progress_source_mode || 'all_expeditions',
+        sourceZones: bundle?.sources?.map(source=>source.zone_key).join(', ') || '',
+        starts_at: String(sourceRow.starts_at).slice(0, 16),
+        ends_at: String(sourceRow.ends_at).slice(0, 16),
+        rewardGroups: bundle?.rewards?.length ? rewardGroupsFromRows(bundle.rewards) : rewardGroupsFor(sourceRow.key),
       }
     : blankEvent()
   editor.kind = 'event'
   editor.index = row ? events.value.indexOf(row) : -1
   editor.draft = draft
   editorSnapshot.value = JSON.stringify(draft)
+}
+
+function rewardGroupsFromRows(rows: ContentRewardRow[]) {
+  const groups = new Map<number, RewardGroupDraft>()
+  rows.slice().sort((left,right)=>left.milestone-right.milestone).forEach(row=>{const group=groups.get(row.milestone)??{milestone:row.milestone,description:row.description,items:[]};group.items.push({item_name:row.item_name,quantity:row.quantity});groups.set(row.milestone,group)})
+  return [...groups.values()]
 }
 
 function openEditor(kind: Exclude<EditorKind, 'event'>, row?: any) {
@@ -415,7 +437,13 @@ function fillEventSample() {
     key: editor.index >= 0 ? editor.draft.key : 'forest-field-test',
     name: '森林生态联合调查',
     region: '森林',
-    choices: ['记录足迹', '采集样本', '呼叫巡护员'],
+    choices: [
+      { choice_key: 'tracks', label: '记录足迹', effect_type: 'adventure_xp_gain_percent', effect_value: 15 },
+      { choice_key: 'samples', label: '采集样本', effect_type: 'expedition_reward_gain_percent', effect_value: 15 },
+      { choice_key: 'rangers', label: '呼叫巡护员', effect_type: 'boss_damage_gain_percent', effect_value: 15 },
+    ],
+    progress_source_mode: 'all_expeditions',
+    sourceZones: '',
     starts_at: start.toISOString().slice(0, 16),
     ends_at: end.toISOString().slice(0, 16),
     active: true,
@@ -453,7 +481,7 @@ async function saveCurrentEvent() {
   if (editor.kind !== 'event') return
   const draft = editor.draft as EventDraft
   if (!draft.key.trim() || !draft.name.trim()) return toast.error('请填写活动键和活动名称')
-  if (draft.choices.length < 2 || draft.choices.some((choice) => !choice.trim())) return toast.error('请填写至少两个完整的故事选项')
+  if (draft.choices.length < 2 || draft.choices.length > 5 || draft.choices.some((choice) => !choice.choice_key.trim() || !choice.label.trim())) return toast.error('请填写 2 到 5 个完整的故事选项')
   if (new Date(draft.ends_at).getTime() <= new Date(draft.starts_at).getTime()) return toast.error('结束时间必须晚于开始时间')
   if (draft.rewardGroups.some((group) => group.milestone <= 0 || group.items.length === 0 || group.items.some((item) => !item.item_name || item.quantity <= 0))) {
     return toast.error('里程碑、奖励物品和数量必须填写完整')
@@ -463,10 +491,11 @@ async function saveCurrentEvent() {
     key: draft.key.trim(),
     name: draft.name.trim(),
     region: draft.region.trim(),
-    story_choices: JSON.stringify(draft.choices.map((choice) => choice.trim())),
+    story_choices: JSON.stringify(draft.choices.map((choice) => choice.label.trim())),
     starts_at: new Date(draft.starts_at).toISOString(),
     ends_at: new Date(draft.ends_at).toISOString(),
     active: draft.active,
+    progress_source_mode: draft.progress_source_mode,
   }
   const eventRewards = draft.rewardGroups.flatMap((group) => group.items.map((item) => ({
     event_key: event.key,
@@ -477,7 +506,9 @@ async function saveCurrentEvent() {
   })))
   saving.value = true
   try {
-    const saved = await saveEventBundle(event.key, event, eventRewards)
+    const eventChoices = draft.choices.map((choice,index)=>({event_key:event.key,choice_key:choice.choice_key.trim(),label:choice.label.trim(),effect_type:choice.effect_type,effect_value:Number(choice.effect_value),sort_order:(index+1)*10}))
+    const eventSources = draft.progress_source_mode === 'selected' ? draft.sourceZones.split(/[，,\n]/).map(value=>value.trim()).filter(Boolean).map(zone_key=>({event_key:event.key,zone_key})) : []
+    const saved = await saveEventBundle(event.key, event, eventRewards, eventChoices, eventSources)
     const savedEvent = saved.event ?? event
     const savedRewards = saved.rewards ?? eventRewards
     if (editor.index < 0) events.value.push(savedEvent)
@@ -1130,7 +1161,7 @@ onMounted(load)
 
     <UiDrawer :open="editor.kind !== null" :title="editorTitle" :description="editor.kind === 'event' ? '活动和奖励将在一次请求中保存。' : '修改后返回列表检查并保存当前配置。'" :busy="saving" @close="closeEditor">
       <template v-if="editor.kind === 'event' && editor.draft">
-        <div class="drawer-help"><IconSparkles :size="19" /><div><strong>使用说明</strong><p>先设置活动时间与故事选项，再按里程碑添加一个或多个物品。累计预览会展示玩家到达每个节点时已获得的总奖励。</p></div><button class="btn btn-ghost btn-small" @click="fillEventSample">填充测试示例</button></div>
+        <div class="drawer-help"><IconSparkles :size="19" /><div><strong>使用说明 · 配置流程</strong><p>① 基本时间决定活动何时可参与；② 进度来源决定哪些区域远征会累计进度；③ 故事投票给同一群的玩家提供动态加成；④ 里程碑决定累计进度达到数值后发什么奖励。活动不会自动创建地图或图鉴。</p></div><button class="btn btn-ghost btn-small" @click="fillEventSample">填充测试示例</button></div>
         <div class="form-grid two">
           <label><span>活动键</span><input v-model="editor.draft.key" :disabled="editor.index >= 0" placeholder="例如 forest-week" /></label>
           <label><span>活动名称</span><input v-model="editor.draft.name" /></label>
@@ -1139,8 +1170,9 @@ onMounted(load)
           <label><span>开始时间</span><input v-model="editor.draft.starts_at" type="datetime-local" /></label>
           <label><span>结束时间</span><input v-model="editor.draft.ends_at" type="datetime-local" /></label>
         </div>
-        <section class="drawer-section"><header><div><span>玩家分支</span><h3>故事选项</h3></div><button class="text-button" @click="editor.draft.choices.push('')"><IconPlus :size="15" />添加选项</button></header><div class="choice-list"><label v-for="(_, index) in editor.draft.choices" :key="index"><b>{{ Number(index) + 1 }}</b><input v-model="editor.draft.choices[index]" /><button v-if="editor.draft.choices.length > 2" aria-label="删除故事选项" @click="editor.draft.choices.splice(Number(index), 1)"><IconTrash :size="15" /></button></label></div></section>
-        <section class="drawer-section rewards-editor"><header><div><span>事务保存</span><h3>里程碑奖励</h3></div><button class="text-button" @click="addRewardGroup"><IconPlus :size="15" />添加里程碑</button></header>
+        <section class="drawer-section"><header><div><span>步骤 2 · 进度来源</span><h3>哪些远征计入活动</h3></div></header><div class="form-grid two"><label><span>来源范围</span><select v-model="editor.draft.progress_source_mode"><option value="all_expeditions">全部已解锁区域远征</option><option value="selected">仅指定区域</option></select><small>这里只关联远征进度，不会改变地图掉落、探索度或图鉴。</small></label><label v-if="editor.draft.progress_source_mode==='selected'"><span>区域键</span><textarea v-model="editor.draft.sourceZones" rows="3" placeholder="forest-edge, ancient-ruins"/><small>填写冒险世界中的区域键，逗号或换行分隔。</small></label></div></section>
+        <section class="drawer-section"><header><div><span>步骤 3 · 群内投票</span><h3>故事选项与实际效果</h3></div><button class="text-button" :disabled="editor.draft.choices.length>=5" @click="editor.draft.choices.push({choice_key:'choice-'+(editor.draft.choices.length+1),label:'',effect_type:'adventure_xp_gain_percent',effect_value:10})"><IconPlus :size="15" />添加选项</button></header><p class="section-help">活动期间，同一群票数唯一领先的选项会生效；平票时不应用加成。稳定标识保存后用于追踪玩家选择，名称可调整。</p><div class="choice-list detailed"><label v-for="(choice, index) in editor.draft.choices" :key="index"><b>{{ Number(index) + 1 }}</b><input v-model="choice.label" placeholder="玩家看到的选项"/><input v-model="choice.choice_key" placeholder="稳定标识"/><select v-model="choice.effect_type"><option value="adventure_xp_gain_percent">冒险经验增加</option><option value="expedition_reward_gain_percent">远征奖励增加</option><option value="community_material_gain_percent">社区共建材料增加</option><option value="facility_upgrade_cost_reduction_percent">设施升级消耗降低</option><option value="boss_damage_gain_percent">首领伤害增加</option></select><input v-model.number="choice.effect_value" type="number" min="0" max="500" aria-label="效果百分比"/><button v-if="editor.draft.choices.length > 2" aria-label="删除故事选项" @click="editor.draft.choices.splice(Number(index), 1)"><IconTrash :size="15" /></button></label></div></section>
+        <section class="drawer-section rewards-editor"><header><div><span>步骤 4 · 事务保存</span><h3>里程碑奖励</h3></div><button class="text-button" @click="addRewardGroup"><IconPlus :size="15" />添加里程碑</button></header>
           <article v-for="(group, groupIndex) in editor.draft.rewardGroups" :key="groupIndex" class="reward-group">
             <header><strong>里程碑 {{ group.milestone }}</strong><button aria-label="删除里程碑" @click="removeRewardGroup(groupIndex)"><IconTrash :size="16" /></button></header>
             <div class="reward-meta"><label><span>达成数值</span><input v-model.number="group.milestone" type="number" min="1" /></label><label><span>节点说明</span><input v-model="group.description" /></label></div>
@@ -1307,4 +1339,6 @@ onMounted(load)
 @media(max-width:700px){.message-catalog,.message-variable-grid{grid-template-columns:1fr}.message-preview-panel>header{flex-direction:column}.message-preview-panel header label{width:100%}}
 .pet-editor{display:grid;gap:4px}.pet-step{padding:14px;border:1px solid var(--border-color);border-radius:var(--radius-card);background:var(--bg-elevated)}.pet-step>header b{color:var(--text-muted);font-size:11px;font-weight:500}.wide-field{grid-column:1/-1}.attribute-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.attribute-grid label{display:grid;grid-template-columns:minmax(90px,1fr) minmax(90px,1fr);align-items:center;gap:8px;padding:8px 10px;border-radius:9px;background:var(--bg-surface)}.attribute-grid span,.path-field span{color:var(--text-muted);font-size:11px}.attribute-grid input,.path-field input,.pet-image-grid>article>input{width:100%;min-height:36px;padding:6px 9px;border:1px solid var(--border-color);border-radius:var(--radius-input);background:var(--bg-base);color:var(--text-main);font:inherit}.bonus-grid{margin-top:0}.path-field{display:grid;gap:5px}.pet-image-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.pet-image-grid article{display:grid;align-content:start;gap:8px;padding:11px;border:1px solid var(--border-color);border-radius:11px;background:var(--bg-surface)}.pet-image-grid h4{margin:0;font-size:13px}
 @media(max-width:700px){.attribute-grid,.pet-image-grid{grid-template-columns:1fr}.pet-step>header{align-items:start;flex-direction:column}.wide-field{grid-column:auto}}
+.section-help{margin:0;color:var(--text-muted);font-size:12px}.choice-list.detailed label{grid-template-columns:28px minmax(120px,1fr) minmax(100px,.7fr) minmax(150px,1fr) 78px auto}.choice-list select{min-height:38px;padding:7px 9px;border:1px solid var(--border-color);border-radius:var(--radius-input);background:var(--bg-base);color:var(--text-main)}
+@media(max-width:900px){.choice-list.detailed label{grid-template-columns:28px 1fr auto}.choice-list.detailed label input:nth-of-type(2),.choice-list.detailed label select,.choice-list.detailed label input:nth-of-type(3){grid-column:2}}
 </style>

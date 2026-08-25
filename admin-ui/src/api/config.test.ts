@@ -5,6 +5,7 @@ import {
   normalizeCommand,
   normalizeItem,
   normalizeShopItem,
+	imagePreviewUrl,
   reloadConfigs,
 } from './config'
 
@@ -56,6 +57,12 @@ describe('fetchConfigStatus', () => {
 })
 
 describe('内容工作台数据兼容', () => {
+	it('将 Windows 和配置目录路径转为后台可预览地址', () => {
+		expect(imagePreviewUrl('宠物图片\\仙子伊布.gif')).toBe('/images/宠物图片/仙子伊布.gif')
+		expect(imagePreviewUrl('.\\图片\\物品图片\\书本.jpg')).toBe('/images/物品图片/书本.jpg')
+		expect(imagePreviewUrl('https://cdn.example.com/pet.png')).toBe('https://cdn.example.com/pet.png')
+	})
+
   it('兼容命令新字段的蛇形和大驼峰命名', () => {
     expect(
       normalizeCommand({

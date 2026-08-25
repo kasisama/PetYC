@@ -34,6 +34,8 @@ async function mockAdminApi(page: Page) {
     if(path==='/api/admin/config/work_settings') return ok([{Name:'旧打工',Time:60,HungerCost:10,RewardCoin:20,RewardItems:''}])
     if(path==='/api/admin/config/checkin_rewards') return ok([{ID:1,Type:'checkin_weekly',Day:'1',Currency:10,Affection:1,Items:''}])
     if(path==='/api/admin/config/status') return ok({db_revision:2,loaded_revision:2,pending_reload:false,saved_at:null,loaded_at:null})
+    if(path==='/api/admin/config/profiles') return ok({items:[{id:'official',name:'官方默认 v0.0.1',description:'内置安全默认配置',source:'official',schema_version:1,app_version:'0.0.1',builtin:true,active:true,dirty:false,summary:{schemas:18,rows:378},created_at:new Date().toISOString(),updated_at:new Date().toISOString()}],active_profile_id:'official',dirty:false})
+    if(path==='/api/admin/onboarding/status') return ok({setup_completed:true,tour_version_completed:1,current_tour_version:1})
     if(path==='/api/admin/audit-logs') return ok({items:[],total:0,page:1,limit:50})
     return ok(null)
   })
@@ -41,16 +43,16 @@ async function mockAdminApi(page: Page) {
 
 test.beforeEach(async({page})=>{await mockAdminApi(page)})
 
-test('七大领域导航与核心数据可用',async({page})=>{
+test('八大领域导航与核心数据可用',async({page})=>{
   await page.goto('')
   await expect(page.getByRole('heading',{name:'宠物远征运营总览'})).toBeVisible()
-  for(const [path,heading] of [['players','玩家管理'],['gameplay','玩法运营'],['communities','社群运营'],['platforms','机器人平台状态'],['system','系统设置']] as const){await page.goto(path);await expect(page.getByRole('heading',{name:heading,exact:true}).first()).toBeVisible()}
+  for(const [path,heading] of [['players','玩家管理'],['gameplay','玩法运营'],['communities','社群运营'],['profiles','配置方案'],['platforms','机器人平台状态'],['system','系统设置']] as const){await page.goto(path);await expect(page.getByRole('heading',{name:heading,exact:true}).first()).toBeVisible()}
   await page.goto('content')
   await expect(page.getByRole('button',{name:'活动运营'})).toBeVisible()
   await expect(page.getByRole('button',{name:'宠物与物品'})).toBeVisible()
 })
 
-test('成长零数据与内容配置均为完整产品页面',async({page})=>{
+test('成长零数据与内容配置均为完整产品页面',async({page},testInfo)=>{
   await page.goto('gameplay?tab=growth')
   await expect(page.getByText('暂无玩家行为数据，成长规则已经可以配置')).toBeVisible()
   await expect(page.getByText('实际玩法配置')).toBeVisible()
@@ -74,12 +76,13 @@ test('成长零数据与内容配置均为完整产品页面',async({page})=>{
   await expect(page.getByRole('dialog',{name:'编辑宠物种类'})).toBeVisible()
   await page.getByRole('button',{name:'关闭'}).click()
   await page.getByRole('button',{name:'物品',exact:true}).click()
-  await page.locator('.desktop-table tr').filter({hasText:'调查记录'}).getByRole('button',{name:'编辑'}).click()
+  if(testInfo.project.name==='mobile') await page.locator('.mobile-list .summary-card').filter({hasText:'调查记录'}).click()
+  else await page.locator('.desktop-table tr').filter({hasText:'调查记录'}).getByRole('button',{name:'编辑'}).click()
   await expect(page.getByRole('dialog',{name:'编辑物品'})).toBeVisible()
   await page.getByRole('button',{name:'关闭'}).click()
 
   await page.getByRole('button',{name:'商店'}).click()
-  await expect(page.getByLabel('调查记录价格').first()).toBeVisible()
+  await expect(page.locator('[aria-label="调查记录价格"]:visible')).toBeVisible()
   await page.getByRole('button',{name:'图片资产'}).click()
   await expect(page.getByText('默认宠物图')).toBeVisible()
 
