@@ -58,7 +58,7 @@ func NewServerManagerWithEndpoint(handler http.Handler, persistEndpoint func(str
 }
 
 func (manager *ServerManager) Start(port int) error {
-	return manager.StartEndpoint("0.0.0.0", port)
+	return manager.StartEndpoint("127.0.0.1", port)
 }
 
 func (manager *ServerManager) StartEndpoint(host string, port int) error {
@@ -86,7 +86,7 @@ func (manager *ServerManager) Address() string {
 
 func (manager *ServerManager) BeginPortHandoff(port int) (PortHandoff, error) {
 	manager.mu.Lock()
-	host := "0.0.0.0"
+	host := "127.0.0.1"
 	if manager.active != nil {
 		host = manager.active.bindHost
 	}
@@ -177,7 +177,7 @@ func (manager *ServerManager) Close() error {
 
 func (manager *ServerManager) listen(host string, port int) (*managedHTTPServer, error) {
 	if host == "" {
-		host = "0.0.0.0"
+		host = "127.0.0.1"
 	}
 	listener, err := net.Listen("tcp", net.JoinHostPort(host, fmt.Sprint(port)))
 	if err != nil {

@@ -54,6 +54,7 @@ func writeAudit(tx *gorm.DB, action, targetType, targetID, reason string, before
 }
 
 func (api *EcosystemAPI) auditedMutation(c *gin.Context, action, targetType, targetID, reason string, before interface{}, mutate func(*gorm.DB) (interface{}, error)) {
+	markAuditRecorded(c)
 	resultReason, err := requiredReason(reason)
 	if err != nil {
 		Error(c, 4000, err.Error())
@@ -254,13 +255,19 @@ func (api *EcosystemAPI) DeletePlayer(c *gin.Context) {
 				return nil, err
 			}
 		}
-		accountModels := []interface{}{&models.PlayerIdentity{}, &models.PetProfile{}, &models.GlobalInventoryItem{}, &models.CompanionJournal{}, &models.ExpeditionRun{}, &models.CodexEntry{}, &models.CommunityMember{}, &models.SquadMember{}, &models.IdentityBindToken{}, &models.NotificationPreference{}, &models.BossContribution{}, &models.SeasonVote{}, &models.PetBehaviorProfile{}}
+		accountModels := []interface{}{&models.PlayerIdentity{}, &models.PetProfile{}, &models.GlobalInventoryItem{}, &models.PlayerWallet{}, &models.WalletLedger{}, &models.CompanionJournal{}, &models.CompanionActionDaily{}, &models.ActivityRun{}, &models.ItemUseRecord{}, &models.ExpeditionRun{}, &models.EventProgress{}, &models.EventProgressGrant{}, &models.EventRewardClaim{}, &models.ChanceDailyState{}, &models.ChancePlayerState{}, &models.ChanceOutcome{}, &models.FishingRun{}, &models.BattleRecord{}, &models.TradeAudit{}, &models.CodexEntry{}, &models.CommunityMember{}, &models.SquadMember{}, &models.IdentityBindToken{}, &models.NotificationJob{}, &models.NotificationPreference{}, &models.BossContribution{}, &models.SeasonVote{}, &models.PetBehaviorProfile{}}
 		for _, model := range accountModels {
 			if err := tx.Where("account_id = ?", accountID).Delete(model).Error; err != nil {
 				return nil, err
 			}
 		}
+		if err := tx.Where("seller_account_id = ? OR buyer_account_id = ?", accountID, accountID).Delete(&models.TradeOffer{}).Error; err != nil {
+			return nil, err
+		}
 		if err := tx.Where("donor_id = ?", accountID).Delete(&models.HelpGiftLog{}).Error; err != nil {
+			return nil, err
+		}
+		if err := tx.Where("donor_id = ?", accountID).Delete(&models.HelpGiftDailyQuota{}).Error; err != nil {
 			return nil, err
 		}
 		if err := tx.Where("requester_id = ?", accountID).Delete(&models.CommunityHelpRequest{}).Error; err != nil {

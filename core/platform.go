@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -38,6 +39,7 @@ type InboundEvent struct {
 	SpaceID    string
 	RoomID     string
 	ActorID    string
+	ActorName  string
 	MessageID  string
 	EventID    string
 	MessageSeq int
@@ -59,11 +61,15 @@ type KeyboardPayload struct {
 }
 
 type OutboundMessage struct {
-	Text     string
-	Markdown *MarkdownPayload
-	Keyboard *KeyboardPayload
-	ReplyTo  string
-	Urgency  string
+	MessageKey      string
+	Text            string
+	Image           string
+	Markdown        *MarkdownPayload
+	Keyboard        *KeyboardPayload
+	ReplyTo         string
+	Urgency         string
+	BusinessResult  string
+	TechnicalResult string
 }
 
 func (message OutboundMessage) Render(markdownEnabled, keyboardEnabled bool) OutboundMessage {
@@ -82,6 +88,7 @@ type UnifiedHandler func(context.Context, InboundEvent) (OutboundMessage, error)
 type UnifiedFeature struct {
 	FuncName       string
 	DefaultCommand string
+	Aliases        []string
 	DisplayName    string
 	Category       string
 	Description    string
@@ -101,17 +108,48 @@ func NewCommandRouter() *CommandRouter {
 }
 
 func (router *CommandRouter) Register(command string, handler UnifiedHandler) error {
-	command = strings.TrimSpace(command)
-	if command == "" {
-		return errors.New("command cannot be empty")
+	return router.RegisterAll([]string{command}, handler)
+}
+
+func (router *CommandRouter) RegisterAll(commands []string, handler UnifiedHandler) error {
+	normalized, err := normalizeCommandTriggers(commands)
+	if err != nil {
+		return err
 	}
 	if handler == nil {
 		return errors.New("handler cannot be nil")
 	}
 	router.mu.Lock()
 	defer router.mu.Unlock()
-	router.handlers[command] = handler
+	for _, command := range normalized {
+		if _, exists := router.handlers[command]; exists {
+			return fmt.Errorf("command %q is already registered", command)
+		}
+	}
+	for _, command := range normalized {
+		router.handlers[command] = handler
+	}
 	return nil
+}
+
+func normalizeCommandTriggers(commands []string) ([]string, error) {
+	normalized := make([]string, 0, len(commands))
+	seen := make(map[string]struct{}, len(commands))
+	for _, command := range commands {
+		command = strings.TrimSpace(command)
+		if command == "" {
+			return nil, errors.New("command cannot be empty")
+		}
+		if _, exists := seen[command]; exists {
+			continue
+		}
+		seen[command] = struct{}{}
+		normalized = append(normalized, command)
+	}
+	if len(normalized) == 0 {
+		return nil, errors.New("at least one command is required")
+	}
+	return normalized, nil
 }
 
 func (router *CommandRouter) Route(ctx context.Context, event InboundEvent) (OutboundMessage, bool, error) {
@@ -137,21 +175,32 @@ func (router *CommandRouter) Route(ctx context.Context, event InboundEvent) (Out
 	}
 	event.Text = text
 	message, err := handler(ctx, event)
-	recordGameplayMetric(event, matchedCommand, err == nil)
+	recordGameplayMetric(event, matchedCommand, message, err)
 	return message, true, err
 }
 
-func recordGameplayMetric(event InboundEvent, command string, success bool) {
+func recordGameplayMetric(event InboundEvent, command string, message OutboundMessage, handlerErr error) {
 	if database.DB == nil || command == "" || !database.DB.Migrator().HasTable(&models.GameplayMetric{}) {
 		return
 	}
 	now := time.Now()
+	businessResult := strings.TrimSpace(message.BusinessResult)
+	if businessResult == "" {
+		businessResult = "success"
+	}
+	technicalResult := strings.TrimSpace(message.TechnicalResult)
+	if technicalResult == "" {
+		technicalResult = "ok"
+		if handlerErr != nil {
+			technicalResult = "error"
+		}
+	}
 	metric := models.GameplayMetric{
 		Day: now.Format("2006-01-02"), Platform: string(event.Platform), SceneType: string(event.SceneType),
-		Command: command, Success: success, Count: 1, UpdatedAt: now,
+		Command: command, BusinessResult: businessResult, TechnicalResult: technicalResult, Count: 1, UpdatedAt: now,
 	}
 	_ = database.DB.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "day"}, {Name: "platform"}, {Name: "scene_type"}, {Name: "command"}, {Name: "success"}},
+		Columns:   []clause.Column{{Name: "day"}, {Name: "platform"}, {Name: "scene_type"}, {Name: "command"}, {Name: "business_result"}, {Name: "technical_result"}},
 		DoUpdates: clause.Assignments(map[string]interface{}{"count": gorm.Expr("count + 1"), "updated_at": now}),
 	}).Create(&metric).Error
 }
@@ -175,13 +224,42 @@ func RegisterUnifiedFeature(feature UnifiedFeature, handler UnifiedHandler) erro
 	if feature.FuncName == "" || feature.DefaultCommand == "" || handler == nil {
 		return errors.New("unified feature metadata is incomplete")
 	}
+	feature.Aliases = normalizedAliases(feature.DefaultCommand, feature.Aliases)
 	feature.handler = handler
+	unifiedRouterMu.RLock()
+	err := unifiedRouter.RegisterAll(featureTriggers(feature.DefaultCommand, feature.Aliases), handler)
+	unifiedRouterMu.RUnlock()
+	if err != nil {
+		return err
+	}
 	unifiedFeatureMu.Lock()
 	unifiedFeatures[feature.FuncName] = feature
 	unifiedFeatureMu.Unlock()
-	unifiedRouterMu.RLock()
-	defer unifiedRouterMu.RUnlock()
-	return unifiedRouter.Register(feature.DefaultCommand, handler)
+	return nil
+}
+
+func normalizedAliases(command string, aliases []string) []string {
+	result := make([]string, 0, len(aliases))
+	seen := map[string]struct{}{strings.TrimSpace(command): {}}
+	for _, alias := range aliases {
+		alias = strings.TrimSpace(alias)
+		if alias == "" {
+			continue
+		}
+		if _, exists := seen[alias]; exists {
+			continue
+		}
+		seen[alias] = struct{}{}
+		result = append(result, alias)
+	}
+	return result
+}
+
+func featureTriggers(command string, aliases []string) []string {
+	triggers := make([]string, 0, len(aliases)+1)
+	triggers = append(triggers, command)
+	triggers = append(triggers, aliases...)
+	return triggers
 }
 
 func RebuildUnifiedRouter(db *gorm.DB) error {
@@ -210,7 +288,7 @@ func RebuildUnifiedRouter(db *gorm.DB) error {
 		if !enabled || command == "" {
 			continue
 		}
-		if err := next.Register(command, feature.handler); err != nil {
+		if err := next.RegisterAll(featureTriggers(command, feature.Aliases), feature.handler); err != nil {
 			return err
 		}
 	}
@@ -224,14 +302,13 @@ func SyncUnifiedCommandConfigs(db *gorm.DB) error {
 	if db == nil {
 		return errors.New("command database is nil")
 	}
-	const catalogVersion = "2"
+	const catalogVersion = "5"
 	return db.Transaction(func(tx *gorm.DB) error {
 		var state models.SystemConfig
-		_ = tx.First(&state, "key = ?", "Internal.CommandCatalogVersion").Error
+		if err := tx.Limit(1).Find(&state, "key = ?", "Internal.CommandCatalogVersion").Error; err != nil {
+			return err
+		}
 		if state.Value != catalogVersion {
-			if err := tx.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&models.CommandConfig{}).Error; err != nil {
-				return err
-			}
 			unifiedFeatureMu.RLock()
 			features := make([]UnifiedFeature, 0, len(unifiedFeatures))
 			for _, feature := range unifiedFeatures {
@@ -242,8 +319,22 @@ func SyncUnifiedCommandConfigs(db *gorm.DB) error {
 			unifiedFeatureMu.RUnlock()
 			sort.Slice(features, func(i, j int) bool { return features[i].SortOrder < features[j].SortOrder })
 			for _, feature := range features {
-				row := models.CommandConfig{FuncName: feature.FuncName, Command: feature.DefaultCommand, DisplayName: feature.DisplayName, Category: feature.Category, Description: feature.Description, Enabled: feature.Enabled, SortOrder: feature.SortOrder}
-				if err := tx.Create(&row).Error; err != nil {
+				var row models.CommandConfig
+				result := tx.Limit(1).Find(&row, "func_name = ?", feature.FuncName)
+				if result.Error != nil {
+					return result.Error
+				}
+				if result.RowsAffected == 0 {
+					row = models.CommandConfig{FuncName: feature.FuncName, Command: feature.DefaultCommand, DisplayName: feature.DisplayName, Category: feature.Category, Description: feature.Description, Enabled: feature.Enabled, SortOrder: feature.SortOrder}
+					if err := tx.Create(&row).Error; err != nil {
+						return err
+					}
+					continue
+				}
+				if err := tx.Model(&row).Updates(map[string]interface{}{
+					"display_name": feature.DisplayName, "category": feature.Category,
+					"description": feature.Description, "sort_order": feature.SortOrder,
+				}).Error; err != nil {
 					return err
 				}
 			}
@@ -253,23 +344,6 @@ func SyncUnifiedCommandConfigs(db *gorm.DB) error {
 		}
 		return RebuildUnifiedRouter(tx)
 	})
-}
-
-var retiredLegacyPrefixes = []string{
-	"抽奖", "宠物抽奖", "猜拳", "宠物猜拳", "偷袭", "宠物偷袭", "回击", "宠物回击",
-	"宠物交易", "接受交易", "拒绝交易", "添加交易", "删除交易", "交易信息", "取消交易", "确认取消", "同意交易",
-	"学习", "宠物学习", "完成学习", "锻炼", "宠物锻炼", "完成锻炼", "健身", "宠物健身", "完成健身", "打工", "宠物打工", "完成打工",
-	"钓鱼", "宠物钓鱼", "抛竿", "收竿", "创建家族", "加入家族", "注销家族", "退出家族", "我的家族", "家族列表", "家族成员", "踢出成员", "神树浇水",
-}
-
-func IsRetiredLegacyCommand(text string) bool {
-	text = strings.TrimSpace(text)
-	for _, prefix := range retiredLegacyPrefixes {
-		if strings.HasPrefix(text, prefix) {
-			return true
-		}
-	}
-	return false
 }
 
 func RouteInbound(ctx context.Context, event InboundEvent) (OutboundMessage, bool, error) {
@@ -292,6 +366,10 @@ func (event OneBotEvent) ToInbound(appID string) InboundEvent {
 		spaceID = strconv.FormatInt(event.GroupID, 10)
 		roomID = spaceID
 	}
+	messageID := ""
+	if event.MessageID != 0 {
+		messageID = strconv.FormatInt(event.MessageID, 10)
+	}
 	return InboundEvent{
 		Platform:  PlatformOneBot,
 		SceneType: scene,
@@ -299,6 +377,8 @@ func (event OneBotEvent) ToInbound(appID string) InboundEvent {
 		SpaceID:   spaceID,
 		RoomID:    roomID,
 		ActorID:   strconv.FormatInt(event.UserID, 10),
+		ActorName: strings.TrimSpace(event.Sender.Nickname),
+		MessageID: messageID,
 		Text:      strings.TrimSpace(event.RawMessage),
 		Timestamp: time.Now(),
 	}

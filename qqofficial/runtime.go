@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"qq-pet-saas/core"
 )
 
 type CapabilityStatus struct {
@@ -96,7 +98,19 @@ func (status *RuntimeStatus) markSend() {
 var defaultRuntime struct {
 	sync.Mutex
 	status *RuntimeStatus
+	client *Client
 	cancel context.CancelFunc
+}
+
+func SendDefault(ctx context.Context, event core.InboundEvent, message core.OutboundMessage) error {
+	defaultRuntime.Lock()
+	client := defaultRuntime.client
+	defaultRuntime.Unlock()
+	if client == nil {
+		return errors.New("QQ 官方机器人当前未连接")
+	}
+	_, err := client.Send(ctx, event, message)
+	return err
 }
 
 func DefaultRuntimeSnapshot() RuntimeSnapshot {
@@ -132,6 +146,7 @@ func ApplyDefaultConfig() error {
 		cancel := defaultRuntime.cancel
 		defaultRuntime.cancel = nil
 		defaultRuntime.status = nil
+		defaultRuntime.client = nil
 		defaultRuntime.Unlock()
 		if cancel != nil {
 			cancel()
@@ -155,7 +170,7 @@ func startConfigured(parent context.Context, config Config) (*Gateway, error) {
 	if defaultRuntime.cancel != nil {
 		defaultRuntime.cancel()
 	}
-	defaultRuntime.cancel, defaultRuntime.status = cancel, status
+	defaultRuntime.cancel, defaultRuntime.status, defaultRuntime.client = cancel, status, client
 	defaultRuntime.Unlock()
 	go func() {
 		if runErr := gateway.Run(ctx); runErr != nil && !errors.Is(runErr, context.Canceled) {

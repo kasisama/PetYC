@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -49,8 +50,8 @@ func validateDomainConfig(name string, payload json.RawMessage) error {
 				return configValidationError{fmt.Sprintf("第 %d 个活动的名称、区域或时间无效", index+1)}
 			}
 			var choices []string
-			if err := json.Unmarshal([]byte(row.StoryChoices), &choices); err != nil || len(choices) != 3 {
-				return configValidationError{fmt.Sprintf("活动 %s 必须配置三个故事选项", row.Key)}
+			if err := json.Unmarshal([]byte(row.StoryChoices), &choices); err != nil || len(choices) < 2 || len(choices) > 5 {
+				return configValidationError{fmt.Sprintf("活动 %s 必须配置 2 到 5 个故事选项", row.Key)}
 			}
 			for _, choice := range choices {
 				if strings.TrimSpace(choice) == "" {
@@ -132,6 +133,61 @@ func validateDomainConfig(name string, payload json.RawMessage) error {
 			}
 			seen[key] = struct{}{}
 		}
+	case "expedition_templates":
+		var rows []models.ExpeditionTemplateConfig
+		if err := json.Unmarshal(payload, &rows); err != nil {
+			return err
+		}
+		seen := make(map[int]struct{}, len(rows))
+		for index, row := range rows {
+			if row.Tier <= 0 || strings.TrimSpace(row.Name) == "" || row.DurationMinutes <= 0 || row.HungerCost < 0 || row.ReadinessCost < 0 || strings.TrimSpace(row.RewardItem) == "" || row.RewardQuantity <= 0 || row.RewardRecords < 0 || row.RewardGrowth < 0 || row.CodexProgress < 0 || row.CodexProgress > 100 {
+				return configValidationError{fmt.Sprintf("第 %d 个远征模板配置无效", index+1)}
+			}
+			if row.RequiredQuantity < 0 || (row.RequiredItem == "" && row.RequiredQuantity > 0) {
+				return configValidationError{fmt.Sprintf("第 %d 个远征模板消耗物品配置无效", index+1)}
+			}
+			if _, exists := seen[row.Tier]; exists {
+				return configValidationError{fmt.Sprintf("远征档位重复: %d", row.Tier)}
+			}
+			seen[row.Tier] = struct{}{}
+		}
+	case "chance_games":
+		var rows []models.ChanceGameConfig
+		if err := json.Unmarshal(payload, &rows); err != nil {
+			return err
+		}
+		seen := make(map[string]struct{}, len(rows))
+		for index, row := range rows {
+			if strings.TrimSpace(row.GameKey) == "" || strings.TrimSpace(row.Name) == "" || row.CostCurrency < 0 || row.CostQuantity < 0 || row.DailyLimit < 0 || row.PityThreshold < 0 || row.DurationSecond < 0 {
+				return configValidationError{fmt.Sprintf("第 %d 个概率玩法配置无效", index+1)}
+			}
+			if row.CostQuantity > 0 && strings.TrimSpace(row.CostItem) == "" {
+				return configValidationError{fmt.Sprintf("玩法 %s 的消耗物品不能为空", row.GameKey)}
+			}
+			if row.PityThreshold > 0 && strings.TrimSpace(row.PityRewardKey) == "" {
+				return configValidationError{fmt.Sprintf("玩法 %s 的保底奖励不能为空", row.GameKey)}
+			}
+			if _, exists := seen[row.GameKey]; exists {
+				return configValidationError{fmt.Sprintf("概率玩法键重复: %s", row.GameKey)}
+			}
+			seen[row.GameKey] = struct{}{}
+		}
+	case "chance_rewards":
+		var rows []models.ChanceRewardConfig
+		if err := json.Unmarshal(payload, &rows); err != nil {
+			return err
+		}
+		seen := make(map[string]struct{}, len(rows))
+		for index, row := range rows {
+			if strings.TrimSpace(row.GameKey) == "" || strings.TrimSpace(row.RewardKey) == "" || strings.TrimSpace(row.Name) == "" || row.Weight <= 0 || row.Quantity < 0 || row.Currency < 0 || (row.Quantity == 0 && row.Currency == 0) || (row.Quantity > 0 && strings.TrimSpace(row.ItemName) == "") {
+				return configValidationError{fmt.Sprintf("第 %d 个概率奖励配置无效", index+1)}
+			}
+			key := row.GameKey + ":" + row.RewardKey
+			if _, exists := seen[key]; exists {
+				return configValidationError{fmt.Sprintf("概率奖励键重复: %s", key)}
+			}
+			seen[key] = struct{}{}
+		}
 	}
 	return nil
 }
@@ -160,7 +216,7 @@ func validateRewardItems(db *gorm.DB, payload json.RawMessage) error {
 	return nil
 }
 
-// 配置接口使用的业务错误码。HTTP 状态码始终为 200，错误通过 code 字段表达。
+// 配置接口使用的稳定业务错误码；HTTP 状态同时反映错误类别。
 const (
 	codeInvalidPayload = 4000
 	codeSchemaNotFound = 4004
@@ -208,19 +264,43 @@ func newConfigSchema[T any](orderBy string) configSchema {
 // configSchemas 是配置中心的白名单。键与旧接口 /api/admin/configs/<key> 保持一致，
 // 便于前端逐步迁移；值绑定到 database.InitDB 中迁移的 9 张配置表。
 var configSchemas = map[string]configSchema{
-	"system":            newConfigSchema[models.SystemConfig]("key asc"),
-	"commands":          newConfigSchema[models.CommandConfig]("func_name asc"),
-	"pet_species":       newConfigSchema[models.PetSpeciesConfig]("name asc"),
-	"items":             newConfigSchema[models.ItemConfig]("name asc"),
-	"shop_items":        newConfigSchema[models.ShopItemConfig]("id asc"),
-	"menus":             newConfigSchema[models.MenuConfig]("name asc"),
-	"images":            newConfigSchema[models.ImageConfig]("name asc"),
-	"live_events":       newConfigSchema[models.LiveEventConfig]("starts_at desc"),
-	"reward_tracks":     newConfigSchema[models.RewardTrackConfig]("event_key asc, milestone asc"),
-	"growth_roles":      newConfigSchema[models.GrowthRoleConfig]("sort_order asc, name asc"),
-	"growth_stances":    newConfigSchema[models.GrowthStanceConfig]("sort_order asc, name asc"),
-	"personality_rules": newConfigSchema[models.PersonalityRuleConfig]("sort_order asc, name asc"),
-	"codex_catalog":     newConfigSchema[models.CodexCatalogConfig]("sort_order asc, category asc, entry_key asc"),
+	"system":               newConfigSchema[models.SystemConfig]("key asc"),
+	"commands":             newConfigSchema[models.CommandConfig]("func_name asc"),
+	"pet_species":          newConfigSchema[models.PetSpeciesConfig]("name asc"),
+	"items":                newConfigSchema[models.ItemConfig]("name asc"),
+	"shop_items":           newConfigSchema[models.ShopItemConfig]("id asc"),
+	"menus":                newConfigSchema[models.MenuConfig]("name asc"),
+	"images":               newConfigSchema[models.ImageConfig]("name asc"),
+	"live_events":          newConfigSchema[models.LiveEventConfig]("starts_at desc"),
+	"reward_tracks":        newConfigSchema[models.RewardTrackConfig]("event_key asc, milestone asc"),
+	"growth_roles":         newConfigSchema[models.GrowthRoleConfig]("sort_order asc, name asc"),
+	"growth_stances":       newConfigSchema[models.GrowthStanceConfig]("sort_order asc, name asc"),
+	"personality_rules":    newConfigSchema[models.PersonalityRuleConfig]("sort_order asc, name asc"),
+	"codex_catalog":        newConfigSchema[models.CodexCatalogConfig]("sort_order asc, category asc, entry_key asc"),
+	"expedition_templates": newConfigSchema[models.ExpeditionTemplateConfig]("tier asc"),
+	"chance_games":         newConfigSchema[models.ChanceGameConfig]("game_key asc"),
+	"chance_rewards":       newConfigSchema[models.ChanceRewardConfig]("game_key asc, sort_order asc, id asc"),
+}
+
+var configConsumers = map[string][]string{
+	"system":               {"服务启动", "游戏参数"},
+	"commands":             {"统一命令路由", "OneBot", "QQ 官方群", "QQ 官方频道"},
+	"pet_species":          {"领养", "宠物状态", "进化觉醒", "消息图片"},
+	"items":                {"统一背包", "物品效果", "社区共建", "安全交易"},
+	"shop_items":           {"商店", "购买出售", "补货"},
+	"checkin_rewards":      {"签到", "每日奖励结算"},
+	"work_settings":        {"打工菜单", "活动执行与结算"},
+	"menus":                {"菜单", "帮助"},
+	"images":               {"消息图片", "后台预览"},
+	"live_events":          {"活动进度", "赛季故事", "社区影响"},
+	"reward_tracks":        {"活动里程碑结算"},
+	"growth_roles":         {"宠物定位", "技能"},
+	"growth_stances":       {"远征", "社区首领"},
+	"personality_rules":    {"陪伴性格"},
+	"codex_catalog":        {"图鉴", "远征图鉴授予"},
+	"expedition_templates": {"远征菜单", "远征出发与结算"},
+	"chance_games":         {"钓鱼", "抽奖"},
+	"chance_rewards":       {"钓鱼概率与保底", "抽奖概率与保底"},
 }
 
 // knownConfigSchemas 返回排序后的白名单键，用于错误提示。
@@ -238,6 +318,9 @@ type ConfigAPI struct {
 	DB *gorm.DB
 }
 
+var RebuildCommandRoutesFunc func() error
+var PrepareConfigDefaultsFunc func() error
+
 func NewConfigAPI(db *gorm.DB) *ConfigAPI {
 	return &ConfigAPI{DB: db}
 }
@@ -247,8 +330,158 @@ func NewConfigAPI(db *gorm.DB) *ConfigAPI {
 func RegisterConfigRoutes(group *gin.RouterGroup, api *ConfigAPI) {
 	group.GET("/config/schemas", api.ListSchemas)
 	group.GET("/config/status", api.GetStatus)
+	group.GET("/config/:schema/meta", api.GetConfigMeta)
 	group.GET("/config/:schema", api.GetConfig)
 	group.PUT("/config/:schema", api.SaveConfig)
+	group.DELETE("/config/:schema/:key", api.DeleteConfigItem)
+	group.POST("/config/reload", api.ReloadConfig)
+	group.POST("/config/reset", api.ResetConfig)
+}
+
+func (api *ConfigAPI) ReloadConfig(c *gin.Context) {
+	status, err := appconfig.GetConfigStatus(api.DB)
+	if err != nil {
+		Error(c, codeInternalError, "读取配置版本失败")
+		return
+	}
+	if err = appconfig.LoadAllConfigsFromDB(api.DB); err != nil {
+		Error(c, codeInternalError, "加载配置失败")
+		return
+	}
+	if RebuildCommandRoutesFunc != nil {
+		if err = RebuildCommandRoutesFunc(); err != nil {
+			Error(c, codeInternalError, "命令目录重载失败")
+			return
+		}
+	}
+	if err = appconfig.MarkConfigLoaded(api.DB, status.DBRevision); err != nil {
+		Error(c, codeInternalError, "记录配置版本失败")
+		return
+	}
+	Success(c, gin.H{"message": "配置已重载并生效"})
+}
+
+func (api *ConfigAPI) ResetConfig(c *gin.Context) {
+	var profile models.ConfigProfile
+	if err := api.DB.First(&profile, "id = ?", appconfig.OfficialProfileID).Error; err != nil {
+		Error(c, codeInternalError, "官方默认配置不存在")
+		return
+	}
+	snapshot, err := appconfig.DecodeSnapshot(profile.Payload)
+	if err != nil {
+		Error(c, codeInternalError, "官方默认配置损坏")
+		return
+	}
+	conflicts, err := appconfig.CheckSnapshotCompatibility(api.DB, snapshot)
+	if err != nil {
+		Error(c, codeInternalError, "默认配置兼容性检查失败")
+		return
+	}
+	if len(conflicts) > 0 {
+		c.JSON(409, gin.H{"code": 4092, "msg": "官方默认配置与现有玩家数据不兼容", "data": gin.H{"conflicts": conflicts}})
+		return
+	}
+	previous, err := appconfig.CaptureSnapshot(api.DB)
+	if err != nil {
+		Error(c, codeInternalError, "创建回滚快照失败")
+		return
+	}
+	if err = api.DB.Transaction(func(tx *gorm.DB) error {
+		if err := appconfig.ApplySnapshot(tx, snapshot); err != nil {
+			return err
+		}
+		return appconfig.SetActiveProfile(tx, profile.ID, false)
+	}); err != nil {
+		Error(c, codeInternalError, "恢复默认配置失败")
+		return
+	}
+	if err = reloadRuntimeConfig(api.DB); err != nil {
+		_ = api.DB.Transaction(func(tx *gorm.DB) error { return appconfig.ApplySnapshot(tx, previous) })
+		_ = reloadRuntimeConfig(api.DB)
+		Error(c, codeInternalError, "恢复默认配置热重载失败，已回滚")
+		return
+	}
+	Success(c, gin.H{"message": "已切换到官方默认 v0.0.1，其他配置方案已保留"})
+}
+
+func (api *ConfigAPI) DeleteConfigItem(c *gin.Context) {
+	schemaName := c.Param("schema")
+	if _, ok := configSchemas[schemaName]; !ok {
+		Error(c, codeSchemaNotFound, "未知的配置类型")
+		return
+	}
+	key := strings.TrimSpace(c.Param("key"))
+	if key == "" {
+		Error(c, codeInvalidPayload, "配置键不能为空")
+		return
+	}
+	err := api.DB.Transaction(func(tx *gorm.DB) error {
+		var result *gorm.DB
+		switch schemaName {
+		case "commands":
+			result = tx.Where("func_name = ?", key).Delete(&models.CommandConfig{})
+		case "pet_species":
+			result = tx.Where("name = ?", key).Delete(&models.PetSpeciesConfig{})
+		case "items":
+			if blocker, err := itemDeleteBlocker(tx, []string{key}); err != nil {
+				return err
+			} else if blocker != "" {
+				return configValidationError{blocker}
+			}
+			result = tx.Where("name = ?", key).Delete(&models.ItemConfig{})
+		case "shop_items":
+			if id, err := strconv.ParseUint(key, 10, 64); err == nil {
+				result = tx.Where("id = ?", id).Delete(&models.ShopItemConfig{})
+			} else {
+				result = tx.Where("name = ?", key).Delete(&models.ShopItemConfig{})
+			}
+		case "menus":
+			result = tx.Where("name = ?", key).Delete(&models.MenuConfig{})
+		case "images":
+			result = tx.Where("name = ?", key).Delete(&models.ImageConfig{})
+		default:
+			return configValidationError{"此配置类型不支持单条删除，请在对应编辑器中保存完整列表"}
+		}
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		return appconfig.MarkConfigSaved(tx)
+	})
+	if err != nil {
+		var validation configValidationError
+		if errors.As(err, &validation) {
+			Error(c, codeInvalidPayload, validation.Error())
+			return
+		}
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			Error(c, codeSchemaNotFound, "配置项不存在")
+			return
+		}
+		Error(c, codeInternalError, "删除配置项失败")
+		return
+	}
+	Success(c, gin.H{"message": "配置项已删除"})
+}
+
+func (api *ConfigAPI) GetConfigMeta(c *gin.Context) {
+	if _, ok := api.resolve(c); !ok {
+		return
+	}
+	status, err := appconfig.GetConfigStatus(api.DB)
+	if err != nil {
+		Error(c, codeInternalError, "查询配置状态失败")
+		return
+	}
+	Success(c, gin.H{
+		"schema":             c.Param("schema"),
+		"consumers":          configConsumers[c.Param("schema")],
+		"effective_revision": status.LoadedRevision,
+		"db_revision":        status.DBRevision,
+		"pending_reload":     status.PendingReload,
+	})
 }
 
 func (api *ConfigAPI) GetStatus(c *gin.Context) {
@@ -352,6 +585,18 @@ func (api *ConfigAPI) SaveConfig(c *gin.Context) {
 			}
 		case "codex_catalog":
 			if err := tx.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&models.CodexCatalogConfig{}).Error; err != nil {
+				return err
+			}
+		case "expedition_templates":
+			if err := tx.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&models.ExpeditionTemplateConfig{}).Error; err != nil {
+				return err
+			}
+		case "chance_games":
+			if err := tx.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&models.ChanceGameConfig{}).Error; err != nil {
+				return err
+			}
+		case "chance_rewards":
+			if err := tx.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&models.ChanceRewardConfig{}).Error; err != nil {
 				return err
 			}
 		}

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/big"
 	"strings"
 	"time"
 
@@ -16,129 +17,237 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"qq-pet-saas/core"
+	"qq-pet-saas/gameplay"
 	"qq-pet-saas/gameplayrules"
 	"qq-pet-saas/models"
 )
 
 var (
-	ErrPetRequired        = errors.New("请先领养宠物")
-	ErrExpeditionActive   = errors.New("已有进行中的远征")
-	ErrExpeditionNotReady = errors.New("远征尚未结束")
-	ErrNothingToClaim     = errors.New("没有可领取的远征奖励")
-	ErrInsufficientItem   = errors.New("物品数量不足")
-	ErrInvalidBindToken   = errors.New("绑定码无效或已过期")
-	ErrBindConflict       = errors.New("目标身份已有独立游戏进度，请先使用“删除我的数据”清理目标存档")
+	ErrPetRequired           = gameplay.ErrPetRequired
+	ErrExpeditionActive      = errors.New("已有进行中的远征")
+	ErrExpeditionNotReady    = errors.New("远征尚未结束")
+	ErrExpeditionUnavailable = errors.New("远征档位未开放")
+	ErrInsufficientReadiness = errors.New("宠物准备度不足")
+	ErrNothingToClaim        = errors.New("没有可领取的远征奖励")
+	ErrInsufficientItem      = gameplay.ErrInsufficientItem
+	ErrInvalidBindToken      = errors.New("绑定码无效或已过期")
+	ErrBindConflict          = errors.New("目标身份已有独立游戏进度，请先使用“删除我的数据”清理目标存档")
 )
 
 type ExpeditionResult struct {
-	Name       string
-	Item       string
-	Quantity   int64
-	Records    int64
-	Growth     int64
-	CodexEntry string
-	Progress   int
+	Name          string
+	Item          string
+	Quantity      int64
+	Records       int64
+	Growth        int64
+	Currency      int64
+	CodexEntry    string
+	Progress      int
+	BonusText     string
+	Image         string
+	EventProgress int64
+	EventRewards  []EventReward
 }
 
-type expeditionTier struct {
-	Name       string
-	Duration   time.Duration
-	Item       string
-	Quantity   int64
-	Records    int64
-	Growth     int64
-	CodexEntry string
-	Progress   int
-}
-
-var expeditionTiers = map[int]expeditionTier{
-	1: {Name: "林间巡查", Duration: 10 * time.Minute, Item: "林地样本", Quantity: 1, Records: 6, Growth: 4, CodexEntry: "林间足迹", Progress: 15},
-	2: {Name: "遗迹调查", Duration: 2 * time.Hour, Item: "古代零件", Quantity: 3, Records: 12, Growth: 10, CodexEntry: "遗迹守卫", Progress: 15},
-	3: {Name: "深层生态勘察", Duration: 8 * time.Hour, Item: "生态样本", Quantity: 2, Records: 25, Growth: 24, CodexEntry: "深层生态", Progress: 20},
+type SeasonInfluence struct {
+	Choice      int
+	ChoiceKey   string
+	Votes       []int64
+	EffectType  string
+	EffectValue int
+	Description string
 }
 
 type Service struct {
 	DB          *gorm.DB
 	Now         func() time.Time
 	TokenSource func() (string, error)
+	RandomIntn  func(int) (int, error)
 }
 
 type SeasonInfo struct {
-	Key      string
-	Name     string
-	Region   string
-	StartsAt time.Time
-	EndsAt   time.Time
-	Choices  []string
+	Key        string
+	Name       string
+	Region     string
+	StartsAt   time.Time
+	EndsAt     time.Time
+	Choices    []string
+	ChoiceKeys []string
 }
 
 func NewService(db *gorm.DB) *Service {
-	return &Service{DB: db, Now: time.Now, TokenSource: randomBindToken}
+	return &Service{DB: db, Now: time.Now, TokenSource: randomBindToken, RandomIntn: cryptoRandomIntn}
+}
+
+func cryptoRandomIntn(limit int) (int, error) {
+	if limit <= 0 {
+		return 0, errors.New("随机范围无效")
+	}
+	value, err := rand.Int(rand.Reader, big.NewInt(int64(limit)))
+	if err != nil {
+		return 0, err
+	}
+	return int(value.Int64()), nil
 }
 
 func identityScope(event core.InboundEvent) string {
-	if event.Platform == core.PlatformOneBot {
-		return "*"
-	}
-	return event.SpaceID
+	return gameplay.IdentityScope(event)
 }
 
 func (service *Service) ResolveAccount(ctx context.Context, event core.InboundEvent) (*models.PlayerAccount, error) {
-	var account models.PlayerAccount
-	err := service.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var identity models.PlayerIdentity
-		query := tx.Where("platform = ? AND app_id = ? AND scene_type = ? AND scope_id = ? AND subject_id = ?",
-			string(event.Platform), event.AppID, string(event.SceneType), identityScope(event), event.ActorID)
-		if err := query.First(&identity).Error; err == nil {
-			return tx.First(&account, "id = ?", identity.AccountID).Error
-		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return err
-		}
-		account = models.PlayerAccount{ID: uuid.NewString()}
-		if err := tx.Create(&account).Error; err != nil {
-			return err
-		}
-		identity = models.PlayerIdentity{
-			AccountID: account.ID, Platform: string(event.Platform), AppID: event.AppID,
-			SceneType: string(event.SceneType), ScopeID: identityScope(event), SubjectID: event.ActorID,
-		}
-		return tx.Create(&identity).Error
-	})
-	return &account, err
+	return gameplay.NewAccountService(service.DB).Resolve(ctx, event)
 }
 
 func (service *Service) Adopt(ctx context.Context, accountID, petType, name string) (*models.PetProfile, error) {
-	pet := models.PetProfile{AccountID: accountID, PetType: petType, Name: name, Role: "探索者", Stance: "探索", Mood: "期待", Readiness: 100, BondLevel: 1}
-	err := service.DB.WithContext(ctx).Create(&pet).Error
-	return &pet, err
+	return gameplay.NewPetService(service.DB).Adopt(ctx, accountID, petType, name)
+}
+
+func (service *Service) AdoptWithStarter(ctx context.Context, accountID, petType, name, currencyKey string, starterBalance int64) (*models.PetProfile, error) {
+	return gameplay.NewPetService(service.DB).AdoptWithStarter(ctx, accountID, petType, name, currencyKey, starterBalance)
+}
+
+func (service *Service) RenamePet(ctx context.Context, accountID, name, currencyKey string, cost int64) (*models.PetProfile, error) {
+	return gameplay.NewPetService(service.DB).RenameWithCost(ctx, accountID, name, currencyKey, cost)
 }
 
 func (service *Service) StartExpedition(ctx context.Context, accountID string, tierNumber int) (*models.ExpeditionRun, error) {
-	tier, ok := expeditionTiers[tierNumber]
-	if !ok {
-		return nil, fmt.Errorf("远征档位只能是 1、2 或 3")
+	if tierNumber <= 0 {
+		return nil, fmt.Errorf("远征档位无效")
 	}
-	var pet models.PetProfile
-	if err := service.DB.WithContext(ctx).First(&pet, "account_id = ?", accountID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrPetRequired
+	var run models.ExpeditionRun
+	err := gameplay.WithTransactionRetry(ctx, service.DB, func(tx *gorm.DB) error {
+		template, err := service.expeditionTemplateTx(tx, tierNumber)
+		if err != nil {
+			return err
 		}
+		var pet models.PetProfile
+		if err = tx.First(&pet, "account_id = ?", accountID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrPetRequired
+			}
+			return err
+		}
+		if pet.Status != "" && pet.Status != "空闲" {
+			return ErrExpeditionActive
+		}
+		var active int64
+		if err = tx.Model(&models.ExpeditionRun{}).Where("account_id = ? AND status = ?", accountID, "running").Count(&active).Error; err != nil {
+			return err
+		}
+		if active > 0 {
+			return ErrExpeditionActive
+		}
+		if err = tx.Model(&models.ActivityRun{}).Where("account_id = ? AND status = ?", accountID, gameplay.ActivityStatusRunning).Count(&active).Error; err != nil {
+			return err
+		}
+		if active > 0 {
+			return ErrExpeditionActive
+		}
+		hungerCost := template.HungerCost
+		readinessCost := template.ReadinessCost
+		if pet.Stance == "守护" {
+			hungerCost = int64(math.Ceil(float64(hungerCost) * 0.75))
+			readinessCost = int(math.Ceil(float64(readinessCost) * 0.75))
+		}
+		if hungerCost > 0 && pet.Hunger-hungerCost <= 10 {
+			return gameplay.ErrPetTooHungry
+		}
+		if readinessCost > 0 && pet.Readiness < readinessCost {
+			return ErrInsufficientReadiness
+		}
+		if template.RequiredItem != "" && template.RequiredQuantity > 0 {
+			if err = gameplay.NewInventoryService(service.DB).DebitTx(tx, accountID, template.RequiredItem, template.RequiredQuantity); err != nil {
+				return err
+			}
+		}
+		averageAttribute := (pet.Wisdom + pet.Strength + pet.Defense) / 3
+		bonusPercent := int(averageAttribute / 4)
+		if bonusPercent > 25 {
+			bonusPercent = 25
+		}
+		records := expeditionRewardWithBonus(template.RewardRecords, bonusPercent)
+		growth := expeditionRewardWithBonus(template.RewardGrowth, bonusPercent)
+		codexProgress := template.CodexProgress
+		bonusParts := []string{fmt.Sprintf("属性效率 +%d%%", bonusPercent)}
+		switch pet.Stance {
+		case "探索":
+			codexProgress += 5
+			bonusParts = append(bonusParts, "探索姿态：图鉴进度 +5")
+		case "守护":
+			bonusParts = append(bonusParts, "守护姿态：行动消耗 -25%")
+		case "支援":
+			records = expeditionRewardWithBonus(records, 20)
+			bonusParts = append(bonusParts, "支援姿态：调查记录 +20%")
+		case "攻击":
+			growth = expeditionRewardWithBonus(growth, 20)
+			bonusParts = append(bonusParts, "攻击姿态：成长 +20%")
+		}
+		now := service.Now()
+		run = models.ExpeditionRun{
+			ID: uuid.NewString(), AccountID: accountID, Tier: tierNumber, Name: template.Name, Stance: pet.Stance,
+			Status: "running", RewardItem: template.RewardItem, RewardQuantity: template.RewardQuantity,
+			RewardRecords: records, RewardGrowth: growth, RewardCurrency: template.RewardCurrency,
+			CodexCategory: template.CodexCategory, CodexEntry: template.CodexEntry, CodexProgress: codexProgress,
+			HungerCost: hungerCost, ReadinessCost: readinessCost, RequiredItem: template.RequiredItem, RequiredQty: template.RequiredQuantity,
+			BonusPercent: bonusPercent, BonusText: strings.Join(bonusParts, "；"), StartImage: template.StartImage, EndImage: template.EndImage,
+			StartedAt: now, EndsAt: now.Add(time.Duration(template.DurationMinutes) * time.Minute),
+		}
+		pet.Hunger -= hungerCost
+		pet.Readiness -= readinessCost
+		pet.Status = "远征"
+		if err = tx.Save(&pet).Error; err != nil {
+			return err
+		}
+		if err = tx.Create(&run).Error; err != nil {
+			if isUniqueConstraintError(err) {
+				return ErrExpeditionActive
+			}
+			return err
+		}
+		return nil
+	})
+	return &run, err
+}
+
+func expeditionRewardWithBonus(base int64, percent int) int64 {
+	if base <= 0 || percent <= 0 {
+		return base
+	}
+	return base + int64(math.Ceil(float64(base)*float64(percent)/100))
+}
+
+func (service *Service) ListExpeditionTemplates(ctx context.Context) ([]models.ExpeditionTemplateConfig, error) {
+	var templates []models.ExpeditionTemplateConfig
+	if err := service.DB.WithContext(ctx).Where("enabled = ?", true).Order("tier asc").Find(&templates).Error; err != nil {
 		return nil, err
 	}
-	var count int64
-	if err := service.DB.WithContext(ctx).Model(&models.ExpeditionRun{}).Where("account_id = ? AND status = ?", accountID, "running").Count(&count).Error; err != nil {
-		return nil, err
+	return templates, nil
+}
+
+func (service *Service) expeditionTemplateTx(tx *gorm.DB, tier int) (models.ExpeditionTemplateConfig, error) {
+	var template models.ExpeditionTemplateConfig
+	find := tx.Limit(1).Find(&template, "tier = ?", tier)
+	if find.Error != nil {
+		return template, find.Error
 	}
-	if count > 0 {
-		return nil, ErrExpeditionActive
+	if find.RowsAffected > 0 {
+		if !template.Enabled {
+			return template, fmt.Errorf("%w: %d", ErrExpeditionUnavailable, tier)
+		}
+		if template.DurationMinutes <= 0 || template.RewardItem == "" || template.RewardQuantity <= 0 {
+			return template, fmt.Errorf("远征模板 %d 配置不完整", tier)
+		}
+		return template, nil
 	}
-	now := service.Now()
-	run := models.ExpeditionRun{
-		ID: uuid.NewString(), AccountID: accountID, Tier: tierNumber, Name: tier.Name, Stance: pet.Stance,
-		Status: "running", RewardItem: tier.Item, RewardQuantity: tier.Quantity,
-		RewardRecords: tier.Records, RewardGrowth: tier.Growth, StartedAt: now, EndsAt: now.Add(tier.Duration),
+	return template, fmt.Errorf("%w: %d", ErrExpeditionUnavailable, tier)
+}
+
+func isUniqueConstraintError(err error) bool {
+	if err == nil {
+		return false
 	}
-	return &run, service.DB.WithContext(ctx).Create(&run).Error
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "unique constraint") || strings.Contains(message, "constraint failed")
 }
 
 func (service *Service) ActiveExpedition(ctx context.Context, accountID string) (*models.ExpeditionRun, error) {
@@ -152,7 +261,7 @@ func (service *Service) ActiveExpedition(ctx context.Context, accountID string) 
 
 func (service *Service) ClaimExpedition(ctx context.Context, accountID string) (*ExpeditionResult, error) {
 	var result ExpeditionResult
-	err := service.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := gameplay.WithTransactionRetry(ctx, service.DB, func(tx *gorm.DB) error {
 		var run models.ExpeditionRun
 		if err := tx.Where("account_id = ? AND status = ?", accountID, "running").Order("started_at DESC").First(&run).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -171,48 +280,73 @@ func (service *Service) ClaimExpedition(ctx context.Context, accountID string) (
 		if update.RowsAffected != 1 {
 			return ErrNothingToClaim
 		}
-		if err := addInventoryTx(tx, accountID, run.RewardItem, run.RewardQuantity); err != nil {
+		if run.RewardQuantity > 0 {
+			if err := addInventoryTx(tx, accountID, run.RewardItem, run.RewardQuantity); err != nil {
+				return err
+			}
+		}
+		if run.RewardRecords > 0 {
+			if err := addInventoryTx(tx, accountID, "调查记录", run.RewardRecords); err != nil {
+				return err
+			}
+		}
+		var pet models.PetProfile
+		if err := tx.First(&pet, "account_id = ?", accountID).Error; err != nil {
 			return err
 		}
-		if err := addInventoryTx(tx, accountID, "调查记录", run.RewardRecords); err != nil {
+		pet.Growth += run.RewardGrowth
+		pet.Status = "空闲"
+		if err := tx.Save(&pet).Error; err != nil {
 			return err
 		}
-		if err := tx.Model(&models.PetProfile{}).Where("account_id = ?", accountID).UpdateColumn("growth", gorm.Expr("growth + ?", run.RewardGrowth)).Error; err != nil {
-			return err
+		if run.RewardCurrency > 0 {
+			if err := gameplay.NewWalletService(service.DB).CreditTxWithReason(tx, accountID, gameplay.DefaultCurrencyKey, run.RewardCurrency, "expedition_reward", run.ID); err != nil {
+				return err
+			}
 		}
 		if err := recordBehaviorTx(tx, accountID, "explore", int64(run.Tier), now); err != nil {
 			return err
 		}
-		tier := expeditionTiers[run.Tier]
-		entry := models.CodexEntry{AccountID: accountID, Category: "地区", EntryKey: tier.CodexEntry, Progress: tier.Progress}
-		if err := tx.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "account_id"}, {Name: "category"}, {Name: "entry_key"}},
-			DoUpdates: clause.Assignments(map[string]interface{}{"progress": gorm.Expr("MIN(100, progress + ?)", tier.Progress), "updated_at": now}),
-		}).Create(&entry).Error; err != nil {
+		entry := models.CodexEntry{}
+		if run.CodexCategory != "" && run.CodexEntry != "" && run.CodexProgress > 0 {
+			var catalog models.CodexCatalogConfig
+			catalogLookup := tx.Limit(1).Find(&catalog, "category = ? AND entry_key = ? AND enabled = ?", run.CodexCategory, run.CodexEntry, true)
+			if catalogLookup.Error != nil {
+				return catalogLookup.Error
+			}
+			if catalogLookup.RowsAffected > 0 {
+				entry = models.CodexEntry{AccountID: accountID, Category: catalog.Category, EntryKey: catalog.EntryKey, Progress: run.CodexProgress}
+				if err := tx.Clauses(clause.OnConflict{
+					Columns:   []clause.Column{{Name: "account_id"}, {Name: "category"}, {Name: "entry_key"}},
+					DoUpdates: clause.Assignments(map[string]interface{}{"progress": gorm.Expr("MIN(100, progress + ?)", run.CodexProgress), "updated_at": now}),
+				}).Create(&entry).Error; err != nil {
+					return err
+				}
+				if err := tx.Where("account_id = ? AND category = ? AND entry_key = ?", accountID, catalog.Category, catalog.EntryKey).First(&entry).Error; err != nil {
+					return err
+				}
+			}
+		}
+		eventDelta := run.RewardRecords
+		if eventDelta <= 0 {
+			eventDelta = 1
+		}
+		eventProgress, eventRewards, err := service.addEventProgressTx(tx, accountID, "expedition:"+run.ID, eventDelta, now)
+		if err != nil {
 			return err
 		}
-		if err := tx.Where("account_id = ? AND category = ? AND entry_key = ?", accountID, "地区", tier.CodexEntry).First(&entry).Error; err != nil {
-			return err
-		}
-		result = ExpeditionResult{Name: run.Name, Item: run.RewardItem, Quantity: run.RewardQuantity, Records: run.RewardRecords, Growth: run.RewardGrowth, CodexEntry: tier.CodexEntry, Progress: entry.Progress}
+		result = ExpeditionResult{Name: run.Name, Item: run.RewardItem, Quantity: run.RewardQuantity, Records: run.RewardRecords, Growth: run.RewardGrowth, Currency: run.RewardCurrency, CodexEntry: entry.EntryKey, Progress: entry.Progress, BonusText: run.BonusText, Image: run.EndImage, EventProgress: eventProgress, EventRewards: eventRewards}
 		return nil
 	})
 	return &result, err
 }
 
 func addInventoryTx(tx *gorm.DB, accountID, itemName string, quantity int64) error {
-	item := models.GlobalInventoryItem{AccountID: accountID, ItemName: itemName, Quantity: quantity}
-	return tx.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "account_id"}, {Name: "item_name"}},
-		DoUpdates: clause.Assignments(map[string]interface{}{"quantity": gorm.Expr("quantity + ?", quantity), "updated_at": time.Now()}),
-	}).Create(&item).Error
+	return gameplay.NewInventoryService(tx).CreditTx(tx, accountID, itemName, quantity)
 }
 
 func (service *Service) AddInventory(ctx context.Context, accountID, itemName string, quantity int64) error {
-	if quantity <= 0 {
-		return errors.New("数量必须大于零")
-	}
-	return addInventoryTx(service.DB.WithContext(ctx), accountID, itemName, quantity)
+	return gameplay.NewInventoryService(service.DB).Credit(ctx, accountID, itemName, quantity)
 }
 
 func communityID(event core.InboundEvent) string {
@@ -242,15 +376,28 @@ func (service *Service) Contribute(ctx context.Context, event core.InboundEvent,
 	if err != nil {
 		return nil, err
 	}
+	season := service.CurrentSeason()
 	err = service.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		consume := tx.Model(&models.GlobalInventoryItem{}).Where("account_id = ? AND item_name = ? AND quantity >= ?", accountID, itemName, quantity).UpdateColumn("quantity", gorm.Expr("quantity - ?", quantity))
-		if consume.Error != nil {
-			return consume.Error
+		var catalog models.ItemConfig
+		catalogLookup := tx.Limit(1).Find(&catalog, "name = ? AND status IN ?", itemName, []string{"active", "limited"})
+		if catalogLookup.Error != nil {
+			return catalogLookup.Error
 		}
-		if consume.RowsAffected != 1 {
-			return ErrInsufficientItem
+		if catalogLookup.RowsAffected == 0 {
+			return errors.New("该物品不能用于社区共建")
 		}
-		if err := tx.Model(&models.Community{}).Where("id = ?", community.ID).Updates(map[string]interface{}{"materials": gorm.Expr("materials + ?", quantity), "level": gorm.Expr("1 + (materials + ?) / 100", quantity)}).Error; err != nil {
+		if err := gameplay.NewInventoryService(tx).DebitTx(tx, accountID, itemName, quantity); err != nil {
+			return err
+		}
+		materialGain := quantity
+		influence, influenceErr := seasonInfluenceTx(tx, season.Key, community.ID)
+		if influenceErr != nil {
+			return influenceErr
+		}
+		if influence.EffectType == "community_material_gain_percent" {
+			materialGain = expeditionRewardWithBonus(materialGain, influence.EffectValue)
+		}
+		if err := tx.Model(&models.Community{}).Where("id = ?", community.ID).Updates(map[string]interface{}{"materials": gorm.Expr("materials + ?", materialGain), "level": gorm.Expr("1 + (materials + ?) / 100", materialGain)}).Error; err != nil {
 			return err
 		}
 		return tx.Model(&models.CommunityMember{}).Where("community_id = ? AND account_id = ?", community.ID, accountID).UpdateColumn("contribution", gorm.Expr("contribution + ?", quantity)).Error
@@ -347,9 +494,10 @@ func (service *Service) RedeemBindToken(ctx context.Context, event core.InboundE
 
 func accountHasIndependentProgress(tx *gorm.DB, accountID string) (bool, error) {
 	modelsWithProgress := []interface{}{
-		&models.PetProfile{}, &models.GlobalInventoryItem{}, &models.CompanionJournal{},
-		&models.ExpeditionRun{}, &models.CodexEntry{}, &models.CommunityMember{},
-		&models.SquadMember{}, &models.PetBehaviorProfile{}, &models.SeasonVote{},
+		&models.PetProfile{}, &models.GlobalInventoryItem{}, &models.PlayerWallet{}, &models.WalletLedger{}, &models.CompanionJournal{}, &models.CompanionActionDaily{},
+		&models.ActivityRun{}, &models.ItemUseRecord{}, &models.ExpeditionRun{}, &models.CodexEntry{}, &models.CommunityMember{},
+		&models.SquadMember{}, &models.PetBehaviorProfile{}, &models.SeasonVote{}, &models.EventProgress{}, &models.EventProgressGrant{}, &models.EventRewardClaim{},
+		&models.ChanceDailyState{}, &models.ChancePlayerState{}, &models.ChanceOutcome{}, &models.FishingRun{}, &models.BattleRecord{}, &models.TradeAudit{},
 	}
 	for _, model := range modelsWithProgress {
 		var count int64
@@ -368,36 +516,17 @@ func accountHasIndependentProgress(tx *gorm.DB, accountID string) (bool, error) 
 }
 
 func (service *Service) RecordDaily(ctx context.Context, accountID, action string) (int64, bool, error) {
-	var streak int64
-	rewarded := false
-	now := service.Now()
-	err := service.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		entry := models.CompanionJournal{AccountID: accountID, Day: now.Format("2006-01-02"), Action: action, CreatedAt: now}
-		result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&entry)
-		if result.Error != nil {
-			return result.Error
-		}
-		rewarded = result.RowsAffected == 1
-		if rewarded {
-			if err := tx.Model(&models.PetProfile{}).Where("account_id = ?", accountID).Updates(map[string]interface{}{
-				"affection": gorm.Expr("affection + 1"),
-				"readiness": gorm.Expr("MIN(100, readiness + 10)"),
-				"mood":      "愉快",
-			}).Error; err != nil {
-				return err
-			}
-			if err := addInventoryTx(tx, accountID, "陪伴印记", 1); err != nil {
-				return err
-			}
-			if err := recordBehaviorTx(tx, accountID, "care", 1, now); err != nil {
-				return err
-			}
-		}
-		return tx.Model(&models.CompanionJournal{}).
-			Where("account_id = ? AND day >= ? AND day <= ?", accountID, now.AddDate(0, 0, -6).Format("2006-01-02"), now.Format("2006-01-02")).
-			Count(&streak).Error
-	})
-	return streak, rewarded, err
+	result, err := service.CheckIn(ctx, accountID)
+	if err != nil {
+		return 0, false, err
+	}
+	return result.RecentDays, result.Awarded, nil
+}
+
+func (service *Service) CheckIn(ctx context.Context, accountID string) (*gameplay.DailyCheckinResult, error) {
+	daily := gameplay.NewDailyService(service.DB)
+	daily.Now = service.Now
+	return daily.CheckIn(ctx, accountID)
 }
 
 func ValidatePlayerName(name string) error {
@@ -503,20 +632,43 @@ func (service *Service) DeleteAccount(ctx context.Context, accountID string) err
 		if err := tx.Where("donor_id = ?", accountID).Delete(&models.HelpGiftLog{}).Error; err != nil {
 			return err
 		}
+		if err := tx.Where("donor_id = ?", accountID).Delete(&models.HelpGiftDailyQuota{}).Error; err != nil {
+			return err
+		}
 		if err := tx.Where("requester_id = ?", accountID).Delete(&models.CommunityHelpRequest{}).Error; err != nil {
 			return err
 		}
 		deletions := []interface{}{
-			&models.NotificationPreference{}, &models.IdentityBindToken{}, &models.SquadMember{},
-			&models.CommunityMember{}, &models.CodexEntry{}, &models.ExpeditionRun{},
-			&models.CompanionJournal{}, &models.GlobalInventoryItem{}, &models.PetBehaviorProfile{},
+			&models.NotificationJob{}, &models.NotificationPreference{}, &models.IdentityBindToken{}, &models.SquadMember{},
+			&models.CommunityMember{}, &models.CodexEntry{}, &models.ActivityRun{}, &models.ItemUseRecord{}, &models.ExpeditionRun{},
+			&models.EventProgress{}, &models.EventProgressGrant{}, &models.EventRewardClaim{},
+			&models.ChanceDailyState{}, &models.ChancePlayerState{}, &models.ChanceOutcome{}, &models.FishingRun{}, &models.BattleRecord{}, &models.TradeAudit{},
+			&models.CompanionJournal{}, &models.CompanionActionDaily{}, &models.GlobalInventoryItem{}, &models.PlayerWallet{}, &models.WalletLedger{}, &models.PetBehaviorProfile{},
 			&models.BossContribution{}, &models.SeasonVote{}, &models.PetProfile{},
+			&models.PlayerAdventureProgress{}, &models.PlayerZoneProgress{}, &models.PlayerObjectiveProgress{},
+			&models.AdventureExplorationSession{}, &models.PlayerEquipment{}, &models.PlayerBlueprintProgress{},
+			&models.AdventureExpeditionRun{}, &models.AdventureBossContribution{}, &models.AdventureBossRewardClaim{}, &models.EquipmentCraftRecord{},
 			&models.PlayerIdentity{},
 		}
 		for _, model := range deletions {
 			if err := tx.Where("account_id = ?", accountID).Delete(model).Error; err != nil {
 				return err
 			}
+		}
+		var combatIDs []string
+		if err := tx.Model(&models.AdventureCombatSession{}).Where("account_id = ?", accountID).Pluck("id", &combatIDs).Error; err != nil {
+			return err
+		}
+		if len(combatIDs) > 0 {
+			if err := tx.Where("session_id IN ?", combatIDs).Delete(&models.AdventureCombatTurn{}).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Where("account_id = ?", accountID).Delete(&models.AdventureCombatSession{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("seller_account_id = ? OR buyer_account_id = ?", accountID, accountID).Delete(&models.TradeOffer{}).Error; err != nil {
+			return err
 		}
 		if err := tx.Where("leader_id = ?", accountID).Delete(&models.ExpeditionSquad{}).Error; err != nil {
 			return err
@@ -527,10 +679,20 @@ func (service *Service) DeleteAccount(ctx context.Context, accountID string) err
 
 func (service *Service) SetNotifications(ctx context.Context, accountID string, enabled bool) error {
 	preference := models.NotificationPreference{AccountID: accountID, Enabled: enabled, UpdatedAt: service.Now()}
-	return service.DB.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "account_id"}},
-		DoUpdates: clause.Assignments(map[string]interface{}{"enabled": enabled, "updated_at": service.Now()}),
-	}).Create(&preference).Error
+	return service.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "account_id"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{"enabled": enabled, "updated_at": service.Now()}),
+		}).Create(&preference).Error; err != nil {
+			return err
+		}
+		if !enabled {
+			return tx.Model(&models.NotificationJob{}).
+				Where("account_id = ? AND status IN ?", accountID, []string{"queued", "sending"}).
+				Updates(map[string]interface{}{"status": "cancelled", "locked_at": nil, "updated_at": service.Now()}).Error
+		}
+		return nil
+	})
 }
 
 func (service *Service) UnbindIdentity(ctx context.Context, event core.InboundEvent, accountID string) error {
@@ -624,13 +786,16 @@ func (service *Service) ChallengeBoss(ctx context.Context, event core.InboundEve
 		multiplier = 130
 	}
 	damage := records * 3 * multiplier / 100
+	influence, err := service.GetSeasonInfluence(ctx, event)
+	if err != nil {
+		return nil, 0, err
+	}
+	if influence.EffectType == "boss_damage_gain_percent" {
+		damage = expeditionRewardWithBonus(damage, influence.EffectValue)
+	}
 	err = service.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		consume := tx.Model(&models.GlobalInventoryItem{}).Where("account_id = ? AND item_name = ? AND quantity >= ?", accountID, "调查记录", records).UpdateColumn("quantity", gorm.Expr("quantity - ?", records))
-		if consume.Error != nil {
-			return consume.Error
-		}
-		if consume.RowsAffected != 1 {
-			return ErrInsufficientItem
+		if err := gameplay.NewInventoryService(tx).DebitTx(tx, accountID, "调查记录", records); err != nil {
+			return err
 		}
 		update := tx.Model(&models.CommunityBoss{}).Where("id = ? AND current_hp > 0", boss.ID).Updates(map[string]interface{}{
 			"current_hp": gorm.Expr("MAX(0, current_hp - ?)", damage),
@@ -672,40 +837,127 @@ func (service *Service) CurrentSeason() SeasonInfo {
 		var configured models.LiveEventConfig
 		now := service.Now()
 		if err := service.DB.Where("active = ? AND starts_at <= ? AND ends_at > ?", true, now, now).Order("starts_at DESC").First(&configured).Error; err == nil {
-			var choices []string
-			if json.Unmarshal([]byte(configured.StoryChoices), &choices) == nil && len(choices) == 3 {
-				return SeasonInfo{Key: configured.Key, Name: configured.Name, Region: configured.Region, StartsAt: configured.StartsAt, EndsAt: configured.EndsAt, Choices: choices}
+			choices, _ := seasonChoicesTx(service.DB, configured)
+			labels, keys := make([]string, 0, len(choices)), make([]string, 0, len(choices))
+			for _, choice := range choices {
+				labels = append(labels, choice.Label)
+				keys = append(keys, choice.ChoiceKey)
+			}
+			if len(labels) >= 2 {
+				return SeasonInfo{Key: configured.Key, Name: configured.Name, Region: configured.Region, StartsAt: configured.StartsAt, EndsAt: configured.EndsAt, Choices: labels, ChoiceKeys: keys}
 			}
 		}
 	}
-	epoch := time.Date(2026, 1, 1, 0, 0, 0, 0, service.Now().Location())
-	now := service.Now()
-	cycle := int(now.Sub(epoch) / (56 * 24 * time.Hour))
-	if cycle < 0 {
-		cycle = 0
-	}
-	startsAt := epoch.Add(time.Duration(cycle) * 56 * 24 * time.Hour)
-	themes := []struct{ name, region string }{
-		{"林海来信", "森林"}, {"潮汐手记", "水域"}, {"遗迹回声", "遗迹"}, {"城市微光", "城市"},
-	}
-	theme := themes[cycle%len(themes)]
-	return SeasonInfo{
-		Key: fmt.Sprintf("S%03d", cycle+1), Name: theme.name, Region: theme.region,
-		StartsAt: startsAt, EndsAt: startsAt.Add(56 * 24 * time.Hour),
-		Choices: []string{"优先调查未知区域", "优先建设救助设施", "优先支援社区首领"},
-	}
+	return SeasonInfo{}
 }
 
 func (service *Service) VoteSeason(ctx context.Context, event core.InboundEvent, accountID string, choice int) error {
-	if choice < 1 || choice > 3 {
-		return errors.New("故事选择只能是 1、2 或 3")
-	}
 	season := service.CurrentSeason()
-	vote := models.SeasonVote{SeasonKey: season.Key, CommunityID: communityID(event), AccountID: accountID, Choice: choice, UpdatedAt: service.Now()}
+	if season.Key == "" || choice < 1 || choice > len(season.Choices) {
+		return errors.New("故事选择编号不在当前活动选项范围内")
+	}
+	vote := models.SeasonVote{SeasonKey: season.Key, CommunityID: communityID(event), AccountID: accountID, Choice: choice, ChoiceKey: season.ChoiceKeys[choice-1], UpdatedAt: service.Now()}
 	return service.DB.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "season_key"}, {Name: "community_id"}, {Name: "account_id"}},
-		DoUpdates: clause.Assignments(map[string]interface{}{"choice": choice, "updated_at": service.Now()}),
+		DoUpdates: clause.Assignments(map[string]interface{}{"choice": choice, "choice_key": vote.ChoiceKey, "updated_at": service.Now()}),
 	}).Create(&vote).Error
+}
+
+func (service *Service) GetSeasonInfluence(ctx context.Context, event core.InboundEvent) (SeasonInfluence, error) {
+	season := service.CurrentSeason()
+	if season.Key == "" {
+		return SeasonInfluence{Description: "当前没有进行中的故事活动"}, nil
+	}
+	return seasonInfluenceTx(service.DB.WithContext(ctx), season.Key, communityID(event))
+}
+
+func seasonInfluenceTx(tx *gorm.DB, seasonKey, communityID string) (SeasonInfluence, error) {
+	var event models.LiveEventConfig
+	if err := tx.First(&event, "key = ?", seasonKey).Error; err != nil {
+		return SeasonInfluence{}, err
+	}
+	choices, err := seasonChoicesTx(tx, event)
+	if err != nil {
+		return SeasonInfluence{}, err
+	}
+	var votes []models.SeasonVote
+	if err := tx.Where("season_key = ? AND community_id = ?", seasonKey, communityID).Find(&votes).Error; err != nil {
+		return SeasonInfluence{}, err
+	}
+	indexByKey := map[string]int{}
+	for index, choice := range choices {
+		indexByKey[choice.ChoiceKey] = index
+	}
+	influence := SeasonInfluence{Votes: make([]int64, len(choices))}
+	for _, vote := range votes {
+		index, ok := indexByKey[vote.ChoiceKey]
+		if !ok && vote.Choice > 0 && vote.Choice <= len(choices) {
+			index = vote.Choice - 1
+			ok = true
+		}
+		if ok {
+			influence.Votes[index]++
+		}
+	}
+	var highest int64
+	tied := false
+	for index, count := range influence.Votes {
+		if count > highest {
+			highest = count
+			influence.Choice = index + 1
+			tied = false
+		} else if count == highest && highest > 0 {
+			tied = true
+		}
+	}
+	if tied {
+		influence.Choice = 0
+	}
+	if influence.Choice > 0 {
+		choice := choices[influence.Choice-1]
+		influence.ChoiceKey = choice.ChoiceKey
+		influence.EffectType = choice.EffectType
+		influence.EffectValue = choice.EffectValue
+		influence.Description = fmt.Sprintf("%s：%s %d%%", choice.Label, seasonEffectLabel(choice.EffectType), choice.EffectValue)
+	} else {
+		influence.Description = "票数尚未形成唯一领先选项，当前无社区加成"
+	}
+	return influence, nil
+}
+
+func seasonChoicesTx(tx *gorm.DB, event models.LiveEventConfig) ([]models.LiveEventChoiceConfig, error) {
+	var choices []models.LiveEventChoiceConfig
+	if err := tx.Where("event_key = ?", event.Key).Order("sort_order asc, id asc").Find(&choices).Error; err != nil {
+		return nil, err
+	}
+	if len(choices) > 0 {
+		return choices, nil
+	}
+	var labels []string
+	if json.Unmarshal([]byte(event.StoryChoices), &labels) != nil {
+		return choices, nil
+	}
+	for index, label := range labels {
+		choices = append(choices, models.LiveEventChoiceConfig{EventKey: event.Key, ChoiceKey: fmt.Sprintf("choice-%d", index+1), Label: label, SortOrder: (index + 1) * 10})
+	}
+	return choices, nil
+}
+
+func seasonEffectLabel(effect string) string {
+	switch effect {
+	case "community_material_gain_percent":
+		return "社区共建材料增加"
+	case "facility_upgrade_cost_reduction_percent":
+		return "设施升级消耗降低"
+	case "boss_damage_gain_percent":
+		return "地图首领伤害增加"
+	case "adventure_xp_gain_percent":
+		return "冒险经验增加"
+	case "expedition_reward_gain_percent":
+		return "远征奖励增加"
+	default:
+		return "无已配置效果"
+	}
 }
 
 func (service *Service) GetFacilities(ctx context.Context, event core.InboundEvent, accountID string) ([]models.CommunityFacility, error) {
@@ -732,12 +984,20 @@ func (service *Service) UpgradeFacility(ctx context.Context, event core.InboundE
 	if _, err := service.GetFacilities(ctx, event, accountID); err != nil {
 		return nil, err
 	}
+	influence, err := service.GetSeasonInfluence(ctx, event)
+	if err != nil {
+		return nil, err
+	}
 	var facility models.CommunityFacility
-	err := service.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err = service.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where("community_id = ? AND name = ?", communityID(event), name).First(&facility).Error; err != nil {
 			return err
 		}
-		cost := int64(facility.Level * 100)
+		reduction := 0
+		if influence.EffectType == "facility_upgrade_cost_reduction_percent" {
+			reduction = influence.EffectValue
+		}
+		cost := facilityUpgradeCost(facility.Level, reduction)
 		consume := tx.Model(&models.Community{}).Where("id = ? AND materials >= ?", communityID(event), cost).UpdateColumn("materials", gorm.Expr("materials - ?", cost))
 		if consume.Error != nil {
 			return consume.Error
@@ -751,6 +1011,14 @@ func (service *Service) UpgradeFacility(ctx context.Context, event core.InboundE
 		return tx.First(&facility, facility.ID).Error
 	})
 	return &facility, err
+}
+
+func facilityUpgradeCost(level, reductionPercent int) int64 {
+	cost := int64(level * 100)
+	if reductionPercent > 0 {
+		cost = int64(math.Ceil(float64(cost) * float64(100-reductionPercent) / 100))
+	}
+	return cost
 }
 
 func (service *Service) CreateHelpRequest(ctx context.Context, event core.InboundEvent, accountID, itemName string, quantity int64) (*models.CommunityHelpRequest, error) {
@@ -781,7 +1049,8 @@ func (service *Service) SupportHelpRequest(ctx context.Context, event core.Inbou
 		return nil, errors.New("支援数量必须大于零")
 	}
 	var request models.CommunityHelpRequest
-	err := service.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := gameplay.WithTransactionRetry(ctx, service.DB, func(tx *gorm.DB) error {
+		request = models.CommunityHelpRequest{}
 		if err := tx.Where("code = ? AND community_id = ? AND status = ? AND expires_at > ?", strings.ToUpper(strings.TrimSpace(code)), communityID(event), "open", service.Now()).First(&request).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errors.New("当前社区没有这条有效求助")
@@ -795,12 +1064,42 @@ func (service *Service) SupportHelpRequest(ctx context.Context, event core.Inbou
 		if quantity > remaining {
 			return fmt.Errorf("这条求助还需要 %d 个%s", remaining, request.ItemName)
 		}
-		var donated int64
-		if err := tx.Model(&models.HelpGiftLog{}).Where("donor_id = ? AND day = ?", donorID, service.Now().Format("2006-01-02")).Select("COALESCE(SUM(quantity), 0)").Scan(&donated).Error; err != nil {
-			return err
+		now := service.Now()
+		quota := tx.Exec(`INSERT INTO help_gift_daily_quotas (donor_id, day, quantity, updated_at)
+			VALUES (?, ?, ?, ?)
+			ON CONFLICT(donor_id, day) DO UPDATE SET
+				quantity = help_gift_daily_quotas.quantity + excluded.quantity,
+				updated_at = excluded.updated_at
+			WHERE help_gift_daily_quotas.quantity + excluded.quantity <= 20`,
+			donorID, now.Format("2006-01-02"), quantity, now)
+		if quota.Error != nil {
+			return quota.Error
 		}
-		if donated+quantity > 20 {
+		if quota.RowsAffected != 1 {
 			return errors.New("每天最多通过求助单赠送 20 件物品")
+		}
+
+		requestUpdate := tx.Model(&models.CommunityHelpRequest{}).
+			Where("code = ? AND community_id = ? AND status = ? AND expires_at > ? AND fulfilled + ? <= quantity",
+				request.Code, request.CommunityID, "open", now, quantity).
+			Updates(map[string]interface{}{
+				"fulfilled":  gorm.Expr("fulfilled + ?", quantity),
+				"status":     gorm.Expr("CASE WHEN fulfilled + ? >= quantity THEN 'fulfilled' ELSE 'open' END", quantity),
+				"updated_at": now,
+			})
+		if requestUpdate.Error != nil {
+			return requestUpdate.Error
+		}
+		if requestUpdate.RowsAffected != 1 {
+			var current models.CommunityHelpRequest
+			if err := tx.First(&current, "code = ?", request.Code).Error; err != nil {
+				return err
+			}
+			remaining := current.Quantity - current.Fulfilled
+			if remaining < 0 {
+				remaining = 0
+			}
+			return fmt.Errorf("这条求助还需要 %d 个%s", remaining, current.ItemName)
 		}
 		consume := tx.Model(&models.GlobalInventoryItem{}).Where("account_id = ? AND item_name = ? AND quantity >= ?", donorID, request.ItemName, quantity).UpdateColumn("quantity", gorm.Expr("quantity - ?", quantity))
 		if consume.Error != nil {
@@ -812,15 +1111,7 @@ func (service *Service) SupportHelpRequest(ctx context.Context, event core.Inbou
 		if err := addInventoryTx(tx, request.RequesterID, request.ItemName, quantity); err != nil {
 			return err
 		}
-		newFulfilled := request.Fulfilled + quantity
-		status := "open"
-		if newFulfilled >= request.Quantity {
-			status = "fulfilled"
-		}
-		if err := tx.Model(&request).Updates(map[string]interface{}{"fulfilled": newFulfilled, "status": status, "updated_at": service.Now()}).Error; err != nil {
-			return err
-		}
-		logEntry := models.HelpGiftLog{RequestCode: request.Code, CommunityID: request.CommunityID, DonorID: donorID, ItemName: request.ItemName, Quantity: quantity, Day: service.Now().Format("2006-01-02"), CreatedAt: service.Now()}
+		logEntry := models.HelpGiftLog{RequestCode: request.Code, CommunityID: request.CommunityID, DonorID: donorID, ItemName: request.ItemName, Quantity: quantity, Day: now.Format("2006-01-02"), CreatedAt: now}
 		if err := tx.Create(&logEntry).Error; err != nil {
 			return err
 		}

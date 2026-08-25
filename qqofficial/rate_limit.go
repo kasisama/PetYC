@@ -26,8 +26,13 @@ func (limiter *RateLimiter) Reserve(event core.InboundEvent, now time.Time) time
 	var sceneInterval, globalInterval time.Duration
 	switch event.Platform {
 	case core.PlatformQQGroup:
-		sceneKey = "group:" + event.AppID + ":" + event.SpaceID
-		globalKey = "group-global:" + event.AppID
+		if event.SceneType == core.SceneDirect {
+			sceneKey = "c2c:" + event.AppID + ":" + event.ActorID
+			globalKey = "c2c-global:" + event.AppID
+		} else {
+			sceneKey = "group:" + event.AppID + ":" + event.SpaceID
+			globalKey = "group-global:" + event.AppID
+		}
 		sceneInterval = 3 * time.Second
 		globalInterval = 2 * time.Second
 	case core.PlatformQQGuild:

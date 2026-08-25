@@ -23,6 +23,15 @@ type configResponse struct {
 	Data json.RawMessage `json:"data"`
 }
 
+func TestEveryConfigSchemaDeclaresRuntimeConsumers(t *testing.T) {
+	for schema := range configSchemas {
+		consumers := configConsumers[schema]
+		if len(consumers) == 0 {
+			t.Errorf("配置 schema %q 没有声明运行时消费者", schema)
+		}
+	}
+}
+
 // newConfigTestDB builds an isolated in-memory database carrying the config tables.
 func newConfigTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
@@ -44,6 +53,7 @@ func newConfigTestDB(t *testing.T) *gorm.DB {
 		&models.GrowthStanceConfig{},
 		&models.PersonalityRuleConfig{},
 		&models.CodexCatalogConfig{},
+		&models.ExpeditionTemplateConfig{},
 		&models.AdminConfigState{},
 	)
 	if err != nil {
@@ -73,9 +83,6 @@ func doConfigRequest(t *testing.T, router *gin.Engine, method, target string, bo
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, request)
 
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("%s %s 期望 HTTP 200，实际 %d，响应体 %s", method, target, recorder.Code, recorder.Body.String())
-	}
 	var response configResponse
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatalf("解析 JSON 失败: %v，响应体 %s", err, recorder.Body.String())
@@ -147,6 +154,25 @@ func TestRewardTrackRejectsDuplicateItemAtSameMilestone(t *testing.T) {
 	}
 }
 
+func TestChanceGameAndRewardConfigsAreValidatedAndReplaceable(t *testing.T) {
+	db := newConfigTestDB(t)
+	if err := db.AutoMigrate(&models.ChanceGameConfig{}, &models.ChanceRewardConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	gameBody := []byte(`[{"game_key":"lottery","name":"幸运抽奖","enabled":true,"cost_currency":20,"daily_limit":10,"pity_threshold":10,"pity_reward_key":"rare"}]`)
+	if response := doConfigRequest(t, newConfigTestRouter(db), http.MethodPut, "/api/admin/config/chance_games", gameBody); response.Code != 0 {
+		t.Fatalf("概率玩法配置保存失败: %s", response.Msg)
+	}
+	rewardBody := []byte(`[{"game_key":"lottery","reward_key":"common","name":"普通奖励","weight":99,"item_name":"木材","quantity":1,"enabled":true},{"game_key":"lottery","reward_key":"rare","name":"珍稀奖励","weight":1,"item_name":"光之石","quantity":1,"rare":true,"enabled":true}]`)
+	if response := doConfigRequest(t, newConfigTestRouter(db), http.MethodPut, "/api/admin/config/chance_rewards", rewardBody); response.Code != 0 {
+		t.Fatalf("概率奖励配置保存失败: %s", response.Msg)
+	}
+	invalid := []byte(`[{"game_key":"lottery","reward_key":"broken","name":"错误奖励","weight":0,"quantity":0,"enabled":true}]`)
+	if response := doConfigRequest(t, newConfigTestRouter(db), http.MethodPut, "/api/admin/config/chance_rewards", invalid); response.Code != codeInvalidPayload {
+		t.Fatalf("无效概率奖励应被拒绝: code=%d msg=%s", response.Code, response.Msg)
+	}
+}
+
 func TestLiveEventSaveReplacesRemovedRows(t *testing.T) {
 	db := newConfigTestDB(t)
 	if err := db.AutoMigrate(&models.LiveEventConfig{}); err != nil {
@@ -182,6 +208,7 @@ func TestGetConfigCoversEveryConfigSchema(t *testing.T) {
 		"system", "commands", "pet_species", "items", "shop_items",
 		"menus", "images",
 		"growth_roles", "growth_stances", "personality_rules", "codex_catalog",
+		"expedition_templates",
 	}
 	for _, schema := range schemas {
 		response := doConfigRequest(t, router, http.MethodGet, "/api/admin/config/"+schema, nil)
@@ -220,6 +247,7 @@ func TestGrowthRulesRejectIncompleteOrInvalidRows(t *testing.T) {
 		{"growth_stances", `[{"name":"","description":"降低风险","enabled":true}]`},
 		{"personality_rules", `[{"name":"温柔","dimension":"unknown","min_threshold":3,"description":"照料形成","enabled":true}]`},
 		{"codex_catalog", `[{"category":"生物","entry_key":"林间足迹","region":"","enabled":true}]`},
+		{"expedition_templates", `[{"tier":1,"name":"","duration_minutes":0,"reward_item":"","reward_quantity":0}]`},
 	}
 	for _, item := range cases {
 		response := doConfigRequest(t, router, http.MethodPut, "/api/admin/config/"+item.schema, []byte(item.body))

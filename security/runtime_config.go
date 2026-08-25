@@ -118,7 +118,7 @@ func runtimeConfigFromEnv() (RuntimeConfig, error) {
 		},
 	}
 	if config.ListenAddress == "" {
-		config.ListenAddress = "0.0.0.0"
+		config.ListenAddress = "127.0.0.1"
 	}
 	if raw := strings.TrimSpace(os.Getenv("QQBOT_SHARD_COUNT")); raw != "" {
 		value, err := strconv.Atoi(raw)
@@ -161,7 +161,7 @@ func validateRuntimeConfig(config RuntimeConfig) error {
 
 func applyLegacyRuntimeDefaults(raw []byte, config *RuntimeConfig) {
 	if strings.TrimSpace(config.ListenAddress) == "" {
-		config.ListenAddress = "0.0.0.0"
+		config.ListenAddress = "127.0.0.1"
 	}
 	var document struct {
 		QQOfficial map[string]json.RawMessage `json:"qq_official"`

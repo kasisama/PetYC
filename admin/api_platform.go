@@ -269,7 +269,7 @@ func (api *PlatformAPI) reconnectQQOfficial(c *gin.Context) {
 
 func qqOfficialEnvTemplate(c *gin.Context) {
 	template := strings.Join([]string{
-		"LISTEN_ADDRESS=0.0.0.0",
+		"LISTEN_ADDRESS=127.0.0.1",
 		"PORT=8080",
 		"QQPET_WS_TOKEN=your_onebot_token",
 		"QQBOT_APP_ID=your_app_id",

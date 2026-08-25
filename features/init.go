@@ -1,9 +1,6 @@
 package features
 
 import (
-	// 隐式导入玩法子包以触发其包级别的 init() 路由注册函数
-	_ "qq-pet-saas/features/core_game"
-	_ "qq-pet-saas/features/entertainment"
+	// 唯一命令目录。所有平台都通过统一路由调用这些领域服务。
 	_ "qq-pet-saas/features/expedition"
-	_ "qq-pet-saas/features/family"
 )

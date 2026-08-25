@@ -21,8 +21,11 @@ func TestLoadCredentialsGeneratesAndPersistsAdminLoginAndWebSocketToken(t *testi
 	if first.AdminPasswordHash == "" {
 		t.Fatal("AdminPasswordHash is empty")
 	}
-	if err := bcrypt.CompareHashAndPassword([]byte(first.AdminPasswordHash), []byte(defaultAdminPassword)); err != nil {
-		t.Fatalf("default password does not match stored hash: %v", err)
+	if !first.PasswordSetupRequired {
+		t.Fatal("new credentials must require initial password setup")
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(first.AdminPasswordHash), []byte(legacyAdminPassword)); err == nil {
+		t.Fatal("public legacy password must not match a fresh credentials file")
 	}
 	if first.WebSocketToken == "" {
 		t.Fatal("WebSocketToken is empty")
@@ -60,9 +63,15 @@ func TestLoadCredentialsEnvironmentIsOnlyUsedByRuntimeConfigImport(t *testing.T)
 	}
 }
 
-func TestVerifyAdminCredentialsAcceptsDefaultAndRejectsWrongValues(t *testing.T) {
+func TestVerifyAdminCredentialsRequiresSetupAndThenAcceptsConfiguredPassword(t *testing.T) {
 	t.Setenv("QQPET_DATA_DIR", t.TempDir())
 	t.Setenv("QQPET_WS_TOKEN", "")
+	if ok, err := VerifyAdminCredentials("admin", legacyAdminPassword); err != nil || ok {
+		t.Fatalf("credentials before setup = %v, %v; want rejected", ok, err)
+	}
+	if err := SetInitialAdminPassword("admin", "configured-secret"); err != nil {
+		t.Fatalf("SetInitialAdminPassword() error = %v", err)
+	}
 
 	tests := []struct {
 		name     string
@@ -70,8 +79,8 @@ func TestVerifyAdminCredentialsAcceptsDefaultAndRejectsWrongValues(t *testing.T)
 		password string
 		want     bool
 	}{
-		{name: "default login", username: "admin", password: "123456", want: true},
-		{name: "wrong username", username: "other", password: "123456", want: false},
+		{name: "configured login", username: "admin", password: "configured-secret", want: true},
+		{name: "wrong username", username: "other", password: "configured-secret", want: false},
 		{name: "wrong password", username: "admin", password: "wrong", want: false},
 	}
 	for _, test := range tests {
@@ -90,12 +99,15 @@ func TestVerifyAdminCredentialsAcceptsDefaultAndRejectsWrongValues(t *testing.T)
 func TestChangeAdminPasswordInvalidatesOldPassword(t *testing.T) {
 	t.Setenv("QQPET_DATA_DIR", t.TempDir())
 	t.Setenv("QQPET_WS_TOKEN", "")
+	if err := SetInitialAdminPassword("admin", "configured-secret"); err != nil {
+		t.Fatal(err)
+	}
 
-	if err := ChangeAdminPassword("123456", "new-secret"); err != nil {
+	if err := ChangeAdminPassword("configured-secret", "new-secret"); err != nil {
 		t.Fatalf("ChangeAdminPassword() error = %v", err)
 	}
 
-	oldOK, err := VerifyAdminCredentials("admin", "123456")
+	oldOK, err := VerifyAdminCredentials("admin", "configured-secret")
 	if err != nil {
 		t.Fatalf("verify old password error = %v", err)
 	}
@@ -111,6 +123,9 @@ func TestChangeAdminPasswordInvalidatesOldPassword(t *testing.T) {
 func TestChangeAdminPasswordRejectsWrongCurrentPassword(t *testing.T) {
 	t.Setenv("QQPET_DATA_DIR", t.TempDir())
 	t.Setenv("QQPET_WS_TOKEN", "")
+	if err := SetInitialAdminPassword("admin", "configured-secret"); err != nil {
+		t.Fatal(err)
+	}
 
 	err := ChangeAdminPassword("wrong", "new-secret")
 	if err != ErrInvalidAdminPassword {

@@ -18,18 +18,20 @@ import (
 const (
 	credentialsFileName  = "credentials.json"
 	defaultAdminUsername = "admin"
-	defaultAdminPassword = "123456"
+	legacyAdminPassword  = "123456"
 )
 
 type Credentials struct {
-	AdminUsername     string `json:"admin_username"`
-	AdminPasswordHash string `json:"admin_password_hash"`
-	WebSocketToken    string `json:"websocket_token"`
+	AdminUsername         string `json:"admin_username"`
+	AdminPasswordHash     string `json:"admin_password_hash"`
+	PasswordSetupRequired bool   `json:"password_setup_required"`
+	WebSocketToken        string `json:"websocket_token"`
 }
 
 var (
-	credentialsMu           sync.Mutex
-	ErrInvalidAdminPassword = errors.New("invalid admin password")
+	credentialsMu            sync.Mutex
+	ErrInvalidAdminPassword  = errors.New("invalid admin password")
+	ErrAdminSetupNotRequired = errors.New("admin password setup is not required")
 )
 
 func dataDir() (string, error) {
@@ -86,11 +88,32 @@ func loadCredentialsLocked() (Credentials, error) {
 		changed = true
 	}
 	if credentials.AdminPasswordHash == "" {
-		hash, hashErr := bcrypt.GenerateFromPassword([]byte(defaultAdminPassword), bcrypt.DefaultCost)
+		oneTimeSecret, tokenErr := generateToken()
+		if tokenErr != nil {
+			return Credentials{}, tokenErr
+		}
+		hash, hashErr := bcrypt.GenerateFromPassword([]byte(oneTimeSecret), bcrypt.DefaultCost)
 		if hashErr != nil {
-			return Credentials{}, fmt.Errorf("hash default admin password: %w", hashErr)
+			return Credentials{}, fmt.Errorf("hash initial admin secret: %w", hashErr)
 		}
 		credentials.AdminPasswordHash = string(hash)
+		credentials.PasswordSetupRequired = true
+		changed = true
+	} else if !credentials.PasswordSetupRequired && bcrypt.CompareHashAndPassword(
+		[]byte(credentials.AdminPasswordHash), []byte(legacyAdminPassword),
+	) == nil {
+		// 旧版本公开默认密码不能继续作为可登录凭据。升级时立即使其失效，
+		// 并要求管理员通过本机初始化向导设置自己的密码。
+		oneTimeSecret, tokenErr := generateToken()
+		if tokenErr != nil {
+			return Credentials{}, tokenErr
+		}
+		hash, hashErr := bcrypt.GenerateFromPassword([]byte(oneTimeSecret), bcrypt.DefaultCost)
+		if hashErr != nil {
+			return Credentials{}, fmt.Errorf("replace legacy admin password: %w", hashErr)
+		}
+		credentials.AdminPasswordHash = string(hash)
+		credentials.PasswordSetupRequired = true
 		changed = true
 	}
 	if credentials.WebSocketToken == "" {
@@ -117,6 +140,9 @@ func VerifyAdminCredentials(username, password string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	if credentials.PasswordSetupRequired {
+		return false, nil
+	}
 	passwordMatches := bcrypt.CompareHashAndPassword(
 		[]byte(credentials.AdminPasswordHash),
 		[]byte(password),
@@ -128,6 +154,35 @@ func VerifyAdminCredentials(username, password string) (bool, error) {
 	return usernameMatches && passwordMatches, nil
 }
 
+// SetInitialAdminPassword completes the one-time local setup flow. It cannot
+// overwrite an already initialized administrator account.
+func SetInitialAdminPassword(username, password string) error {
+	credentialsMu.Lock()
+	defer credentialsMu.Unlock()
+
+	credentials, err := loadCredentialsLocked()
+	if err != nil {
+		return err
+	}
+	if !credentials.PasswordSetupRequired {
+		return ErrAdminSetupNotRequired
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hash initial admin password: %w", err)
+	}
+	if username != "" {
+		credentials.AdminUsername = username
+	}
+	credentials.AdminPasswordHash = string(hash)
+	credentials.PasswordSetupRequired = false
+	dir, err := dataDir()
+	if err != nil {
+		return fmt.Errorf("resolve application data directory: %w", err)
+	}
+	return writeCredentialsFile(dir, filepath.Join(dir, credentialsFileName), credentials)
+}
+
 // ChangeAdminPassword verifies the existing password and atomically persists
 // a bcrypt hash for the replacement password.
 func ChangeAdminPassword(currentPassword, newPassword string) error {
@@ -137,6 +192,9 @@ func ChangeAdminPassword(currentPassword, newPassword string) error {
 	credentials, err := loadCredentialsLocked()
 	if err != nil {
 		return err
+	}
+	if credentials.PasswordSetupRequired {
+		return ErrInvalidAdminPassword
 	}
 	if bcrypt.CompareHashAndPassword(
 		[]byte(credentials.AdminPasswordHash),

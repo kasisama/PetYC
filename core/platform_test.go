@@ -46,6 +46,19 @@ func TestCommandRouterRejectsEmptyCommand(t *testing.T) {
 	}
 }
 
+func TestCommandRouterRejectsDuplicateCommand(t *testing.T) {
+	router := NewCommandRouter()
+	handler := func(context.Context, InboundEvent) (OutboundMessage, error) {
+		return OutboundMessage{Text: "ok"}, nil
+	}
+	if err := router.Register("签到", handler); err != nil {
+		t.Fatal(err)
+	}
+	if err := router.Register("签到", handler); err == nil {
+		t.Fatal("expected duplicate command registration to fail")
+	}
+}
+
 func TestRebuildUnifiedRouterUsesEnabledConfiguredTrigger(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
@@ -57,30 +70,72 @@ func TestRebuildUnifiedRouterUsesEnabledConfiguredTrigger(t *testing.T) {
 	previousRouter, previousFeatures := unifiedRouter, unifiedFeatures
 	unifiedRouter, unifiedFeatures = NewCommandRouter(), make(map[string]UnifiedFeature)
 	t.Cleanup(func() { unifiedRouter, unifiedFeatures = previousRouter, previousFeatures })
-	RegisterUnifiedFeature(UnifiedFeature{FuncName: "status", DefaultCommand: "状态", DisplayName: "宠物状态", Category: "基础", Description: "查看宠物近况", Enabled: true}, func(context.Context, InboundEvent) (OutboundMessage, error) {
+	RegisterUnifiedFeature(UnifiedFeature{FuncName: "status", DefaultCommand: "我的宠物", Aliases: []string{"状态", "宠物状态"}, DisplayName: "宠物状态", Category: "基础", Description: "查看宠物近况", Enabled: true}, func(context.Context, InboundEvent) (OutboundMessage, error) {
 		return OutboundMessage{Text: "ok"}, nil
 	})
 	db.Create(&models.CommandConfig{FuncName: "status", Command: "近况", DisplayName: "宠物状态", Category: "基础", Description: "查看宠物近况", Enabled: true})
 	if err = RebuildUnifiedRouter(db); err != nil {
 		t.Fatal(err)
 	}
-	if _, handled, _ := RouteInbound(context.Background(), InboundEvent{Text: "状态"}); handled {
+	if _, handled, _ := RouteInbound(context.Background(), InboundEvent{Text: "我的宠物"}); handled {
 		t.Fatal("默认触发词不应在自定义触发词生效后继续匹配")
 	}
 	message, handled, err := RouteInbound(context.Background(), InboundEvent{Text: "近况"})
 	if err != nil || !handled || message.Text != "ok" {
 		t.Fatalf("自定义触发词未生效: handled=%v message=%+v err=%v", handled, message, err)
 	}
-}
-
-func TestRetiredLegacyCommandPrefixesAreBlockedBeforeFallback(t *testing.T) {
-	for _, command := range []string{"宠物打工 护工", "宠物偷袭 @某人", "宠物钓鱼", "创建家族 星光"} {
-		if !IsRetiredLegacyCommand(command) {
-			t.Fatalf("下线指令未被识别: %s", command)
+	for _, alias := range []string{"状态", "宠物状态"} {
+		message, handled, err = RouteInbound(context.Background(), InboundEvent{Text: alias})
+		if err != nil || !handled || message.Text != "ok" {
+			t.Fatalf("兼容别名 %q 未生效: handled=%v message=%+v err=%v", alias, handled, message, err)
 		}
 	}
-	if IsRetiredLegacyCommand("宠物摸头") || IsRetiredLegacyCommand("宠物散步") {
-		t.Fatal("低压力陪伴互动不应被下线拦截")
+}
+
+func TestSyncUnifiedCommandConfigsPreservesCustomTriggersAndAddsFamiliarCommands(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.AutoMigrate(&models.CommandConfig{}, &models.SystemConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	previousRouter, previousFeatures := unifiedRouter, unifiedFeatures
+	unifiedRouter, unifiedFeatures = NewCommandRouter(), make(map[string]UnifiedFeature)
+	t.Cleanup(func() { unifiedRouter, unifiedFeatures = previousRouter, previousFeatures })
+	handler := func(context.Context, InboundEvent) (OutboundMessage, error) { return OutboundMessage{Text: "ok"}, nil }
+	if err = RegisterUnifiedFeature(UnifiedFeature{FuncName: "今日", DefaultCommand: "今日", DisplayName: "今日", Category: "陪伴", Enabled: true}, handler); err != nil {
+		t.Fatal(err)
+	}
+	if err = RegisterUnifiedFeature(UnifiedFeature{FuncName: "签到", DefaultCommand: "签到", DisplayName: "签到", Category: "基础", Enabled: true}, handler); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Create(&models.CommandConfig{FuncName: "今日", Command: "每日陪伴", DisplayName: "自定义今日", Category: "自定义", Enabled: false, SortOrder: 99}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Model(&models.CommandConfig{}).Where("func_name = ?", "今日").Update("enabled", false).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Create(&models.SystemConfig{Key: "Internal.CommandCatalogVersion", Value: "2"}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err = SyncUnifiedCommandConfigs(db); err != nil {
+		t.Fatal(err)
+	}
+	var existing models.CommandConfig
+	if err = db.First(&existing, "func_name = ?", "今日").Error; err != nil {
+		t.Fatal(err)
+	}
+	if existing.Command != "每日陪伴" || existing.Enabled {
+		t.Fatalf("目录升级必须保留自定义触发词和开关: %#v", existing)
+	}
+	var familiar models.CommandConfig
+	if err = db.First(&familiar, "func_name = ?", "签到").Error; err != nil {
+		t.Fatal(err)
+	}
+	if familiar.Command != "签到" || !familiar.Enabled {
+		t.Fatalf("应补充熟悉命令: %#v", familiar)
 	}
 }
 
@@ -163,5 +218,8 @@ func TestCommandRouterRecordsAnonymousSuccessAndFailureMetrics(t *testing.T) {
 	}
 	if len(metrics) != 2 || db.Migrator().HasColumn(&models.GameplayMetric{}, "actor_id") || db.Migrator().HasColumn(&models.GameplayMetric{}, "message_text") {
 		t.Fatalf("expected two anonymous metrics without player content: %#v", metrics)
+	}
+	if metrics[0].TechnicalResult == "" || metrics[1].TechnicalResult == "" {
+		t.Fatalf("expected separate technical results: %#v", metrics)
 	}
 }

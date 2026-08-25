@@ -55,7 +55,7 @@ func TestLoadRuntimeConfigUpgradesLegacyFileDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.ListenAddress != "0.0.0.0" || !config.QQOfficial.GroupEventsEnabled || !config.QQOfficial.GuildEventsEnabled {
+	if config.ListenAddress != "127.0.0.1" || !config.QQOfficial.GroupEventsEnabled || !config.QQOfficial.GuildEventsEnabled {
 		t.Fatalf("legacy defaults were not upgraded: %#v", config)
 	}
 }

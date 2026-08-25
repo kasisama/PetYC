@@ -1,10 +1,13 @@
 package qqofficial
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"qq-pet-saas/core"
@@ -62,6 +65,45 @@ func TestGatewayDispatchDeduplicatesAndRoutesOnce(t *testing.T) {
 	}
 	if routes != 1 || sender.sends != 1 {
 		t.Fatalf("expected one route and send, routes=%d sends=%d", routes, sender.sends)
+	}
+}
+
+func TestGatewayDispatchLogsReceivedAndUnhandledMessage(t *testing.T) {
+	var output bytes.Buffer
+	previousWriter, previousFlags, previousPrefix := log.Writer(), log.Flags(), log.Prefix()
+	log.SetOutput(&output)
+	log.SetFlags(0)
+	log.SetPrefix("")
+	t.Cleanup(func() {
+		log.SetOutput(previousWriter)
+		log.SetFlags(previousFlags)
+		log.SetPrefix(previousPrefix)
+	})
+
+	gateway := NewGateway(Config{AppID: "app"}, staticToken("access"), &recordingSender{})
+	gateway.Route = func(context.Context, core.InboundEvent) (core.OutboundMessage, bool, error) {
+		return core.OutboundMessage{}, false, nil
+	}
+	payload := GatewayPayload{ID: "event", Op: OpDispatch, Sequence: 1, Type: "GROUP_AT_MESSAGE_CREATE", Data: json.RawMessage(`{"id":"message","group_openid":"group","content":" 菜单 ","author":{"member_openid":"member"}}`)}
+	if err := gateway.HandleDispatch(context.Background(), payload); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, expected := range []string{
+		`[QQOfficial] 收到消息 type=GROUP_AT_MESSAGE_CREATE content="菜单"`,
+		`[QQOfficial] 未匹配指令 type=GROUP_AT_MESSAGE_CREATE content="菜单"`,
+	} {
+		if !strings.Contains(output.String(), expected) {
+			t.Fatalf("expected log %q, got %q", expected, output.String())
+		}
+	}
+}
+
+func TestConsoleMessageTextTruncatesLongMessages(t *testing.T) {
+	message := strings.Repeat("宠", 161)
+	result := consoleMessageText(message)
+	if len([]rune(result)) != 161 || !strings.HasSuffix(result, "…") {
+		t.Fatalf("expected 160 runes plus ellipsis, got %q", result)
 	}
 }
 

@@ -26,6 +26,9 @@ func TestServerManagerKeepsBothPortsUntilConfirmed(t *testing.T) {
 	if err := manager.Start(0); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
+	if manager.active == nil || manager.active.bindHost != "127.0.0.1" {
+		t.Fatalf("默认服务必须只监听本机，实际 %#v", manager.active)
+	}
 	oldAddress := manager.Address()
 	assertHTTPBody(t, oldAddress, "shared-router")
 
@@ -85,7 +88,7 @@ func TestServerManagerRollsBackUnconfirmedPortAfterTimeout(t *testing.T) {
 }
 
 func TestServerManagerOccupiedPortDoesNotCreateHandoffOrPersist(t *testing.T) {
-	occupied, err := net.Listen("tcp", ":0")
+	occupied, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

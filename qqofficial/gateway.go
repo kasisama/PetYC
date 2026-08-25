@@ -90,13 +90,26 @@ func (gateway *Gateway) HandleDispatch(ctx context.Context, payload GatewayPaylo
 		gateway.Status.markEvent()
 	}
 	event, mapped, err := MapDispatch(gateway.Config.AppID, payload)
-	if err != nil || !mapped {
+	if err != nil {
+		log.Printf("[QQOfficial] 事件解析失败 type=%s: %v", payload.Type, err)
 		return err
 	}
+	if !mapped {
+		log.Printf("[QQOfficial] 收到未映射事件 type=%s", payload.Type)
+		return nil
+	}
+	content := consoleMessageText(event.Text)
+	log.Printf("[QQOfficial] 收到消息 type=%s content=%q", payload.Type, content)
 	if err = validateEvent(event); err != nil {
+		log.Printf("[QQOfficial] 消息校验失败 type=%s: %v", payload.Type, err)
 		return err
+	}
+	if !core.GroupEnabled(event) {
+		log.Printf("[QQOfficial] 当前场景已停用 type=%s", payload.Type)
+		return nil
 	}
 	if !gateway.Deduper.Accept(event) {
+		log.Printf("[QQOfficial] 忽略重复消息 type=%s content=%q", payload.Type, content)
 		return nil
 	}
 	if payload.Type == "INTERACTION_CREATE" {
@@ -105,11 +118,31 @@ func (gateway *Gateway) HandleDispatch(ctx context.Context, payload GatewayPaylo
 		}
 	}
 	message, handled, err := gateway.Route(ctx, event)
-	if err != nil || !handled {
+	if err != nil {
+		log.Printf("[QQOfficial] 指令处理失败 type=%s content=%q: %v", payload.Type, content, err)
 		return err
 	}
-	_, err = gateway.Sender.Send(ctx, event, message)
-	return err
+	if !handled {
+		log.Printf("[QQOfficial] 未匹配指令 type=%s content=%q", payload.Type, content)
+		return nil
+	}
+	log.Printf("[QQOfficial] 指令已匹配，准备回复 type=%s content=%q", payload.Type, content)
+	if _, err = gateway.Sender.Send(ctx, event, message); err != nil {
+		log.Printf("[QQOfficial] 回复发送失败 type=%s: %v", payload.Type, err)
+		return err
+	}
+	log.Printf("[QQOfficial] 回复发送成功 type=%s", payload.Type)
+	return nil
+}
+
+func consoleMessageText(value string) string {
+	const maxRunes = 160
+	value = strings.TrimSpace(value)
+	runes := []rune(value)
+	if len(runes) <= maxRunes {
+		return value
+	}
+	return string(runes[:maxRunes]) + "…"
 }
 
 func (gateway *Gateway) Run(ctx context.Context) error {
@@ -309,6 +342,10 @@ func StartFromEnv(ctx context.Context) (*Gateway, bool, error) {
 	client.MarkdownEnabled = config.MarkdownEnabled
 	client.KeyboardEnabled = config.KeyboardEnabled
 	legacyGateway := NewGateway(config, tokens, client)
+	defaultRuntime.Lock()
+	defaultRuntime.client = client
+	defaultRuntime.cancel = nil
+	defaultRuntime.Unlock()
 	go func() {
 		if runErr := legacyGateway.Run(ctx); runErr != nil && !errors.Is(runErr, context.Canceled) {
 			log.Printf("[QQOfficial] 网关退出: %v", runErr)

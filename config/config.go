@@ -2,16 +2,12 @@ package config
 
 import (
 	"bytes"
-	"embed"
-	"fmt"
 	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
-	"unicode/utf16"
 
 	"golang.org/x/text/encoding/simplifiedchinese"
 	"golang.org/x/text/transform"
@@ -20,8 +16,9 @@ import (
 	"qq-pet-saas/models"
 )
 
-// GlobalConfigPath 配置文件存放路径，默认为根目录下的“初始数据”
-var GlobalConfigPath = "./初始数据"
+// GlobalConfigPath is the controlled runtime resource root. Historical INI
+// archives are deliberately outside this path and never used by startup.
+var GlobalConfigPath = "."
 
 // Global variables to hold configurations
 var (
@@ -86,6 +83,53 @@ type CoreConfig struct {
 	MasterQQ            int64
 	NotifyQQ            int64
 	ImageHost           string // HTTP 图片服务域名/IP (如 http://127.0.0.1:8080)，供远程 SaaS 部署使用
+}
+
+// SplitConfigList accepts the historical '#' seed delimiter and the admin
+// editor's comma / Chinese separators so list settings round-trip.
+func SplitConfigList(raw string) []string {
+	parts := strings.FieldsFunc(raw, func(r rune) bool {
+		switch r {
+		case '#', ',', '，', '、', ';', '；':
+			return true
+		default:
+			return false
+		}
+	})
+	result := make([]string, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if _, exists := seen[part]; exists {
+			continue
+		}
+		seen[part] = struct{}{}
+		result = append(result, part)
+	}
+	return result
+}
+
+func StarterPets() []string {
+	names := make([]string, 0, len(Core.InitialPets))
+	seen := make(map[string]struct{}, len(Core.InitialPets))
+	for _, name := range Core.InitialPets {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if _, exists := seen[name]; exists {
+			continue
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
+	}
+	if len(names) == 0 {
+		return []string{"诺诺"}
+	}
+	return names
 }
 
 // InteractionConfig 对应 核心配置.ini [互动]
@@ -224,459 +268,12 @@ func decodeGBK(b []byte) ([]byte, error) {
 	return io.ReadAll(r)
 }
 
-// LoadIniFile loads an INI file safely handles GBK encoding on Windows
-func LoadIniFile(path string) (*ini.File, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	utf8Data, err := decodeGBK(data)
-	if err != nil {
-		return ini.Load(data) // Fallback to raw load if conversion fails
-	}
-	return ini.Load(utf8Data)
-}
-
-func init() {
-	LoadAllConfigs()
-
-	models.OnPetFind = func(pet *models.UserPet) {
-		if Core.CurrencySync != 0 {
-			pet.Currency = GetCurrency(pet.UserID, pet.GroupID, pet.Currency)
-		}
-	}
-
-	models.OnPetSave = func(pet *models.UserPet) {
-		if Core.CurrencySync != 0 {
-			_ = SetCurrency(pet.UserID, pet.GroupID, pet.Currency)
-		}
-	}
-}
-
-// LoadAllConfigs loads all game configs from GlobalConfigPath
-func LoadAllConfigs() {
-	// 1. 加载核心配置
-	corePath := filepath.Join(GlobalConfigPath, "核心配置.ini")
-	if cfg, err := LoadIniFile(corePath); err == nil {
-		secCore := cfg.Section("核心")
-		Core = CoreConfig{
-			InitialPets:         strings.Split(secCore.Key("初始宠物").String(), "#"),
-			CoinName:            secCore.Key("货币名称").MustString("咔币"),
-			InitialCoin:         secCore.Key("初始货币").MustInt64(100),
-			RenameCost:          secCore.Key("改名消耗").MustInt64(1000),
-			RenameBlocklist:     strings.Split(secCore.Key("改名屏蔽").String(), "#"),
-			TreatCost:           secCore.Key("治疗消耗").MustInt64(500),
-			DyingSaveTime:       secCore.Key("濒死救治时间").MustInt64(2000),
-			DyingProtectTime:    secCore.Key("成功救治保护").MustInt64(60),
-			EscapeFindTime:      secCore.Key("逃跑找回时间").MustInt64(2000),
-			LostCooldown:        secCore.Key("失去宠物冷却").MustInt64(720),
-			CheckinLike:         secCore.Key("签到点赞").MustInt(1) == 1,
-			CurrencySync:        secCore.Key("货币对接").MustInt(0),
-			CurrencySyncPath:    secCore.Key("货币对接路径").MustString(""),
-			CurrencySyncSection: secCore.Key("货币配置节").MustString(""),
-			CurrencySyncKey:     secCore.Key("货币配置项").MustString(""),
-			TxFee:               secCore.Key("交易手续费").MustInt64(30),
-			MasterQQ:            secCore.Key("主人QQ").MustInt64(1347993953),
-			NotifyQQ:            secCore.Key("通知QQ").MustInt64(3214412864),
-			ImageHost:           secCore.Key("图片服务").MustString(""),
-		}
-
-		secInt := cfg.Section("互动")
-		Interaction = InteractionConfig{
-			TrainGrowth:       secInt.Key("锻炼每次成长").MustInt64(5),
-			TrainLimit:        secInt.Key("锻炼次数限制").MustInt64(3),
-			TrainHungerCost:   secInt.Key("锻炼消耗饱食").MustInt64(10),
-			StudyGrowth:       secInt.Key("学习每次成长").MustInt64(5),
-			StudyLimit:        secInt.Key("学习次数限制").MustInt64(5),
-			StudyHungerCost:   secInt.Key("学习消耗饱食").MustInt64(10),
-			WashGrowth:        secInt.Key("洗澡获得成长").MustInt64(8),
-			WashAffection:     secInt.Key("洗澡获得好感").MustInt64(10),
-			WashHungerCost:    secInt.Key("洗澡消耗饱食").MustInt64(5),
-			WalkGrowth:        secInt.Key("散步获得成长").MustInt64(5),
-			WalkAffection:     secInt.Key("散步获得好感").MustInt64(8),
-			WalkGrowthLimit:   secInt.Key("散步成长上限").MustInt64(20),
-			WalkAffectLimit:   secInt.Key("散步好感上限").MustInt64(24),
-			WalkInterval:      secInt.Key("散步间隔时间").MustInt64(10) * 60, // 存秒
-			WalkHungerCost:    secInt.Key("散步消耗饱食").MustInt64(15),
-			TouchGrowth:       secInt.Key("摸头获得成长").MustInt64(8),
-			TouchAffection:    secInt.Key("摸头获得好感").MustInt64(10),
-			TouchGrowthLimit:  secInt.Key("摸头成长上限").MustInt64(24),
-			TouchAffectLimit:  secInt.Key("摸头好感上限").MustInt64(30),
-			TouchInterval:     secInt.Key("摸头间隔时间").MustInt64(10) * 60, // 存秒
-			TouchHungerCost:   secInt.Key("摸头消耗饱食").MustInt64(5),
-			RpsAffection:      secInt.Key("猜拳获得好感").MustInt64(8),
-			RpsAffectLimit:    secInt.Key("猜拳好感上限").MustInt64(24),
-			RpsHungerCost:     secInt.Key("猜拳消耗饱食").MustInt64(5),
-			RpsInterval:       secInt.Key("猜拳间隔时间").MustInt64(3) * 60,
-			SnackHungerCost:   secInt.Key("偷袭消耗饱食").MustInt64(30),
-			SnackSuccess:      secInt.Key("偷袭成功几率").MustInt64(99),
-			SnackInterval:     secInt.Key("偷袭冷却时间").MustInt64(5) * 60,
-			SnackProtect:      secInt.Key("偷袭保护时间").MustInt64(5) * 60,
-			CounterHunger:     secInt.Key("回击消耗饱食").MustInt64(15),
-			CounterSuccess:    secInt.Key("回击成功几率").MustInt64(80),
-			CreateFamilyCoin:  secInt.Key("创建家族货币").MustInt64(500),
-			CreateFamilyItem:  secInt.Key("创建家族物品").MustString("家族商标*1"),
-			FamilySizeLimit:   secInt.Key("家族人数上限").MustInt(10),
-			FishHungerCost:    secInt.Key("钓鱼消耗饱食").MustInt64(5),
-			FishSuccessRate:   secInt.Key("钓鱼上钩几率").MustInt64(80),
-			GiftLimit:         secInt.Key("送礼次数限制").MustInt64(5),
-			FishSpecies:       strings.Split(secInt.Key("鱼类").String(), "#"),
-			HungerMoodFlush:   secInt.Key("饱食心情刷新").MustInt64(60),
-			LotteryItem:       secInt.Key("抽奖所需物品").MustString("抽奖券*10"),
-			LotteryRewardStr:  secInt.Key("抽奖奖励设置").String(),
-			WorkTime:          secInt.Key("打工时间").MustInt64(10) * 60,
-			WorkRewardCoin:    secInt.Key("打工奖励货币").MustInt64(300),
-			WorkRewardItems:   secInt.Key("打工奖励物品").String(),
-			WorkHungerCost:    secInt.Key("打工消耗饱食").MustInt64(20),
-			FitnessGrowth:     secInt.Key("健身奖励成长").MustInt64(5),
-			FitnessLimit:      secInt.Key("健身次数限制").MustInt64(5),
-			FitnessHungerCost: secInt.Key("健身消耗饱食").MustInt64(12),
-			SellNoPriceGrowth: secInt.Key("出售无价成长").MustInt64(10),
-			TreeResultNutri:   secInt.Key("神树结果养分").MustInt64(155),
-			TreeRewardItems:   secInt.Key("神树奖励物品").MustString("神树果实*1#抽奖券*10"),
-			BuyLimit:          secInt.Key("单次购买上限").MustInt(10),
-		}
-
-		Images = make(map[string]string)
-		secImg := cfg.Section("图片")
-		for _, key := range secImg.Keys() {
-			Images[key.Name()] = key.String()
-		}
-
-	} else {
-		log.Printf("[配置] 警告：加载核心配置失败：%v", err)
-	}
-
-	// 2. 加载指令配置
-	Commands = make(map[string]string)
-	cmdPath := filepath.Join(GlobalConfigPath, "指令配置.ini")
-	if cfg, err := LoadIniFile(cmdPath); err == nil {
-		for _, sec := range cfg.Sections() {
-			if sec.Name() == "DEFAULT" {
-				continue
-			}
-			if sec.HasKey("指令") {
-				Commands[sec.Name()] = sec.Key("指令").String()
-			}
-		}
-	} else {
-		log.Printf("[配置] 警告：加载指令配置失败：%v", err)
-	}
-
-	// 3. 加载宠物配置
-	Pets = make(map[string]PetSpecies)
-	petPath := filepath.Join(GlobalConfigPath, "宠物配置.ini")
-	if cfg, err := LoadIniFile(petPath); err == nil {
-		for _, sec := range cfg.Sections() {
-			if sec.Name() == "DEFAULT" {
-				continue
-			}
-			Pets[sec.Name()] = PetSpecies{
-				Name:            sec.Name(),
-				Image:           sec.Key("图片").String(),
-				AdoptImage:      sec.Key("领养图片").String(),
-				TrainStartImg:   sec.Key("开始锻炼图片").String(),
-				TrainEndImg:     sec.Key("完成锻炼图片").String(),
-				StudyStartImg:   sec.Key("开始学习图片").String(),
-				StudyEndImg:     sec.Key("完成学习图片").String(),
-				FitnessStartImg: sec.Key("开始健身图片").String(),
-				FitnessEndImg:   sec.Key("完成健身图片").String(),
-				FavoriteFood:    sec.Key("喜欢食物").String(),
-				FavoriteGift:    sec.Key("喜欢礼物").String(),
-				Health:          sec.Key("血量").MustInt64(100),
-				Wisdom:          sec.Key("智慧").MustInt64(10),
-				Strength:        sec.Key("力量").MustInt64(10),
-				Defense:         sec.Key("防御").MustInt64(10),
-				Hunger:          sec.Key("饱食").MustInt64(100),
-				Description:     sec.Key("描述").String(),
-				EvolutionBranch: sec.Key("进化分支").MustInt(0),
-				Evolution:       sec.Key("进化").String(),
-				EvolutionGrowth: sec.Key("进化成长").MustInt64(0),
-				EvolutionAffect: sec.Key("进化好感").MustInt64(0),
-				EvolutionImage:  sec.Key("进化图片").String(),
-				Awaken:          sec.Key("觉醒").String(),
-				AwakenGrowth:    sec.Key("觉醒成长").MustInt64(0),
-				AwakenAffect:    sec.Key("觉醒好感").MustInt64(0),
-				AwakenItems:     sec.Key("觉醒物品").String(),
-				AwakenImage:     sec.Key("觉醒图片").String(),
-				HealthMax:       sec.Key("血量上限").MustInt64(100),
-				WisdomMax:       sec.Key("智慧上限").MustInt64(100),
-				StrengthMax:     sec.Key("力量上限").MustInt64(100),
-				DefenseMax:      sec.Key("防御上限").MustInt64(100),
-				HungerMax:       sec.Key("饱食上限").MustInt64(100),
-				AffectionBonus:  sec.Key("好感加成").MustInt(0),
-				GrowthBonus:     sec.Key("成长加成").MustInt(0),
-				AttributeBonus:  sec.Key("属性加成").MustInt(0),
-				CurrencyBonus:   sec.Key("货币加成").MustInt(0),
-			}
-		}
-	} else {
-		log.Printf("[配置] 警告：加载宠物配置失败：%v", err)
-	}
-
-	// 4. 加载物品配置
-	Items = make(map[string]ItemConfig)
-	itemPath := filepath.Join(GlobalConfigPath, "物品配置.ini")
-	if cfg, err := LoadIniFile(itemPath); err == nil {
-		for _, sec := range cfg.Sections() {
-			if sec.Name() == "DEFAULT" {
-				continue
-			}
-			Items[sec.Name()] = ItemConfig{
-				Name:        sec.Name(),
-				Type:        sec.Key("类型").String(),
-				RewardType:  sec.Key("礼包类型").String(),
-				ObtainType:  sec.Key("获得类型").MustInt(0),
-				OpenReq:     sec.Key("打开所需").String(),
-				Effect:      sec.Key("效果").String(),
-				Time:        sec.Key("时间").MustInt64(0),
-				Image:       sec.Key("图片").String(),
-				Description: sec.Key("描述").String(),
-				SellPrice:   sec.Key("出售价格").MustInt64(0),
-			}
-		}
-	} else {
-		log.Printf("[配置] 警告：加载物品配置失败：%v", err)
-	}
-
-	// 5. 加载商店配置
-	Shop = make(map[string]ShopItem)
-	shopPath := filepath.Join(GlobalConfigPath, "商店配置.ini")
-	if cfg, err := LoadIniFile(shopPath); err == nil {
-		for _, sec := range cfg.Sections() {
-			if sec.Name() == "DEFAULT" {
-				continue
-			}
-			Shop[sec.Name()] = ShopItem{
-				Name:        sec.Name(),
-				Image:       sec.Key("图片").String(),
-				Stock:       sec.Key("库存").MustInt64(-1),
-				Price:       sec.Key("价格").MustInt64(0),
-				Description: sec.Key("描述").String(),
-			}
-		}
-	} else {
-		log.Printf("[配置] 警告：加载商店配置失败：%v", err)
-	}
-
-	// 6. 加载好感商店配置
-	AffectionShop = make(map[string]ShopItem)
-	affShopPath := filepath.Join(GlobalConfigPath, "好感商店配置.ini")
-	if cfg, err := LoadIniFile(affShopPath); err == nil {
-		for _, sec := range cfg.Sections() {
-			if sec.Name() == "DEFAULT" {
-				continue
-			}
-			AffectionShop[sec.Name()] = ShopItem{
-				Name:        sec.Name(),
-				Image:       sec.Key("图片").String(),
-				Stock:       sec.Key("库存").MustInt64(-1),
-				Price:       sec.Key("价格").MustInt64(0),
-				Description: sec.Key("描述").String(),
-			}
-		}
-	} else {
-		log.Printf("[配置] 警告：加载好感商店配置失败：%v", err)
-	}
-
-	// 7. 加载新手签到配置
-	NewbieCheckin = make(map[string]CheckinReward)
-	newbiePath := filepath.Join(GlobalConfigPath, "新手签到配置.ini")
-	if cfg, err := LoadIniFile(newbiePath); err == nil {
-		for _, sec := range cfg.Sections() {
-			if sec.Name() == "DEFAULT" {
-				continue
-			}
-			NewbieCheckin[sec.Name()] = CheckinReward{
-				Day:       sec.Name(),
-				Currency:  sec.Key("货币").MustInt64(0),
-				Affection: sec.Key("好感").MustInt64(0),
-				Items:     sec.Key("物品").String(),
-				Image:     sec.Key("图片").String(),
-			}
-		}
-	} else {
-		log.Printf("[配置] 警告：加载新手签到配置失败：%v", err)
-	}
-
-	// 8. 加载签到配置
-	WeeklyCheckin = make(map[string]CheckinReward)
-	weeklyPath := filepath.Join(GlobalConfigPath, "签到配置.ini")
-	if cfg, err := LoadIniFile(weeklyPath); err == nil {
-		for _, sec := range cfg.Sections() {
-			if sec.Name() == "DEFAULT" {
-				continue
-			}
-			WeeklyCheckin[sec.Name()] = CheckinReward{
-				Day:       sec.Name(),
-				Currency:  sec.Key("货币").MustInt64(0),
-				Affection: sec.Key("好感").MustInt64(0),
-				Items:     sec.Key("物品").String(),
-				Image:     sec.Key("图片").String(),
-			}
-		}
-	} else {
-		log.Printf("[配置] 警告：加载周签到配置失败：%v", err)
-	}
-
-	// 9. 加载打工配置
-	WorkSettings = make(map[string]WorkSetting)
-	workPath := filepath.Join(GlobalConfigPath, "打工配置.ini")
-	if cfg, err := LoadIniFile(workPath); err == nil {
-		for _, sec := range cfg.Sections() {
-			if sec.Name() == "DEFAULT" {
-				continue
-			}
-			WorkSettings[sec.Name()] = WorkSetting{
-				Name:        sec.Name(),
-				Time:        sec.Key("时间").MustInt64(10),
-				HungerCost:  sec.Key("消耗饱食").MustInt64(10),
-				RewardCoin:  sec.Key("奖励货币").MustInt64(50),
-				RewardItems: sec.Key("奖励物品").String(),
-				ReplyQuotes: sec.Key("回复语句").String(),
-				StartImage:  sec.Key("开始图片").String(),
-				EndImage:    sec.Key("结束图片").String(),
-			}
-		}
-	} else {
-		log.Printf("[配置] 警告：加载打工配置失败：%v", err)
-	}
-
-	// 10. 加载菜单配置
-	Menus = make(map[string]string)
-	menuPath := filepath.Join(GlobalConfigPath, "菜单配置.ini")
-	if cfg, err := LoadIniFile(menuPath); err == nil {
-		for _, sec := range cfg.Sections() {
-			if sec.Name() == "DEFAULT" {
-				continue
-			}
-			if sec.HasKey("回复") {
-				rawReply := sec.Key("回复").String()
-				Menus[sec.Name()] = unescapeMenuText(rawReply)
-			}
-		}
-	} else {
-		log.Printf("[配置] 警告：加载菜单配置失败：%v", err)
-	}
-	log.Printf("[配置] 本地配置已加载：指令 %d · 宠物 %d · 物品 %d · 商店 %d · 菜单 %d", len(Commands), len(Pets), len(Items), len(Shop)+len(AffectionShop), len(Menus))
-}
-
-// unescapeMenuText 解密菜单配置文本中包含的 \t, \n, 以及 \uXXXX 格式的表情符号
-func unescapeMenuText(s string) string {
-	s = strings.ReplaceAll(s, `\t`, "  ")
-	s = strings.ReplaceAll(s, `\n`, "\n")
-
-	var result strings.Builder
-	runes := []rune(s)
-	for i := 0; i < len(runes); i++ {
-		if runes[i] == '\\' && i+1 < len(runes) && runes[i+1] == 'u' {
-			if i+5 < len(runes) {
-				hexStr := string(runes[i+2 : i+6])
-				code, err := strconv.ParseUint(hexStr, 16, 16)
-				if err == nil {
-					// 检查是否为 UTF-16 代理对
-					if utf16.IsSurrogate(rune(code)) {
-						if i+11 < len(runes) && runes[i+6] == '\\' && runes[i+7] == 'u' {
-							hexStr2 := string(runes[i+8 : i+12])
-							code2, err2 := strconv.ParseUint(hexStr2, 16, 16)
-							if err2 == nil {
-								r := utf16.DecodeRune(rune(code), rune(code2))
-								result.WriteRune(r)
-								i += 11
-								continue
-							}
-						}
-					}
-					result.WriteRune(rune(code))
-					i += 5
-					continue
-				}
-			}
-		}
-		result.WriteRune(runes[i])
-	}
-	return result.String()
-}
-
 // GetCommand 返回功能名对应的自定义指令名称，如果未配置则返回功能名本身
 func GetCommand(funcName string) string {
 	if cmd, exists := Commands[funcName]; exists && cmd != "" {
 		return cmd
 	}
 	return funcName
-}
-
-// SeedFSHolder 存储嵌入的文件系统，用于在后台执行配置重置
-var SeedFSHolder embed.FS
-
-// SyncWithDB 进行数据库同步：若数据库配置表为空，则从嵌入文件系统导入种子；若不为空，则从DB读取最新数据覆盖内存。
-func SyncWithDB(db *gorm.DB, seedFS embed.FS) error {
-	SeedFSHolder = seedFS
-	var count int64
-	if err := db.Model(&models.SystemConfig{}).Count(&count).Error; err != nil {
-		return fmt.Errorf("统计系统配置失败: %w", err)
-	}
-	if count == 0 {
-		log.Println("[配置] 首次启动，正在初始化 SQLite 配置…")
-		if err := LoadAllConfigsFromFS(seedFS); err != nil {
-			return fmt.Errorf("从嵌入资源加载初始配置失败: %w", err)
-		}
-
-		tx := db.Begin()
-		if tx.Error != nil {
-			return fmt.Errorf("开始种子配置事务失败: %w", tx.Error)
-		}
-		seedSystemConfig(tx)
-		seedCommandConfig(tx)
-		seedPetSpeciesConfig(tx)
-		seedItemConfig(tx)
-		seedShopItemConfig(tx)
-		seedCheckinRewardConfig(tx)
-		seedWorkSettingConfig(tx)
-		seedMenuConfig(tx)
-		seedImageConfig(tx)
-		if err := tx.Commit().Error; err != nil {
-			return fmt.Errorf("提交种子配置事务失败: %w", err)
-		}
-		log.Println("[配置] 默认配置已写入 SQLite")
-	}
-
-	if err := LoadAllConfigsFromDB(db); err != nil {
-		return fmt.Errorf("从数据库加载配置失败: %w", err)
-	}
-	if count != 0 {
-		log.Println("[配置] 游戏配置已从 SQLite 加载")
-	}
-	return nil
-}
-
-// ResetConfigsFromSeed 清空 SQLite 中所有配置表并重新运行 SyncWithDB 导入默认种子数据
-func ResetConfigsFromSeed(db *gorm.DB) error {
-	log.Println("[Config] 收到管理员配置重置请求，开始清空数据库配置表...")
-	err := db.Transaction(func(tx *gorm.DB) error {
-		tables := []string{
-			"system_configs",
-			"command_configs",
-			"pet_species_configs",
-			"item_configs",
-			"shop_item_configs",
-			"checkin_reward_configs",
-			"work_setting_configs",
-			"menu_configs",
-			"image_configs",
-		}
-		for _, table := range tables {
-			if err := tx.Exec(fmt.Sprintf("DELETE FROM %s", table)).Error; err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return fmt.Errorf("清空配置表失败: %w", err)
-	}
-
-	return SyncWithDB(db, SeedFSHolder)
 }
 
 func seedSystemConfig(tx *gorm.DB) {
@@ -913,6 +510,33 @@ func seedImageConfig(tx *gorm.DB) {
 	}
 }
 
+func seedChanceGameConfig(tx *gorm.DB) {
+	games := []models.ChanceGameConfig{
+		{GameKey: "lottery", Name: "幸运抽奖", Enabled: true, CostCurrency: 20, DailyLimit: 10, PityThreshold: 10, PityRewardKey: "light-stone", Rules: "每抽消耗20金币；每日10次；连续9次未获得珍稀奖励时，第10次必得光之石。"},
+		{GameKey: "fishing", Name: "水域垂钓", Enabled: true, CostCurrency: 5, DailyLimit: 20, PityThreshold: 5, PityRewardKey: "water-sample", DurationSecond: 60, Rules: "每次抛竿消耗5金币；每日20次；连续4次未获得珍稀收获时，第5次必得水域样本。"},
+	}
+	for index := range games {
+		tx.Where("game_key = ?", games[index].GameKey).FirstOrCreate(&games[index])
+	}
+	rewards := []models.ChanceRewardConfig{
+		{GameKey: "lottery", RewardKey: "companion-mark", Name: "陪伴印记", Weight: 60, ItemName: "陪伴印记", Quantity: 1, Enabled: true, SortOrder: 10},
+		{GameKey: "lottery", RewardKey: "forest-sample", Name: "林地样本", Weight: 30, ItemName: "林地样本", Quantity: 1, Enabled: true, SortOrder: 20},
+		{GameKey: "lottery", RewardKey: "eco-sample", Name: "生态样本", Weight: 9, ItemName: "生态样本", Quantity: 1, Enabled: true, SortOrder: 30},
+		{GameKey: "lottery", RewardKey: "light-stone", Name: "光之石", Weight: 1, ItemName: "光之石", Quantity: 1, Rare: true, Enabled: true, SortOrder: 40},
+		{GameKey: "fishing", RewardKey: "small-fish", Name: "小鱼", Weight: 60, ItemName: "小鱼", Quantity: 1, Enabled: true, SortOrder: 10},
+		{GameKey: "fishing", RewardKey: "shell", Name: "贝壳", Weight: 30, ItemName: "贝壳", Quantity: 1, Enabled: true, SortOrder: 20},
+		{GameKey: "fishing", RewardKey: "pearl", Name: "珍珠", Weight: 9, ItemName: "珍珠", Quantity: 1, Enabled: true, SortOrder: 30},
+		{GameKey: "fishing", RewardKey: "water-sample", Name: "水域样本", Weight: 1, ItemName: "水域样本", Quantity: 1, Rare: true, Enabled: true, SortOrder: 40},
+	}
+	for index := range rewards {
+		tx.Where("game_key = ? AND reward_key = ?", rewards[index].GameKey, rewards[index].RewardKey).FirstOrCreate(&rewards[index])
+	}
+	for _, name := range []string{"陪伴印记", "林地样本", "生态样本", "光之石", "小鱼", "贝壳", "珍珠", "水域样本"} {
+		item := models.ItemConfig{Name: name, Status: "active", Type: "材料", Description: "可用于成长、收藏或玩家交易的探索物品。"}
+		tx.Where("name = ?", name).FirstOrCreate(&item)
+	}
+}
+
 // LoadAllConfigsFromDB 从数据库重新拉取所有配置覆盖内存中全局变量
 func LoadAllConfigsFromDB(db *gorm.DB) error {
 	LockForWrite()
@@ -961,11 +585,11 @@ func LoadAllConfigsFromDB(db *gorm.DB) error {
 
 	// 填充 Core
 	Core = CoreConfig{
-		InitialPets:         strings.Split(readStr("Core.InitialPets", "诺诺"), "#"),
+		InitialPets:         SplitConfigList(readStr("Core.InitialPets", "诺诺")),
 		CoinName:            readStr("Core.CoinName", "咔币"),
 		InitialCoin:         readInt64("Core.InitialCoin", 100),
 		RenameCost:          readInt64("Core.RenameCost", 1000),
-		RenameBlocklist:     strings.Split(readStr("Core.RenameBlocklist", ""), "#"),
+		RenameBlocklist:     SplitConfigList(readStr("Core.RenameBlocklist", "")),
 		TreatCost:           readInt64("Core.TreatCost", 500),
 		DyingSaveTime:       readInt64("Core.DyingSaveTime", 2000),
 		DyingProtectTime:    readInt64("Core.DyingProtectTime", 60),
@@ -977,8 +601,8 @@ func LoadAllConfigsFromDB(db *gorm.DB) error {
 		CurrencySyncSection: readStr("Core.CurrencySyncSection", ""),
 		CurrencySyncKey:     readStr("Core.CurrencySyncKey", ""),
 		TxFee:               readInt64("Core.TxFee", 30),
-		MasterQQ:            readInt64("Core.MasterQQ", 1347993953),
-		NotifyQQ:            readInt64("Core.NotifyQQ", 3214412864),
+		MasterQQ:            readInt64("Core.MasterQQ", 0),
+		NotifyQQ:            readInt64("Core.NotifyQQ", 0),
 		ImageHost:           readStr("Core.ImageHost", ""),
 	}
 
@@ -1199,360 +823,6 @@ func LoadAllConfigsFromDB(db *gorm.DB) error {
 	Images = make(map[string]string)
 	for _, img := range imgConfigs {
 		Images[img.Name] = img.Path
-	}
-
-	return nil
-}
-
-// LoadIniFileFromFS 从 embed.FS 读取并解析 INI 文件，支持 GBK 到 UTF-8 解码
-func LoadIniFileFromFS(fs embed.FS, path string) (*ini.File, error) {
-	data, err := fs.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	utf8Data, err := decodeGBK(data)
-	if err != nil {
-		return ini.Load(data)
-	}
-	return ini.Load(utf8Data)
-}
-
-// ExtractImages 本地无图片目录时，从嵌入的 SeedFS 中自动释出图片素材
-func ExtractImages(fs embed.FS) error {
-	localDir := "./图片"
-	if _, err := os.Stat(localDir); err == nil {
-		// 目录已存在，跳过释放
-		return nil
-	}
-
-	log.Println("[Config] 本地未检测到 '图片' 资源目录，开始从嵌入数据中自动释放图片资源...")
-	return walkAndExtract(fs, "初始数据/图片", localDir)
-}
-
-func walkAndExtract(fs embed.FS, srcDir, destDir string) error {
-	entries, err := fs.ReadDir(srcDir)
-	if err != nil {
-		return err
-	}
-
-	if err := os.MkdirAll(destDir, 0755); err != nil {
-		return err
-	}
-
-	for _, entry := range entries {
-		srcPath := filepath.ToSlash(filepath.Join(srcDir, entry.Name()))
-		destPath := filepath.Join(destDir, entry.Name())
-
-		if entry.IsDir() {
-			if err := walkAndExtract(fs, srcPath, destPath); err != nil {
-				return err
-			}
-		} else {
-			data, err := fs.ReadFile(srcPath)
-			if err != nil {
-				return err
-			}
-			if err := os.WriteFile(destPath, data, 0644); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-// LoadAllConfigsFromFS 从 embedded.FS 中读取 INI 文件并填充到内存全局变量中
-func LoadAllConfigsFromFS(fs embed.FS) error {
-	// 1. 核心配置
-	if cfg, err := LoadIniFileFromFS(fs, "初始数据/核心配置.ini"); err == nil {
-		secCore := cfg.Section("核心")
-		Core = CoreConfig{
-			InitialPets:         strings.Split(secCore.Key("初始宠物").String(), "#"),
-			CoinName:            secCore.Key("货币名称").MustString("咔币"),
-			InitialCoin:         secCore.Key("初始货币").MustInt64(100),
-			RenameCost:          secCore.Key("改名消耗").MustInt64(1000),
-			RenameBlocklist:     strings.Split(secCore.Key("改名屏蔽").String(), "#"),
-			TreatCost:           secCore.Key("治疗消耗").MustInt64(500),
-			DyingSaveTime:       secCore.Key("濒死救治时间").MustInt64(2000),
-			DyingProtectTime:    secCore.Key("成功救治保护").MustInt64(60),
-			EscapeFindTime:      secCore.Key("逃跑找回时间").MustInt64(2000),
-			LostCooldown:        secCore.Key("失去宠物冷却").MustInt64(720),
-			CheckinLike:         secCore.Key("签到点赞").MustInt(1) == 1,
-			CurrencySync:        secCore.Key("货币对接").MustInt(0),
-			CurrencySyncPath:    secCore.Key("货币对接路径").MustString(""),
-			CurrencySyncSection: secCore.Key("货币配置节").MustString(""),
-			CurrencySyncKey:     secCore.Key("货币配置项").MustString(""),
-			TxFee:               secCore.Key("交易手续费").MustInt64(30),
-			MasterQQ:            secCore.Key("主人QQ").MustInt64(1347993953),
-			NotifyQQ:            secCore.Key("通知QQ").MustInt64(3214412864),
-			ImageHost:           secCore.Key("图片服务").MustString(""),
-		}
-
-		secInt := cfg.Section("互动")
-		Interaction = InteractionConfig{
-			TrainGrowth:       secInt.Key("锻炼每次成长").MustInt64(5),
-			TrainLimit:        secInt.Key("锻炼次数限制").MustInt64(3),
-			TrainHungerCost:   secInt.Key("锻炼消耗饱食").MustInt64(10),
-			StudyGrowth:       secInt.Key("学习每次成长").MustInt64(5),
-			StudyLimit:        secInt.Key("学习次数限制").MustInt64(5),
-			StudyHungerCost:   secInt.Key("学习消耗饱食").MustInt64(10),
-			WashGrowth:        secInt.Key("洗澡获得成长").MustInt64(8),
-			WashAffection:     secInt.Key("洗澡获得好感").MustInt64(10),
-			WashHungerCost:    secInt.Key("洗澡消耗饱食").MustInt64(5),
-			WalkGrowth:        secInt.Key("散步获得成长").MustInt64(5),
-			WalkAffection:     secInt.Key("散步获得好感").MustInt64(8),
-			WalkGrowthLimit:   secInt.Key("散步成长上限").MustInt64(20),
-			WalkAffectLimit:   secInt.Key("散步好感上限").MustInt64(24),
-			WalkInterval:      secInt.Key("散步间隔时间").MustInt64(10) * 60,
-			WalkHungerCost:    secInt.Key("散步消耗饱食").MustInt64(15),
-			TouchGrowth:       secInt.Key("摸头获得成长").MustInt64(8),
-			TouchAffection:    secInt.Key("摸头获得好感").MustInt64(10),
-			TouchGrowthLimit:  secInt.Key("摸头成长上限").MustInt64(24),
-			TouchAffectLimit:  secInt.Key("摸头好感上限").MustInt64(30),
-			TouchInterval:     secInt.Key("摸头间隔时间").MustInt64(10) * 60,
-			TouchHungerCost:   secInt.Key("摸头消耗饱食").MustInt64(5),
-			RpsAffection:      secInt.Key("猜拳获得好感").MustInt64(8),
-			RpsAffectLimit:    secInt.Key("猜拳好感上限").MustInt64(24),
-			RpsHungerCost:     secInt.Key("猜拳消耗饱食").MustInt64(5),
-			RpsInterval:       secInt.Key("猜拳间隔时间").MustInt64(3) * 60,
-			SnackHungerCost:   secInt.Key("偷袭消耗饱食").MustInt64(30),
-			SnackSuccess:      secInt.Key("偷袭成功几率").MustInt64(99),
-			SnackInterval:     secInt.Key("偷袭冷却时间").MustInt64(5) * 60,
-			SnackProtect:      secInt.Key("偷袭保护时间").MustInt64(5) * 60,
-			CounterHunger:     secInt.Key("回击消耗饱食").MustInt64(15),
-			CounterSuccess:    secInt.Key("回击成功几率").MustInt64(80),
-			CreateFamilyCoin:  secInt.Key("创建家族货币").MustInt64(500),
-			CreateFamilyItem:  secInt.Key("创建家族物品").MustString("家族商标*1"),
-			FamilySizeLimit:   secInt.Key("家族人数上限").MustInt(10),
-			FishHungerCost:    secInt.Key("钓鱼消耗饱食").MustInt64(5),
-			FishSuccessRate:   secInt.Key("钓鱼上钩几率").MustInt64(80),
-			GiftLimit:         secInt.Key("送礼次数限制").MustInt64(5),
-			FishSpecies:       strings.Split(secInt.Key("鱼类").String(), "#"),
-			HungerMoodFlush:   secInt.Key("饱食心情刷新").MustInt64(60),
-			LotteryItem:       secInt.Key("抽奖所需物品").MustString("抽奖券*10"),
-			LotteryRewardStr:  secInt.Key("抽奖奖励设置").String(),
-			WorkTime:          secInt.Key("打工时间").MustInt64(10) * 60,
-			WorkRewardCoin:    secInt.Key("打工奖励货币").MustInt64(300),
-			WorkRewardItems:   secInt.Key("打工奖励物品").String(),
-			WorkHungerCost:    secInt.Key("打工消耗饱食").MustInt64(20),
-			FitnessGrowth:     secInt.Key("健身奖励成长").MustInt64(5),
-			FitnessLimit:      secInt.Key("健身次数限制").MustInt64(5),
-			FitnessHungerCost: secInt.Key("健身消耗饱食").MustInt64(12),
-			SellNoPriceGrowth: secInt.Key("出售无价成长").MustInt64(10),
-			TreeResultNutri:   secInt.Key("神树结果养分").MustInt64(155),
-			TreeRewardItems:   secInt.Key("神树奖励物品").MustString("神树果实*1#抽奖券*10"),
-			BuyLimit:          secInt.Key("单次购买上限").MustInt(10),
-		}
-
-		Images = make(map[string]string)
-		secImg := cfg.Section("图片")
-		for _, key := range secImg.Keys() {
-			Images[key.Name()] = key.String()
-		}
-	} else {
-		return fmt.Errorf("加载嵌入核心配置失败: %w", err)
-	}
-
-	// 2. 指令配置
-	Commands = make(map[string]string)
-	if cfg, err := LoadIniFileFromFS(fs, "初始数据/指令配置.ini"); err == nil {
-		for _, sec := range cfg.Sections() {
-			if sec.Name() == "DEFAULT" {
-				continue
-			}
-			if sec.HasKey("指令") {
-				Commands[sec.Name()] = sec.Key("指令").String()
-			}
-		}
-	} else {
-		return fmt.Errorf("加载嵌入指令配置失败: %w", err)
-	}
-
-	// 3. 宠物配置
-	Pets = make(map[string]PetSpecies)
-	if cfg, err := LoadIniFileFromFS(fs, "初始数据/宠物配置.ini"); err == nil {
-		for _, sec := range cfg.Sections() {
-			if sec.Name() == "DEFAULT" {
-				continue
-			}
-			Pets[sec.Name()] = PetSpecies{
-				Name:            sec.Name(),
-				Image:           sec.Key("图片").String(),
-				AdoptImage:      sec.Key("领养图片").String(),
-				TrainStartImg:   sec.Key("开始锻炼图片").String(),
-				TrainEndImg:     sec.Key("完成锻炼图片").String(),
-				StudyStartImg:   sec.Key("开始学习图片").String(),
-				StudyEndImg:     sec.Key("完成学习图片").String(),
-				FitnessStartImg: sec.Key("开始健身图片").String(),
-				FitnessEndImg:   sec.Key("完成健身图片").String(),
-				FavoriteFood:    sec.Key("喜欢食物").String(),
-				FavoriteGift:    sec.Key("喜欢礼物").String(),
-				Health:          sec.Key("血量").MustInt64(100),
-				Wisdom:          sec.Key("智慧").MustInt64(10),
-				Strength:        sec.Key("力量").MustInt64(10),
-				Defense:         sec.Key("防御").MustInt64(10),
-				Hunger:          sec.Key("饱食").MustInt64(100),
-				Description:     sec.Key("描述").String(),
-				EvolutionBranch: sec.Key("进化分支").MustInt(0),
-				Evolution:       sec.Key("进化").String(),
-				EvolutionGrowth: sec.Key("进化成长").MustInt64(0),
-				EvolutionAffect: sec.Key("进化好感").MustInt64(0),
-				EvolutionImage:  sec.Key("进化图片").String(),
-				Awaken:          sec.Key("觉醒").String(),
-				AwakenGrowth:    sec.Key("觉醒成长").MustInt64(0),
-				AwakenAffect:    sec.Key("觉醒好感").MustInt64(0),
-				AwakenItems:     sec.Key("觉醒物品").String(),
-				AwakenImage:     sec.Key("觉醒图片").String(),
-				HealthMax:       sec.Key("血量上限").MustInt64(100),
-				WisdomMax:       sec.Key("智慧上限").MustInt64(100),
-				StrengthMax:     sec.Key("力量上限").MustInt64(100),
-				DefenseMax:      sec.Key("防御上限").MustInt64(100),
-				HungerMax:       sec.Key("饱食上限").MustInt64(100),
-				AffectionBonus:  sec.Key("好感加成").MustInt(0),
-				GrowthBonus:     sec.Key("成长加成").MustInt(0),
-				AttributeBonus:  sec.Key("属性加成").MustInt(0),
-				CurrencyBonus:   sec.Key("货币加成").MustInt(0),
-			}
-		}
-	} else {
-		return fmt.Errorf("加载嵌入宠物配置失败: %w", err)
-	}
-
-	// 4. 物品配置
-	Items = make(map[string]ItemConfig)
-	if cfg, err := LoadIniFileFromFS(fs, "初始数据/物品配置.ini"); err == nil {
-		for _, sec := range cfg.Sections() {
-			if sec.Name() == "DEFAULT" {
-				continue
-			}
-			Items[sec.Name()] = ItemConfig{
-				Name:        sec.Name(),
-				Type:        sec.Key("类型").String(),
-				RewardType:  sec.Key("礼包类型").String(),
-				ObtainType:  sec.Key("获得类型").MustInt(0),
-				OpenReq:     sec.Key("打开所需").String(),
-				Effect:      sec.Key("效果").String(),
-				Time:        sec.Key("时间").MustInt64(0),
-				Image:       sec.Key("图片").String(),
-				Description: sec.Key("描述").String(),
-				SellPrice:   sec.Key("出售价格").MustInt64(0),
-			}
-		}
-	} else {
-		return fmt.Errorf("加载嵌入物品配置失败: %w", err)
-	}
-
-	// 5. 商店配置
-	Shop = make(map[string]ShopItem)
-	if cfg, err := LoadIniFileFromFS(fs, "初始数据/商店配置.ini"); err == nil {
-		for _, sec := range cfg.Sections() {
-			if sec.Name() == "DEFAULT" {
-				continue
-			}
-			Shop[sec.Name()] = ShopItem{
-				Name:        sec.Name(),
-				Image:       sec.Key("图片").String(),
-				Stock:       sec.Key("库存").MustInt64(-1),
-				Price:       sec.Key("价格").MustInt64(0),
-				Description: sec.Key("描述").String(),
-			}
-		}
-	} else {
-		return fmt.Errorf("加载嵌入商店配置失败: %w", err)
-	}
-
-	// 6. 好感商店配置
-	AffectionShop = make(map[string]ShopItem)
-	if cfg, err := LoadIniFileFromFS(fs, "初始数据/好感商店配置.ini"); err == nil {
-		for _, sec := range cfg.Sections() {
-			if sec.Name() == "DEFAULT" {
-				continue
-			}
-			AffectionShop[sec.Name()] = ShopItem{
-				Name:        sec.Name(),
-				Image:       sec.Key("图片").String(),
-				Stock:       sec.Key("库存").MustInt64(-1),
-				Price:       sec.Key("价格").MustInt64(0),
-				Description: sec.Key("描述").String(),
-			}
-		}
-	} else {
-		return fmt.Errorf("加载嵌入好感商店配置失败: %w", err)
-	}
-
-	// 7. 新手签到配置
-	NewbieCheckin = make(map[string]CheckinReward)
-	if cfg, err := LoadIniFileFromFS(fs, "初始数据/新手签到配置.ini"); err == nil {
-		for _, sec := range cfg.Sections() {
-			if sec.Name() == "DEFAULT" {
-				continue
-			}
-			NewbieCheckin[sec.Name()] = CheckinReward{
-				Day:       sec.Name(),
-				Currency:  sec.Key("货币").MustInt64(0),
-				Affection: sec.Key("好感").MustInt64(0),
-				Items:     sec.Key("物品").String(),
-				Image:     sec.Key("图片").String(),
-			}
-		}
-	} else {
-		return fmt.Errorf("加载嵌入新手签到配置失败: %w", err)
-	}
-
-	// 8. 签到配置
-	WeeklyCheckin = make(map[string]CheckinReward)
-	if cfg, err := LoadIniFileFromFS(fs, "初始数据/签到配置.ini"); err == nil {
-		for _, sec := range cfg.Sections() {
-			if sec.Name() == "DEFAULT" {
-				continue
-			}
-			WeeklyCheckin[sec.Name()] = CheckinReward{
-				Day:       sec.Name(),
-				Currency:  sec.Key("货币").MustInt64(0),
-				Affection: sec.Key("好感").MustInt64(0),
-				Items:     sec.Key("物品").String(),
-				Image:     sec.Key("图片").String(),
-			}
-		}
-	} else {
-		return fmt.Errorf("加载嵌入周签到配置失败: %w", err)
-	}
-
-	// 9. 打工配置
-	WorkSettings = make(map[string]WorkSetting)
-	if cfg, err := LoadIniFileFromFS(fs, "初始数据/打工配置.ini"); err == nil {
-		for _, sec := range cfg.Sections() {
-			if sec.Name() == "DEFAULT" {
-				continue
-			}
-			WorkSettings[sec.Name()] = WorkSetting{
-				Name:        sec.Name(),
-				Time:        sec.Key("时间").MustInt64(10),
-				HungerCost:  sec.Key("消耗饱食").MustInt64(10),
-				RewardCoin:  sec.Key("奖励货币").MustInt64(50),
-				RewardItems: sec.Key("奖励物品").String(),
-				ReplyQuotes: sec.Key("回复语句").String(),
-				StartImage:  sec.Key("开始图片").String(),
-				EndImage:    sec.Key("结束图片").String(),
-			}
-		}
-	} else {
-		return fmt.Errorf("加载嵌入打工配置失败: %w", err)
-	}
-
-	// 10. 菜单配置
-	Menus = make(map[string]string)
-	if cfg, err := LoadIniFileFromFS(fs, "初始数据/菜单配置.ini"); err == nil {
-		for _, sec := range cfg.Sections() {
-			if sec.Name() == "DEFAULT" {
-				continue
-			}
-			if sec.HasKey("回复") {
-				rawReply := sec.Key("回复").String()
-				Menus[sec.Name()] = unescapeMenuText(rawReply)
-			}
-		}
-	} else {
-		return fmt.Errorf("加载嵌入菜单配置失败: %w", err)
 	}
 
 	return nil

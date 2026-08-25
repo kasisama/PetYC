@@ -1,103 +1,8 @@
 package models
 
 import (
-	"gorm.io/gorm"
 	"time"
 )
-
-var (
-	OnPetFind func(pet *UserPet)
-	OnPetSave func(pet *UserPet)
-)
-
-func (p *UserPet) AfterFind(tx *gorm.DB) (err error) {
-	if OnPetFind != nil {
-		OnPetFind(p)
-	}
-	return nil
-}
-
-func (p *UserPet) AfterSave(tx *gorm.DB) (err error) {
-	if OnPetSave != nil {
-		OnPetSave(p)
-	}
-	return nil
-}
-
-func (p *UserPet) AfterUpdate(tx *gorm.DB) (err error) {
-	if OnPetSave != nil {
-		OnPetSave(p)
-	}
-	return nil
-}
-
-func (p *UserPet) AfterCreate(tx *gorm.DB) (err error) {
-	if OnPetSave != nil {
-		OnPetSave(p)
-	}
-	return nil
-}
-
-// UserPet 玩家宠物模型
-type UserPet struct {
-	ID          uint       `gorm:"primaryKey"`
-	UserID      int64      `gorm:"uniqueIndex:idx_user_group;comment:玩家QQ号"`
-	GroupID     int64      `gorm:"uniqueIndex:idx_user_group;index:idx_user_pets_group;comment:所在QQ群号"`
-	PetType     string     `gorm:"size:64;index:idx_user_pets_type;comment:宠物种类/类型"`
-	Name        string     `gorm:"size:64;default:'无名小萌宠';comment:宠物名字"`
-	Image       string     `gorm:"size:255;comment:当前图片"`
-	Status      string     `gorm:"size:32;default:'空闲';index:idx_user_pets_status;comment:当前状态"`
-	Mood        string     `gorm:"size:32;default:'一般';comment:当前心情"`
-	MoodPoints  int        `gorm:"default:50;comment:心情点(0-100)"`
-	Affection   int64      `gorm:"default:0;comment:好感度"`
-	Growth      int64      `gorm:"default:0;comment:成长值"`
-	Health      int64      `gorm:"default:100;comment:当前血量"`
-	Wisdom      int64      `gorm:"default:10;comment:智慧"`
-	Strength    int64      `gorm:"default:10;comment:力量"`
-	Defense     int64      `gorm:"default:10;comment:防御"`
-	Hunger      int64      `gorm:"default:100;comment:当前饱食度(0-100)"`
-	Family      string     `gorm:"size:64;comment:所属家族"`
-	FamilyScore int64      `gorm:"default:0;comment:家族积分"`
-	NewbieCheck int        `gorm:"default:1;comment:新手签到天数"`
-	Currency    int64      `gorm:"default:0;comment:玩家持有货币"`
-	LastCheckin *time.Time `gorm:"comment:最近签到时间"`
-
-	// 各种状态的开始时间，用于计算冷却和异步状态时长
-	StudyTime   *time.Time `gorm:"comment:开始学习时间"`
-	StudyItem   string     `gorm:"size:64;comment:学习消耗的物品"`
-	TrainTime   *time.Time `gorm:"comment:开始锻炼时间"`
-	TrainItem   string     `gorm:"size:64;comment:锻炼消耗的物品"`
-	WorkTime    *time.Time `gorm:"comment:开始打工时间"`
-	WorkType    string     `gorm:"size:64;comment:打工类型"`
-	FitnessTime *time.Time `gorm:"comment:开始健身时间"`
-	FitnessItem string     `gorm:"size:64;comment:健身消耗的物品"`
-	DyingTime   *time.Time `gorm:"comment:开始濒死时间"`
-	EscapeTime  *time.Time `gorm:"comment:逃跑时间"`
-	LostTime    *time.Time `gorm:"comment:失去宠物时间"`
-	BindKey     string     `gorm:"size:32;comment:频道绑定密钥"`
-
-	UpdatedAt time.Time
-}
-
-// BackpackItem 玩家背包物品模型
-type BackpackItem struct {
-	ID       uint   `gorm:"primaryKey"`
-	UserID   int64  `gorm:"uniqueIndex:idx_user_group_item;comment:玩家QQ号"`
-	GroupID  int64  `gorm:"uniqueIndex:idx_user_group_item;comment:所在QQ群号"`
-	ItemName string `gorm:"uniqueIndex:idx_user_group_item;size:64;comment:物品名称"`
-	Quantity int64  `gorm:"default:0;comment:物品数量"`
-}
-
-// Family 玩家家族模型
-type Family struct {
-	ID            uint   `gorm:"primaryKey"`
-	Name          string `gorm:"size:64;uniqueIndex;comment:家族名称"`
-	LeaderID      int64  `gorm:"comment:族长QQ号"`
-	CurrentSize   int    `gorm:"default:1;comment:当前人数"`
-	MaxSize       int    `gorm:"default:10;comment:人数上限"`
-	TreeNutrients int64  `gorm:"default:0;comment:神树养分"`
-	CreatedAt     time.Time
-}
 
 // SystemConfig 核心与互动键值配置表
 type SystemConfig struct {
@@ -220,16 +125,36 @@ type ImageConfig struct {
 
 // GroupSwitch 群开启/关闭开关表
 type GroupSwitch struct {
-	GroupID   int64  `gorm:"primaryKey;comment:群号"`
-	GroupName string `gorm:"size:128;comment:群名称"`
-	IsActive  bool   `gorm:"default:true;comment:是否开启"`
+	GroupID   int64  `gorm:"primaryKey;comment:统一场景键" json:"group_id"`
+	Platform  string `gorm:"size:32;index;comment:onebot/qq_group/qq_guild" json:"platform"`
+	SpaceID   string `gorm:"size:128;index;comment:平台场景标识" json:"space_id"`
+	GroupName string `gorm:"size:128;comment:群名称" json:"group_name"`
+	IsActive  bool   `gorm:"default:true;comment:是否开启" json:"is_active"`
 }
 
 // AdminConfigState 记录数据库配置与机器人内存配置的版本关系。
 type AdminConfigState struct {
-	ID             uint       `gorm:"primaryKey" json:"-"`
-	DBRevision     uint64     `gorm:"not null;default:0" json:"db_revision"`
-	LoadedRevision uint64     `gorm:"not null;default:0" json:"loaded_revision"`
-	SavedAt        *time.Time `json:"saved_at"`
-	LoadedAt       *time.Time `json:"loaded_at"`
+	ID                uint       `gorm:"primaryKey" json:"-"`
+	DBRevision        uint64     `gorm:"not null;default:0" json:"db_revision"`
+	LoadedRevision    uint64     `gorm:"not null;default:0" json:"loaded_revision"`
+	SavedAt           *time.Time `json:"saved_at"`
+	LoadedAt          *time.Time `json:"loaded_at"`
+	ActiveProfileID   string     `gorm:"size:36;index" json:"active_profile_id"`
+	ProfileDirty      bool       `gorm:"not null;default:false" json:"profile_dirty"`
+	ProfileSwitchedAt *time.Time `json:"profile_switched_at"`
+}
+
+// ConfigProfile stores a versioned snapshot of gameplay/content configuration.
+// Player, platform, credential and operational data never enters Payload.
+type ConfigProfile struct {
+	ID            string    `gorm:"primaryKey;size:36" json:"id"`
+	Name          string    `gorm:"size:128;not null;uniqueIndex" json:"name"`
+	Description   string    `gorm:"size:500" json:"description"`
+	Source        string    `gorm:"size:32;not null;default:'user'" json:"source"`
+	SchemaVersion int       `gorm:"not null;default:1" json:"schema_version"`
+	AppVersion    string    `gorm:"size:32;not null" json:"app_version"`
+	Payload       string    `gorm:"type:text;not null" json:"-"`
+	Builtin       bool      `gorm:"not null;default:false;index" json:"builtin"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }

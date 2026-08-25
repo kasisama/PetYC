@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm"
 	appconfig "qq-pet-saas/config"
 	"qq-pet-saas/models"
+	"qq-pet-saas/playermsg"
 )
 
 type ContentAPI struct{ DB *gorm.DB }
@@ -21,12 +22,77 @@ func RegisterContentRoutes(group *gin.RouterGroup, db *gorm.DB) {
 	group.GET("/settings/game", api.getGameSettings)
 	group.PUT("/settings/game", api.saveGameSettings)
 	group.PUT("/content/events/:key", api.saveEventBundle)
+	group.GET("/content/events/:key", api.getEventBundle)
 	group.DELETE("/content/events/:key", api.deleteEventBundle)
+	group.GET("/content/messages", api.listPlayerMessages)
+	group.GET("/content/messages/:key/preview", api.previewPlayerMessage)
+}
+
+func (api *ContentAPI) getEventBundle(c *gin.Context) {
+	key := strings.TrimSpace(c.Param("key"))
+	var event models.LiveEventConfig
+	if err := api.DB.First(&event, "key = ?", key).Error; err != nil {
+		Error(c, codeSchemaNotFound, "活动不存在")
+		return
+	}
+	var rewards []models.RewardTrackConfig
+	var choices []models.LiveEventChoiceConfig
+	var sources []models.LiveEventExpeditionSourceConfig
+	if err := api.DB.Where("event_key = ?", key).Order("milestone asc, id asc").Find(&rewards).Error; err != nil {
+		Error(c, codeInternalError, err.Error())
+		return
+	}
+	if err := api.DB.Where("event_key = ?", key).Order("sort_order asc, id asc").Find(&choices).Error; err != nil {
+		Error(c, codeInternalError, err.Error())
+		return
+	}
+	if err := api.DB.Where("event_key = ?", key).Order("zone_key asc").Find(&sources).Error; err != nil {
+		Error(c, codeInternalError, err.Error())
+		return
+	}
+	Success(c, gin.H{"event": event, "rewards": rewards, "choices": choices, "sources": sources})
+}
+
+func (api *ContentAPI) listPlayerMessages(c *gin.Context) {
+	definitions := playermsg.Catalog()
+	items := make([]gin.H, 0, len(definitions))
+	for _, definition := range definitions {
+		sample, _ := playermsg.Render(definition.Key, definition.Variables)
+		items = append(items, gin.H{
+			"key": definition.Key, "description": definition.Description, "kind": definition.Kind, "tone": definition.Tone,
+			"template": definition.Template, "variants": definition.Variants, "variables": definition.Variables,
+			"image_candidates": definition.ImageCandidates, "next_actions": definition.NextActions, "sample": sample,
+		})
+	}
+	Success(c, items)
+}
+
+func (api *ContentAPI) previewPlayerMessage(c *gin.Context) {
+	variables := make(map[string]string)
+	for key, values := range c.Request.URL.Query() {
+		if strings.HasPrefix(key, "var_") && len(values) > 0 {
+			variables[strings.TrimPrefix(key, "var_")] = values[0]
+		}
+	}
+	message, err := playermsg.Render(c.Param("key"), variables)
+	if err != nil {
+		Error(c, codeSchemaNotFound, "未知的玩家文案")
+		return
+	}
+	platform := strings.TrimSpace(c.DefaultQuery("platform", "onebot"))
+	definition, _ := playermsg.Lookup(c.Param("key"))
+	Success(c, gin.H{
+		"key": c.Param("key"), "platform": platform, "sender": "宠物助手", "text": message,
+		"kind": definition.Kind, "tone": definition.Tone, "variants": definition.Variants,
+		"image_candidates": definition.ImageCandidates, "next_actions": definition.NextActions,
+	})
 }
 
 type eventBundleRequest struct {
-	Event   models.LiveEventConfig     `json:"event"`
-	Rewards []models.RewardTrackConfig `json:"rewards"`
+	Event   models.LiveEventConfig                   `json:"event"`
+	Rewards []models.RewardTrackConfig               `json:"rewards"`
+	Choices []models.LiveEventChoiceConfig           `json:"choices"`
+	Sources []models.LiveEventExpeditionSourceConfig `json:"sources"`
 }
 
 func (api *ContentAPI) saveEventBundle(c *gin.Context) {
@@ -43,6 +109,49 @@ func (api *ContentAPI) saveEventBundle(c *gin.Context) {
 	for index := range request.Rewards {
 		request.Rewards[index].EventKey = key
 	}
+	for index := range request.Choices {
+		request.Choices[index].ID = 0
+		request.Choices[index].EventKey = key
+	}
+	for index := range request.Sources {
+		request.Sources[index].ID = 0
+		request.Sources[index].EventKey = key
+	}
+	if len(request.Choices) == 0 {
+		var legacyLabels []string
+		_ = json.Unmarshal([]byte(request.Event.StoryChoices), &legacyLabels)
+		for index, label := range legacyLabels {
+			request.Choices = append(request.Choices, models.LiveEventChoiceConfig{EventKey: key, ChoiceKey: fmt.Sprintf("choice-%d", index+1), Label: label, EffectType: "adventure_xp_gain_percent", EffectValue: 0, SortOrder: (index + 1) * 10})
+		}
+	}
+	if len(request.Choices) < 2 || len(request.Choices) > 5 {
+		Error(c, codeInvalidPayload, "活动需要配置 2 到 5 个故事选项")
+		return
+	}
+	allowedEffects := map[string]bool{"community_material_gain_percent": true, "facility_upgrade_cost_reduction_percent": true, "boss_damage_gain_percent": true, "adventure_xp_gain_percent": true, "expedition_reward_gain_percent": true}
+	seenChoices := map[string]bool{}
+	labels := make([]string, 0, len(request.Choices))
+	for _, choice := range request.Choices {
+		if strings.TrimSpace(choice.ChoiceKey) == "" || strings.TrimSpace(choice.Label) == "" || !allowedEffects[choice.EffectType] || choice.EffectValue < 0 || choice.EffectValue > 500 || seenChoices[choice.ChoiceKey] {
+			Error(c, codeInvalidPayload, "故事选项的标识、名称或效果无效")
+			return
+		}
+		seenChoices[choice.ChoiceKey] = true
+		labels = append(labels, choice.Label)
+	}
+	rawLabels, _ := json.Marshal(labels)
+	request.Event.StoryChoices = string(rawLabels)
+	if request.Event.ProgressSourceMode == "" {
+		request.Event.ProgressSourceMode = "all_expeditions"
+	}
+	if request.Event.ProgressSourceMode != "all_expeditions" && request.Event.ProgressSourceMode != "selected" {
+		Error(c, codeInvalidPayload, "活动进度来源只能是全部远征或指定区域")
+		return
+	}
+	if request.Event.ProgressSourceMode == "selected" && len(request.Sources) == 0 {
+		Error(c, codeInvalidPayload, "选择指定区域时至少需要配置一个区域")
+		return
+	}
 	eventPayload, _ := json.Marshal([]models.LiveEventConfig{request.Event})
 	if err := validateDomainConfig("live_events", eventPayload); err != nil {
 		Error(c, codeInvalidPayload, err.Error())
@@ -54,6 +163,20 @@ func (api *ContentAPI) saveEventBundle(c *gin.Context) {
 		return
 	}
 	err := api.DB.Transaction(func(tx *gorm.DB) error {
+		seenSources := map[string]bool{}
+		for _, source := range request.Sources {
+			if strings.TrimSpace(source.ZoneKey) == "" || seenSources[source.ZoneKey] {
+				return configValidationError{"活动远征来源包含空值或重复区域"}
+			}
+			seenSources[source.ZoneKey] = true
+			var count int64
+			if err := tx.Model(&models.AdventureZoneConfig{}).Where("key = ? AND enabled = ?", source.ZoneKey, true).Count(&count).Error; err != nil {
+				return err
+			}
+			if count == 0 {
+				return configValidationError{fmt.Sprintf("活动引用了不存在或未启用的区域 %s", source.ZoneKey)}
+			}
+		}
 		if err := validateRewardItems(tx, rewardPayload); err != nil {
 			return err
 		}
@@ -73,9 +196,23 @@ func (api *ContentAPI) saveEventBundle(c *gin.Context) {
 		if err := tx.Where("event_key = ?", key).Delete(&models.RewardTrackConfig{}).Error; err != nil {
 			return err
 		}
+		if err := tx.Where("event_key = ?", key).Delete(&models.LiveEventChoiceConfig{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("event_key = ?", key).Delete(&models.LiveEventExpeditionSourceConfig{}).Error; err != nil {
+			return err
+		}
 		for index := range request.Rewards {
 			request.Rewards[index].ID = 0
 			if err := tx.Create(&request.Rewards[index]).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Create(&request.Choices).Error; err != nil {
+			return err
+		}
+		if len(request.Sources) > 0 {
+			if err := tx.Create(&request.Sources).Error; err != nil {
 				return err
 			}
 		}
@@ -89,7 +226,7 @@ func (api *ContentAPI) saveEventBundle(c *gin.Context) {
 		Error(c, codeInternalError, "保存活动失败: "+err.Error())
 		return
 	}
-	Success(c, gin.H{"event": request.Event, "rewards": request.Rewards})
+	Success(c, gin.H{"event": request.Event, "rewards": request.Rewards, "choices": request.Choices, "sources": request.Sources})
 }
 
 func (api *ContentAPI) deleteEventBundle(c *gin.Context) {
@@ -100,6 +237,12 @@ func (api *ContentAPI) deleteEventBundle(c *gin.Context) {
 	}
 	var deletedRewards int64
 	err := api.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("event_key = ?", key).Delete(&models.LiveEventChoiceConfig{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("event_key = ?", key).Delete(&models.LiveEventExpeditionSourceConfig{}).Error; err != nil {
+			return err
+		}
 		result := tx.Where("event_key = ?", key).Delete(&models.RewardTrackConfig{})
 		if result.Error != nil {
 			return result.Error
@@ -171,14 +314,7 @@ func parseSettingValue(meta gameSettingMeta, raw string) any {
 		value, _ := strconv.ParseFloat(strings.TrimSpace(raw), 64)
 		return value
 	case "list":
-		parts := strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == '，' || r == '、' })
-		result := make([]string, 0, len(parts))
-		for _, part := range parts {
-			if value := strings.TrimSpace(part); value != "" {
-				result = append(result, value)
-			}
-		}
-		return result
+		return appconfig.SplitConfigList(raw)
 	default:
 		return raw
 	}
@@ -403,7 +539,6 @@ func itemDeleteBlocker(tx *gorm.DB, names []string) (string, error) {
 	}{
 		{&models.ShopItemConfig{}, "name", "商店"},
 		{&models.RewardTrackConfig{}, "item_name", "活动奖励"},
-		{&models.BackpackItem{}, "item_name", "旧版玩家背包"},
 		{&models.GlobalInventoryItem{}, "item_name", "玩家背包"},
 	}
 	for _, check := range checks {

@@ -4,8 +4,14 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
 	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -75,6 +81,49 @@ func BroadcastGroupMessage(groupID int64, text string) {
 	for _, client := range clients {
 		enqueueMessage(client, payload)
 	}
+}
+
+// BroadcastNotification queues a proactive OneBot message on every active
+// reverse WebSocket connection. Durable idempotency is handled by the outbox.
+func BroadcastNotification(event InboundEvent, message OutboundMessage) error {
+	var action string
+	var params interface{}
+	text := oneBotOutboundText(event, message)
+	switch event.SceneType {
+	case SceneGroup:
+		groupID, err := strconv.ParseInt(strings.TrimSpace(event.SpaceID), 10, 64)
+		if err != nil || groupID <= 0 {
+			return errors.New("OneBot 群目标无效")
+		}
+		action = "send_group_msg"
+		params = GroupMsgParams{GroupID: groupID, Message: text}
+	case SceneDirect:
+		userID, err := strconv.ParseInt(strings.TrimSpace(event.ActorID), 10, 64)
+		if err != nil || userID <= 0 {
+			return errors.New("OneBot 私聊目标无效")
+		}
+		action = "send_private_msg"
+		params = map[string]interface{}{"user_id": userID, "message": text}
+	default:
+		return fmt.Errorf("OneBot 不支持通知场景: %s", event.SceneType)
+	}
+	payload, err := json.Marshal(OneBotAction{Action: action, Params: params})
+	if err != nil {
+		return err
+	}
+	connMu.RLock()
+	clients := make([]*websocketClient, 0, len(ActiveConnections))
+	for _, client := range ActiveConnections {
+		clients = append(clients, client)
+	}
+	connMu.RUnlock()
+	if len(clients) == 0 {
+		return errors.New("OneBot 当前没有在线连接")
+	}
+	for _, client := range clients {
+		enqueueMessage(client, payload)
+	}
+	return nil
 }
 
 // SendGroupMessage queues a group message without blocking other connections.
@@ -227,7 +276,7 @@ func processIncomingMessage(conn *websocket.Conn, rawPayload []byte) {
 	lastOneBotMessage.Store(time.Now().Unix())
 	config.LockForRead()
 	defer config.UnlockForRead()
-	if event.MessageType == "group" && !oneBotGroupEnabled(event.GroupID) {
+	if event.MessageType == "group" && !GroupEnabled(InboundEvent{Platform: PlatformOneBot, SceneType: SceneGroup, SpaceID: strconv.FormatInt(event.GroupID, 10)}) {
 		return
 	}
 	message, handled, err := routeOneBotMessage(context.Background(), event)
@@ -236,19 +285,74 @@ func processIncomingMessage(conn *websocket.Conn, rawPayload []byte) {
 		return
 	}
 	if handled {
+		outboundText := oneBotOutboundText(event.ToInbound("onebot"), message)
 		if event.MessageType == "group" {
-			SendGroupMessage(conn, event.GroupID, message.Text)
+			SendGroupMessage(conn, event.GroupID, outboundText)
 		} else {
-			SendPrivateMessage(conn, event.UserID, message.Text)
+			SendPrivateMessage(conn, event.UserID, outboundText)
 		}
 		return
 	}
 	if event.MessageType != "group" {
 		return
 	}
-	if IsRetiredLegacyCommand(event.RawMessage) {
-		SendGroupMessage(conn, event.GroupID, "该旧玩法已经下线。现在可以使用“远征”“营地”“共建”和“首领”获得稳定成长与奖励。")
-		return
+}
+
+func oneBotOutboundText(event InboundEvent, message OutboundMessage) string {
+	parts := make([]string, 0, 3)
+	if event.SceneType == SceneGroup {
+		if actorID, err := strconv.ParseInt(strings.TrimSpace(event.ActorID), 10, 64); err == nil && actorID > 0 {
+			parts = append(parts, fmt.Sprintf("[CQ:at,qq=%d]", actorID))
+		}
 	}
-	RouteMessage(conn, &event)
+	image := oneBotImageCQ(message.Image)
+	if image != "" {
+		parts = append(parts, image)
+	}
+	if strings.TrimSpace(message.Text) != "" {
+		parts = append(parts, message.Text)
+	}
+	return strings.Join(parts, "\n")
+}
+
+func oneBotImageCQ(source string) string {
+	source = ExistingImageSource(source)
+	if source == "" {
+		return ""
+	}
+	if parsed, err := url.Parse(source); err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != "" {
+		return fmt.Sprintf("[CQ:image,file=%s]", source)
+	}
+	normalized := strings.TrimPrefix(strings.ReplaceAll(source, "\\", "/"), "./")
+	normalized = strings.TrimPrefix(normalized, "图片/")
+	clean := filepath.Clean(filepath.FromSlash(normalized))
+	if clean == "." || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return ""
+	}
+	if host := strings.TrimRight(strings.TrimSpace(config.Core.ImageHost), "/"); host != "" {
+		segments := strings.Split(filepath.ToSlash(clean), "/")
+		for index, segment := range segments {
+			segments[index] = url.PathEscape(segment)
+		}
+		return fmt.Sprintf("[CQ:image,file=%s/images/%s]", host, strings.Join(segments, "/"))
+	}
+	for _, root := range []string{filepath.Join(config.GlobalConfigPath, "图片"), filepath.Join(".", "图片")} {
+		absoluteRoot, err := filepath.Abs(root)
+		if err != nil {
+			continue
+		}
+		candidate, err := filepath.Abs(filepath.Join(absoluteRoot, clean))
+		if err != nil {
+			continue
+		}
+		relative, err := filepath.Rel(absoluteRoot, candidate)
+		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			continue
+		}
+		if info, statErr := os.Stat(candidate); statErr == nil && !info.IsDir() {
+			fileURL := (&url.URL{Scheme: "file", Path: filepath.ToSlash(candidate)}).String()
+			return fmt.Sprintf("[CQ:image,file=%s]", fileURL)
+		}
+	}
+	return ""
 }

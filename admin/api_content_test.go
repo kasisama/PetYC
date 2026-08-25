@@ -18,7 +18,7 @@ func newContentTestRouter(t *testing.T) (*gin.Engine, *gorm.DB) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = db.AutoMigrate(&models.SystemConfig{}, &models.ItemConfig{}, &models.ShopItemConfig{}, &models.LiveEventConfig{}, &models.RewardTrackConfig{}, &models.BackpackItem{}, &models.GlobalInventoryItem{}, &models.AdminConfigState{}); err != nil {
+	if err = db.AutoMigrate(&models.SystemConfig{}, &models.ItemConfig{}, &models.ShopItemConfig{}, &models.LiveEventConfig{}, &models.LiveEventChoiceConfig{}, &models.LiveEventExpeditionSourceConfig{}, &models.RewardTrackConfig{}, &models.GlobalInventoryItem{}, &models.AdminConfigState{}); err != nil {
 		t.Fatal(err)
 	}
 	router := gin.New()
@@ -68,6 +68,29 @@ func TestBulkItemStatusAndReferencedDeleteProtection(t *testing.T) {
 	}
 	if err := db.First(&item, "name = ?", "冰之石").Error; err != nil {
 		t.Fatalf("删除失败后物品应保留: %v", err)
+	}
+}
+
+func TestGameSettingsParseHashSeparatedStarterPets(t *testing.T) {
+	router, db := newContentTestRouter(t)
+	db.Create(&models.SystemConfig{Key: "Core.InitialPets", Value: "诺诺#呱呱#菀菀"})
+	response := doConfigRequest(t, router, http.MethodGet, "/api/admin/settings/game", nil)
+	if response.Code != 0 {
+		t.Fatalf("读取游戏参数失败: %s", response.Msg)
+	}
+	var rows []struct {
+		Key   string      `json:"key"`
+		Value interface{} `json:"value"`
+	}
+	if err := json.Unmarshal(response.Data, &rows); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("unexpected rows: %s", response.Data)
+	}
+	values, ok := rows[0].Value.([]interface{})
+	if !ok || len(values) != 3 || values[0] != "诺诺" || values[2] != "菀菀" {
+		t.Fatalf("初始宠物未按列表解析: %+v", rows[0].Value)
 	}
 }
 

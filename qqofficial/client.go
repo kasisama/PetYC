@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -20,6 +21,10 @@ type SendResult struct {
 	AuditID string `json:"message_audit,omitempty"`
 }
 
+type RequestLimiter interface {
+	Wait(context.Context, core.InboundEvent) error
+}
+
 type Client struct {
 	AppID           string
 	Tokens          TokenSource
@@ -27,7 +32,7 @@ type Client struct {
 	HTTPClient      *http.Client
 	MarkdownEnabled bool
 	KeyboardEnabled bool
-	Limiter         *RateLimiter
+	Limiter         RequestLimiter
 	Status          *RuntimeStatus
 }
 
@@ -50,12 +55,23 @@ func (client *Client) Send(ctx context.Context, event core.InboundEvent, message
 			}
 		})
 	}
+	message = addressPlayer(event, message)
+	message.Image = core.ExistingImageSource(message.Image)
 	if message.Text == "" {
 		return nil, fmt.Errorf("QQ 消息缺少纯文本降级内容")
 	}
-	if client.Limiter != nil {
-		if err := client.Limiter.Wait(ctx, event); err != nil {
-			return nil, err
+	token, err := client.Tokens.Token(ctx)
+	if err != nil {
+		return nil, err
+	}
+	mediaSent := false
+	if message.Image != "" && event.Platform == core.PlatformQQGroup && event.SceneType == core.SceneGroup {
+		if fileInfo, mediaErr := client.uploadGroupImage(ctx, event, message.Image, token); mediaErr != nil {
+			log.Printf("[QQOfficial] 宠物图片上传失败，已降级为纯文本: %v", mediaErr)
+		} else if _, mediaErr = client.sendGroupMedia(ctx, event, fileInfo, token); mediaErr != nil {
+			log.Printf("[QQOfficial] 宠物图片发送失败，已降级为纯文本: %v", mediaErr)
+		} else {
+			mediaSent = true
 		}
 	}
 	rendered := message.Render(client.MarkdownEnabled, client.KeyboardEnabled)
@@ -63,12 +79,23 @@ func (client *Client) Send(ctx context.Context, event core.InboundEvent, message
 	payload := make(map[string]interface{})
 	switch event.Platform {
 	case core.PlatformQQGroup:
-		endpoint = fmt.Sprintf("%s/v2/groups/%s/messages", client.BaseURL, url.PathEscape(event.SpaceID))
+		if event.SceneType == core.SceneDirect {
+			endpoint = fmt.Sprintf("%s/v2/users/%s/messages", client.BaseURL, url.PathEscape(event.ActorID))
+		} else {
+			endpoint = fmt.Sprintf("%s/v2/groups/%s/messages", client.BaseURL, url.PathEscape(event.SpaceID))
+		}
 		payload["content"] = rendered.Text
 		payload["msg_type"] = 0
 		if event.MessageID != "" {
 			payload["msg_id"] = event.MessageID
-			payload["msg_seq"] = 1
+			if event.SceneType == core.SceneGroup {
+				payload["message_reference"] = map[string]interface{}{"message_id": event.MessageID, "ignore_get_message_error": true}
+			}
+			if mediaSent {
+				payload["msg_seq"] = 2
+			} else {
+				payload["msg_seq"] = 1
+			}
 		}
 		if rendered.Markdown != nil {
 			payload["msg_type"] = 2
@@ -77,8 +104,20 @@ func (client *Client) Send(ctx context.Context, event core.InboundEvent, message
 	case core.PlatformQQGuild:
 		endpoint = fmt.Sprintf("%s/channels/%s/messages", client.BaseURL, url.PathEscape(event.RoomID))
 		payload["content"] = rendered.Text
+		if message.Image != "" {
+			imageURL := strings.TrimSpace(message.Image)
+			if !isHTTPURL(imageURL) {
+				imageURL = configuredImageURL(imageURL)
+			}
+			if imageURL != "" {
+				payload["image"] = imageURL
+			} else {
+				log.Printf("[QQOfficial] 频道图片缺少可访问 URL，已降级为纯文本")
+			}
+		}
 		if event.MessageID != "" {
 			payload["msg_id"] = event.MessageID
+			payload["message_reference"] = map[string]interface{}{"message_id": event.MessageID, "ignore_get_message_error": true}
 		}
 		if rendered.Markdown != nil {
 			payload["markdown"] = rendered.Markdown
@@ -93,16 +132,15 @@ func (client *Client) Send(ctx context.Context, event core.InboundEvent, message
 	if err != nil {
 		return nil, err
 	}
-	token, err := client.Tokens.Token(ctx)
-	if err != nil {
-		return nil, err
-	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(encoded))
 	if err != nil {
 		return nil, err
 	}
 	request.Header.Set("Authorization", "QQBot "+token)
 	request.Header.Set("Content-Type", "application/json")
+	if err = client.waitForRequest(ctx, event); err != nil {
+		return nil, err
+	}
 	response, err := client.HTTPClient.Do(request)
 	if err != nil {
 		return nil, err
@@ -121,6 +159,37 @@ func (client *Client) Send(ctx context.Context, event core.InboundEvent, message
 		client.Status.markSend()
 	}
 	return &result, nil
+}
+
+func addressPlayer(event core.InboundEvent, message core.OutboundMessage) core.OutboundMessage {
+	prefix := ""
+	switch {
+	case event.Platform == core.PlatformQQGuild && event.SceneType == core.SceneGuild && strings.TrimSpace(event.ActorID) != "":
+		prefix = "<@" + strings.TrimSpace(event.ActorID) + ">"
+	case event.Platform == core.PlatformQQGroup && event.SceneType == core.SceneGroup:
+		if name := safeActorName(event.ActorName); name != "" {
+			prefix = "@" + name
+		}
+	}
+	if prefix == "" {
+		return message
+	}
+	message.Text = prefix + "\n" + message.Text
+	if message.Markdown != nil {
+		markdown := *message.Markdown
+		markdown.Content = prefix + "\n\n" + markdown.Content
+		message.Markdown = &markdown
+	}
+	return message
+}
+
+func safeActorName(value string) string {
+	value = strings.Join(strings.Fields(strings.ReplaceAll(strings.ReplaceAll(value, "<", ""), ">", "")), " ")
+	runes := []rune(value)
+	if len(runes) > 32 {
+		value = string(runes[:32])
+	}
+	return value
 }
 
 func renderCommandKeyboard(keyboard *core.KeyboardPayload) map[string]interface{} {
@@ -142,6 +211,16 @@ func renderCommandKeyboard(keyboard *core.KeyboardPayload) map[string]interface{
 	return map[string]interface{}{"content": map[string]interface{}{"rows": rows}}
 }
 
+func (client *Client) waitForRequest(ctx context.Context, event core.InboundEvent) error {
+	if client.Limiter == nil {
+		return nil
+	}
+	if event.AppID == "" {
+		event.AppID = client.AppID
+	}
+	return client.Limiter.Wait(ctx, event)
+}
+
 func (client *Client) AcknowledgeInteraction(ctx context.Context, interactionID, code string) error {
 	if code == "" {
 		code = "0"
@@ -158,6 +237,9 @@ func (client *Client) AcknowledgeInteraction(ctx context.Context, interactionID,
 	}
 	request.Header.Set("Authorization", "QQBot "+token)
 	request.Header.Set("Content-Type", "application/json")
+	if err = client.waitForRequest(ctx, core.InboundEvent{Platform: core.PlatformQQGroup, AppID: client.AppID, SpaceID: "interaction"}); err != nil {
+		return err
+	}
 	response, err := client.HTTPClient.Do(request)
 	if err != nil {
 		return err

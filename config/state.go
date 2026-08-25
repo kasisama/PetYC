@@ -11,11 +11,13 @@ import (
 const configStateID uint = 1
 
 type ConfigStatus struct {
-	DBRevision     uint64     `json:"db_revision"`
-	LoadedRevision uint64     `json:"loaded_revision"`
-	PendingReload  bool       `json:"pending_reload"`
-	SavedAt        *time.Time `json:"saved_at"`
-	LoadedAt       *time.Time `json:"loaded_at"`
+	DBRevision      uint64     `json:"db_revision"`
+	LoadedRevision  uint64     `json:"loaded_revision"`
+	PendingReload   bool       `json:"pending_reload"`
+	SavedAt         *time.Time `json:"saved_at"`
+	LoadedAt        *time.Time `json:"loaded_at"`
+	ActiveProfileID string     `json:"active_profile_id"`
+	ProfileDirty    bool       `json:"profile_dirty"`
 }
 
 func getOrCreateConfigState(tx *gorm.DB) (*models.AdminConfigState, error) {
@@ -23,12 +25,12 @@ func getOrCreateConfigState(tx *gorm.DB) (*models.AdminConfigState, error) {
 		return nil, errors.New("数据库未初始化")
 	}
 	var state models.AdminConfigState
-	err := tx.First(&state, configStateID).Error
-	if err == nil {
-		return &state, nil
+	result := tx.Limit(1).Find(&state, configStateID)
+	if result.Error != nil {
+		return nil, result.Error
 	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, err
+	if result.RowsAffected > 0 {
+		return &state, nil
 	}
 	state = models.AdminConfigState{ID: configStateID}
 	if err := tx.Create(&state).Error; err != nil {
@@ -44,8 +46,9 @@ func MarkConfigSaved(tx *gorm.DB) error {
 	}
 	now := time.Now().UTC()
 	return tx.Model(state).Updates(map[string]interface{}{
-		"db_revision": gorm.Expr("db_revision + 1"),
-		"saved_at":    now,
+		"db_revision":   gorm.Expr("db_revision + 1"),
+		"saved_at":      now,
+		"profile_dirty": true,
 	}).Error
 }
 
@@ -111,10 +114,12 @@ func GetConfigStatus(db *gorm.DB) (ConfigStatus, error) {
 		return ConfigStatus{}, err
 	}
 	return ConfigStatus{
-		DBRevision:     state.DBRevision,
-		LoadedRevision: state.LoadedRevision,
-		PendingReload:  state.DBRevision != state.LoadedRevision,
-		SavedAt:        state.SavedAt,
-		LoadedAt:       state.LoadedAt,
+		DBRevision:      state.DBRevision,
+		LoadedRevision:  state.LoadedRevision,
+		PendingReload:   state.DBRevision != state.LoadedRevision,
+		SavedAt:         state.SavedAt,
+		LoadedAt:        state.LoadedAt,
+		ActiveProfileID: state.ActiveProfileID,
+		ProfileDirty:    state.ProfileDirty,
 	}, nil
 }

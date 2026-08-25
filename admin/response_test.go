@@ -3,43 +3,23 @@ package admin
 import (
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 )
 
-func TestSuccessResponse(t *testing.T) {
+func TestErrorMapsBusinessConflictToHTTP409(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(recorder)
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodPost, "/api/admin/test", nil)
 
-	Success(ctx, gin.H{"key": "value"})
+	Error(context, 4090, "操作冲突")
 
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", recorder.Code)
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("期望 HTTP %d，实际 %d", http.StatusConflict, recorder.Code)
 	}
-
-	// Map serialization order might vary occasionally, but for simple gin.H it's usually stable,
-	// or we can just check if required keys exist
-	body := recorder.Body.String()
-	if !strings.Contains(body, `"code":0`) || !strings.Contains(body, `"msg":"success"`) || !strings.Contains(body, `"key":"value"`) {
-		t.Fatalf("unexpected JSON: %s", body)
-	}
-}
-
-func TestErrorResponse(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	recorder := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(recorder)
-
-	Error(ctx, 4004, "not found")
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", recorder.Code)
-	}
-	body := recorder.Body.String()
-	if !strings.Contains(body, `"code":4004`) || !strings.Contains(body, `"msg":"not found"`) {
-		t.Fatalf("unexpected JSON: %s", body)
+	if recorder.Header().Get("X-Request-ID") == "" {
+		t.Fatal("标准错误响应必须返回 request_id")
 	}
 }

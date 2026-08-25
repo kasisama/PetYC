@@ -1,0 +1,147 @@
+package config
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/glebarez/sqlite"
+	"gorm.io/gorm"
+	"qq-pet-saas/models"
+)
+
+func profileTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	modelsToMigrate := []any{
+		&models.SystemConfig{}, &models.CommandConfig{}, &models.PetSpeciesConfig{}, &models.ItemConfig{}, &models.ShopItemConfig{},
+		&models.CheckinRewardConfig{}, &models.WorkSettingConfig{}, &models.MenuConfig{}, &models.ImageConfig{}, &models.LiveEventConfig{},
+		&models.RewardTrackConfig{}, &models.GrowthRoleConfig{}, &models.GrowthStanceConfig{}, &models.PersonalityRuleConfig{},
+		&models.CodexCatalogConfig{}, &models.ExpeditionTemplateConfig{}, &models.ChanceGameConfig{}, &models.ChanceRewardConfig{},
+		&models.AdminConfigState{}, &models.ConfigProfile{}, &models.PetProfile{}, &models.GlobalInventoryItem{}, &models.EventProgress{},
+		&models.ActivityRun{}, &models.ExpeditionRun{}, &models.TradeOffer{}, &models.FishingRun{},
+		&models.AdventureMapConfig{}, &models.AdventureZoneConfig{}, &models.AdventureZonePrerequisiteConfig{},
+		&models.AdventureObjectiveConfig{}, &models.AdventureMonsterConfig{}, &models.AdventureSkillConfig{},
+		&models.AdventureMonsterSkillConfig{}, &models.AdventureEncounterConfig{}, &models.AdventureLootPoolConfig{},
+		&models.AdventureLootEntryConfig{}, &models.AdventureExpeditionConfig{}, &models.AdventureBossConfig{},
+		&models.AdventureBossRewardTierConfig{}, &models.EquipmentTemplateConfig{}, &models.EquipmentAffixConfig{},
+		&models.EquipmentRecipeConfig{}, &models.EquipmentRecipeMaterialConfig{}, &models.LiveEventChoiceConfig{},
+		&models.LiveEventExpeditionSourceConfig{},
+		&models.AdventureExplorationSession{}, &models.AdventureCombatSession{}, &models.AdventureExpeditionRun{},
+		&models.PlayerEquipment{}, &models.AdventureBossInstance{},
+	}
+	if err = db.AutoMigrate(modelsToMigrate...); err != nil {
+		t.Fatal(err)
+	}
+	return db
+}
+
+func minimalSnapshot() ConfigSnapshot {
+	return ConfigSnapshot{
+		System:     []models.SystemConfig{{Key: "Core.Currency", Value: "金币"}},
+		Commands:   []models.CommandConfig{{FuncName: "Help", Command: "帮助", DisplayName: "帮助", Enabled: true}},
+		PetSpecies: []models.PetSpeciesConfig{{Name: "米塔"}},
+		Items:      []models.ItemConfig{{Name: "苹果", Status: "active"}},
+	}
+}
+
+func TestSnapshotExcludesLocalAndPreservesPlayerData(t *testing.T) {
+	db := profileTestDB(t)
+	if err := db.Create(&[]models.SystemConfig{{Key: "Core.MasterQQ", Value: "123456"}, {Key: "Core.Currency", Value: "旧币"}}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.CommandConfig{FuncName: "Help", Command: "help", DisplayName: "Help", Enabled: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.PetSpeciesConfig{Name: "米塔"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.ItemConfig{Name: "苹果", Status: "active"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.PetProfile{AccountID: "player-1", PetType: "米塔", Name: "我的宠物", CurrentForm: "米塔"}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot, err := CaptureSnapshot(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := EncodeSnapshot(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(payload, "123456") || strings.Contains(payload, "player-1") {
+		t.Fatal("snapshot leaked local or player data")
+	}
+
+	target := minimalSnapshot()
+	target.System[0].Value = "新币"
+	if err = db.Transaction(func(tx *gorm.DB) error { return ApplySnapshot(tx, target) }); err != nil {
+		t.Fatal(err)
+	}
+	var local models.SystemConfig
+	if err = db.First(&local, "key = ?", "Core.MasterQQ").Error; err != nil || local.Value != "123456" {
+		t.Fatalf("local config not preserved: %+v %v", local, err)
+	}
+	var player models.PetProfile
+	if err = db.First(&player, "account_id = ?", "player-1").Error; err != nil || player.Name != "我的宠物" {
+		t.Fatalf("player changed: %+v %v", player, err)
+	}
+}
+
+func TestCompatibilityBlocksMissingReferencedKeys(t *testing.T) {
+	db := profileTestDB(t)
+	if err := db.Create(&models.PetProfile{AccountID: "p1", PetType: "不存在宠物", Name: "宠物", CurrentForm: "x"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.GlobalInventoryItem{AccountID: "p1", ItemName: "不存在物品", Quantity: 2}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.EventProgress{AccountID: "p1", EventKey: "missing-event", Progress: 9}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.TradeOffer{Code: "TRADE1", SellerAccountID: "p1", ItemName: "交易锁定物品", Quantity: 1, CurrencyKey: "coin", Status: "open"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	conflicts, err := CheckSnapshotCompatibility(db, minimalSnapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(conflicts) != 3 {
+		t.Fatalf("want 3 conflicts, got %+v", conflicts)
+	}
+	for _, conflict := range conflicts {
+		if conflict.Kind == "items" && conflict.AffectedCount != 2 {
+			t.Fatalf("want inventory and trade conflicts, got %+v", conflict)
+		}
+	}
+}
+
+func TestOfficialDefaultsAreVersionedAndContainNoLocalKeys(t *testing.T) {
+	db := profileTestDB(t)
+	if err := EnsureOfficialDefaults(db); err != nil {
+		t.Fatal(err)
+	}
+	var profile models.ConfigProfile
+	if err := db.First(&profile, "id = ?", OfficialProfileID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !profile.Builtin || profile.AppVersion != "0.0.1" {
+		t.Fatalf("unexpected official profile: %+v", profile)
+	}
+	snapshot, err := DecodeSnapshot(profile.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range snapshot.System {
+		if _, forbidden := LocalSystemKeys[row.Key]; forbidden {
+			t.Fatalf("official defaults contain %s", row.Key)
+		}
+	}
+	if snapshot.Summary().Rows < 300 {
+		t.Fatalf("official defaults unexpectedly small: %+v", snapshot.Summary())
+	}
+}

@@ -41,6 +41,19 @@ type groupMessageEvent struct {
 	MsgSeq      int    `json:"msg_seq"`
 	Author      struct {
 		MemberOpenID string `json:"member_openid"`
+		Username     string `json:"username"`
+	} `json:"author"`
+}
+
+type c2cMessageEvent struct {
+	ID         string `json:"id"`
+	UserOpenID string `json:"user_openid"`
+	Content    string `json:"content"`
+	Timestamp  string `json:"timestamp"`
+	MsgSeq     int    `json:"msg_seq"`
+	Author     struct {
+		UserOpenID string `json:"user_openid"`
+		Username   string `json:"username"`
 	} `json:"author"`
 }
 
@@ -51,7 +64,8 @@ type guildMessageEvent struct {
 	Content   string `json:"content"`
 	Timestamp string `json:"timestamp"`
 	Author    struct {
-		ID string `json:"id"`
+		ID       string `json:"id"`
+		Username string `json:"username"`
 	} `json:"author"`
 }
 
@@ -80,7 +94,22 @@ func MapDispatch(appID string, payload GatewayPayload) (core.InboundEvent, bool,
 		}
 		return core.InboundEvent{
 			Platform: core.PlatformQQGroup, SceneType: core.SceneGroup, AppID: appID,
-			SpaceID: message.GroupOpenID, RoomID: message.GroupOpenID, ActorID: message.Author.MemberOpenID,
+			SpaceID: message.GroupOpenID, RoomID: message.GroupOpenID, ActorID: message.Author.MemberOpenID, ActorName: strings.TrimSpace(message.Author.Username),
+			MessageID: message.ID, EventID: payload.ID, MessageSeq: message.MsgSeq,
+			Text: strings.TrimSpace(message.Content), Timestamp: parseTimestamp(message.Timestamp),
+		}, true, nil
+	case "C2C_MESSAGE_CREATE":
+		var message c2cMessageEvent
+		if err := json.Unmarshal(payload.Data, &message); err != nil {
+			return core.InboundEvent{}, false, err
+		}
+		actorID := message.Author.UserOpenID
+		if actorID == "" {
+			actorID = message.UserOpenID
+		}
+		return core.InboundEvent{
+			Platform: core.PlatformQQGroup, SceneType: core.SceneDirect, AppID: appID,
+			SpaceID: actorID, RoomID: actorID, ActorID: actorID, ActorName: strings.TrimSpace(message.Author.Username),
 			MessageID: message.ID, EventID: payload.ID, MessageSeq: message.MsgSeq,
 			Text: strings.TrimSpace(message.Content), Timestamp: parseTimestamp(message.Timestamp),
 		}, true, nil
@@ -91,7 +120,7 @@ func MapDispatch(appID string, payload GatewayPayload) (core.InboundEvent, bool,
 		}
 		return core.InboundEvent{
 			Platform: core.PlatformQQGuild, SceneType: core.SceneGuild, AppID: appID,
-			SpaceID: message.GuildID, RoomID: message.ChannelID, ActorID: message.Author.ID,
+			SpaceID: message.GuildID, RoomID: message.ChannelID, ActorID: message.Author.ID, ActorName: strings.TrimSpace(message.Author.Username),
 			MessageID: message.ID, EventID: payload.ID, Text: strings.TrimSpace(message.Content),
 			Timestamp: parseTimestamp(message.Timestamp),
 		}, true, nil

@@ -3,11 +3,14 @@ package core
 import (
 	"fmt"
 	"log"
+	"net/url"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"qq-pet-saas/admin"
 	"qq-pet-saas/config"
 	"qq-pet-saas/database"
+	"qq-pet-saas/gameplayrules"
 	"qq-pet-saas/security"
 )
 
@@ -17,17 +20,16 @@ func NewAppRouter() *gin.Engine {
 	router.Use(gin.Recovery())
 	router.Static("/images", "./图片")
 
-	admin.BroadcastMessageFunc = BroadcastGroupMessage
 	admin.OneBotStatusFunc = OneBotStatusSnapshot
-	admin.ReloadCommandRoutesFunc = func() error { return RebuildUnifiedRouter(database.DB) }
-	admin.PrepareModernContentFunc = func() error {
+	admin.RebuildCommandRoutesFunc = func() error { return RebuildUnifiedRouter(database.DB) }
+	admin.PrepareConfigDefaultsFunc = func() error {
 		if err := config.EnsureModernMenus(database.DB); err != nil {
 			return err
 		}
-		if err := SyncUnifiedCommandConfigs(database.DB); err != nil {
+		if err := gameplayrules.EnsureDefaults(database.DB); err != nil {
 			return err
 		}
-		return config.LoadAllConfigsFromDB(database.DB)
+		return SyncUnifiedCommandConfigs(database.DB)
 	}
 	admin.RegisterRoutes(router)
 	router.GET("/v1/ws", HandleWebSocket)
@@ -36,6 +38,10 @@ func NewAppRouter() *gin.Engine {
 
 // StartApp 启动服务框架并监听指定端口。
 func StartApp(listenAddress string, port int) {
+	StartAppWithReady(listenAddress, port, nil)
+}
+
+func StartAppWithReady(listenAddress string, port int, onReady func(string)) {
 	manager := NewServerManagerWithEndpoint(NewAppRouter(), persistRuntimeEndpoint)
 	admin.PlatformPortChangeFunc = func(port int) (admin.PortHandoffResult, error) {
 		handoff, err := manager.BeginPortHandoff(port)
@@ -61,13 +67,30 @@ func StartApp(listenAddress string, port int) {
 		log.Fatalf("[App] 启动服务器失败: %v", err)
 	}
 	log.Print(startupSummary(manager.Address()))
+	if onReady != nil {
+		onReady(manager.Address())
+	}
 	if err := manager.Wait(); err != nil {
 		log.Fatalf("[App] 服务器运行失败: %v", err)
 	}
 }
 
 func startupSummary(address string) string {
-	return fmt.Sprintf("[启动] QQ-Pet SaaS 已就绪\n  管理后台：http://%s/admin\n  OneBot：  ws://%s/v1/ws", address, address)
+	httpAddress := strings.TrimRight(strings.TrimSpace(address), "/")
+	if !strings.Contains(httpAddress, "://") {
+		httpAddress = "http://" + httpAddress
+	}
+	websocketAddress := httpAddress
+	if parsed, err := url.Parse(httpAddress); err == nil && parsed.Host != "" {
+		switch parsed.Scheme {
+		case "https":
+			parsed.Scheme = "wss"
+		default:
+			parsed.Scheme = "ws"
+		}
+		websocketAddress = parsed.String()
+	}
+	return fmt.Sprintf("[启动] QQ-Pet SaaS 已就绪\n  管理后台：%s/admin\n  OneBot：  %s/v1/ws", httpAddress, websocketAddress)
 }
 
 func persistRuntimeEndpoint(address string, port int) error {

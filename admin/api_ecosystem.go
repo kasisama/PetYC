@@ -162,8 +162,8 @@ func (api *EcosystemAPI) Overview(c *gin.Context) {
 		data[item.key] = count
 	}
 	var successCount, failureCount int64
-	api.DB.Model(&models.GameplayMetric{}).Where("day >= ?", cutoff.Format("2006-01-02")).Where("success = ?", true).Select("COALESCE(SUM(count), 0)").Scan(&successCount)
-	api.DB.Model(&models.GameplayMetric{}).Where("day >= ?", cutoff.Format("2006-01-02")).Where("success = ?", false).Select("COALESCE(SUM(count), 0)").Scan(&failureCount)
+	api.DB.Model(&models.GameplayMetric{}).Where("day >= ?", cutoff.Format("2006-01-02")).Where("technical_result = ?", "ok").Select("COALESCE(SUM(count), 0)").Scan(&successCount)
+	api.DB.Model(&models.GameplayMetric{}).Where("day >= ?", cutoff.Format("2006-01-02")).Where("technical_result <> ?", "ok").Select("COALESCE(SUM(count), 0)").Scan(&failureCount)
 	total := successCount + failureCount
 	data["command_success_rate"] = float64(0)
 	if total > 0 {
@@ -197,14 +197,15 @@ func (api *EcosystemAPI) CommandMetrics(c *gin.Context) {
 		return
 	}
 	type row struct {
-		Day       string `json:"day"`
-		Platform  string `json:"platform"`
-		SceneType string `json:"scene_type"`
-		Command   string `json:"command"`
-		Success   bool   `json:"success"`
-		Count     int64  `json:"count"`
+		Day             string `json:"day"`
+		Platform        string `json:"platform"`
+		SceneType       string `json:"scene_type"`
+		Command         string `json:"command"`
+		BusinessResult  string `json:"business_result"`
+		TechnicalResult string `json:"technical_result"`
+		Count           int64  `json:"count"`
 	}
-	query := api.DB.Model(&models.GameplayMetric{}).Select("day, platform, scene_type, command, success, SUM(count) count").Where("day >= ?", cutoff.Format("2006-01-02"))
+	query := api.DB.Model(&models.GameplayMetric{}).Select("day, platform, scene_type, command, business_result, technical_result, SUM(count) count").Where("day >= ?", cutoff.Format("2006-01-02"))
 	if value := strings.TrimSpace(c.Query("platform")); value != "" {
 		query = query.Where("platform = ?", value)
 	}
@@ -212,7 +213,7 @@ func (api *EcosystemAPI) CommandMetrics(c *gin.Context) {
 		query = query.Where("scene_type = ?", value)
 	}
 	var rows []row
-	if err := query.Group("day, platform, scene_type, command, success").Order("day, platform, command").Scan(&rows).Error; err != nil {
+	if err := query.Group("day, platform, scene_type, command, business_result, technical_result").Order("day, platform, command").Scan(&rows).Error; err != nil {
 		Error(c, 5000, "命令指标读取失败")
 		return
 	}
@@ -238,6 +239,7 @@ type playerSummary struct {
 	AccountID        string     `json:"account_id"`
 	PetName          string     `json:"pet_name"`
 	PetType          string     `json:"pet_type"`
+	PetImage         string     `json:"pet_image"`
 	Role             string     `json:"role"`
 	Growth           int64      `json:"growth"`
 	BondLevel        int        `json:"bond_level"`
@@ -272,7 +274,8 @@ func (api *EcosystemAPI) Players(c *gin.Context) {
 		Error(c, 5000, "玩家列表统计失败")
 		return
 	}
-	selectSQL := `pa.id account_id, COALESCE(pp.name, '') pet_name, COALESCE(pp.pet_type, '') pet_type, COALESCE(pp.role, '') role,
+	selectSQL := `pa.id account_id, COALESCE(pp.name, '') pet_name, COALESCE(pp.pet_type, '') pet_type,
+		COALESCE((SELECT psc.image FROM pet_species_configs psc WHERE psc.name = pp.pet_type LIMIT 1), '') pet_image, COALESCE(pp.role, '') role,
 		COALESCE(pp.growth, 0) growth, COALESCE(pp.bond_level, 0) bond_level,
 		(SELECT COUNT(*) FROM player_identities pi WHERE pi.account_id = pa.id) identity_count,
 		(SELECT COUNT(*) FROM community_members cm WHERE cm.account_id = pa.id) community_count,
@@ -304,6 +307,19 @@ func (api *EcosystemAPI) PlayerDetail(c *gin.Context) {
 	}
 	var pet models.PetProfile
 	api.DB.First(&pet, "account_id = ?", accountID)
+	petImage := ""
+	if pet.PetType != "" {
+		var species models.PetSpeciesConfig
+		if err := api.DB.First(&species, "name = ?", pet.PetType).Error; err == nil {
+			petImage = species.Image
+			if pet.CurrentForm != "" && pet.CurrentForm == species.Evolution && species.EvolutionImage != "" {
+				petImage = species.EvolutionImage
+			}
+			if pet.CurrentForm != "" && pet.CurrentForm == species.Awaken && species.AwakenImage != "" {
+				petImage = species.AwakenImage
+			}
+		}
+	}
 	inventory := make([]models.GlobalInventoryItem, 0)
 	codex := make([]models.CodexEntry, 0)
 	expeditions := make([]models.ExpeditionRun, 0)
@@ -320,7 +336,7 @@ func (api *EcosystemAPI) PlayerDetail(c *gin.Context) {
 	}
 	preference := models.NotificationPreference{AccountID: accountID, Enabled: true}
 	api.DB.First(&preference, "account_id = ?", accountID)
-	Success(c, gin.H{"account": account, "pet": pet, "inventory": inventory, "codex": codex, "identities": masked, "expeditions": expeditions, "communities": memberships, "notifications": preference})
+	Success(c, gin.H{"account": account, "pet": pet, "pet_image": petImage, "inventory": inventory, "codex": codex, "identities": masked, "expeditions": expeditions, "communities": memberships, "notifications": preference})
 }
 
 type communitySummary struct {
