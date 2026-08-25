@@ -1,0 +1,58 @@
+name: Release v0.0.1
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: admin-ui/package-lock.json
+
+      - name: Build and test admin UI
+        working-directory: admin-ui
+        run: |
+          npm ci
+          npm test
+          npm run build
+
+      - name: Verify backend
+        run: |
+          go test ./...
+          go vet ./...
+
+      - name: Cross compile release binaries
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          test "$VERSION" = "0.0.1"
+          mkdir -p dist
+          GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=$VERSION" -o "dist/qq-pet-saas_${VERSION}_windows_amd64.exe" .
+          GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=$VERSION" -o "dist/qq-pet-saas_${VERSION}_linux_amd64" .
+
+      - name: Check release contents
+        run: |
+          ! strings dist/qq-pet-saas_0.0.1_linux_amd64 | grep -F '初始数据/'
+          ! grep -E -i 'app_secret|onebot.*token|masterqq|notifyqq|player_account|wallet_ledger' config/defaults/config_v0.0.1.json
+          ./dist/qq-pet-saas_0.0.1_linux_amd64 --version | grep -Fx '0.0.1'
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes --title "$GITHUB_REF_NAME"
