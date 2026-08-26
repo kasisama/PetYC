@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"os/exec"
 	"runtime"
 
+	"golang.org/x/term"
 	"qq-pet-saas/admin"
 	"qq-pet-saas/config"
 	"qq-pet-saas/core"
@@ -89,7 +91,23 @@ func main() {
 			}
 		}
 	}
-	core.StartAppWithReady(runtimeConfig.ListenAddress, runtimeConfig.Port, onReady)
+	interactive := runtime.GOOS == "windows" && term.IsTerminal(int(os.Stdin.Fd()))
+	if err := runServerWithInteractiveRetry(
+		&runtimeConfig,
+		interactive,
+		os.Stdin,
+		os.Stdout,
+		onReady,
+		core.StartAppWithReady,
+		findNextAvailablePort,
+	); err != nil {
+		if errors.Is(err, errStartupCancelled) {
+			log.Print("[启动] 用户已取消启动")
+			os.Exit(2)
+		}
+		log.Printf("[App] %v", err)
+		os.Exit(1)
+	}
 }
 
 var version = "dev"

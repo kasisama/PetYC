@@ -37,11 +37,11 @@ func NewAppRouter() *gin.Engine {
 }
 
 // StartApp 启动服务框架并监听指定端口。
-func StartApp(listenAddress string, port int) {
-	StartAppWithReady(listenAddress, port, nil)
+func StartApp(listenAddress string, port int) error {
+	return StartAppWithReady(listenAddress, port, nil)
 }
 
-func StartAppWithReady(listenAddress string, port int, onReady func(string)) {
+func StartAppWithReady(listenAddress string, port int, onReady func(string) error) error {
 	manager := NewServerManagerWithEndpoint(NewAppRouter(), persistRuntimeEndpoint)
 	admin.PlatformPortChangeFunc = func(port int) (admin.PortHandoffResult, error) {
 		handoff, err := manager.BeginPortHandoff(port)
@@ -64,15 +64,19 @@ func StartAppWithReady(listenAddress string, port int, onReady func(string)) {
 	admin.PlatformPortConfirmFunc = manager.ConfirmPortHandoff
 
 	if err := manager.StartEndpoint(listenAddress, port); err != nil {
-		log.Fatalf("[App] 启动服务器失败: %v", err)
+		return fmt.Errorf("启动服务器失败: %w", err)
 	}
+	defer manager.Close()
 	log.Print(startupSummary(manager.Address()))
 	if onReady != nil {
-		onReady(manager.Address())
+		if err := onReady(manager.Address()); err != nil {
+			return fmt.Errorf("完成服务器启动: %w", err)
+		}
 	}
 	if err := manager.Wait(); err != nil {
-		log.Fatalf("[App] 服务器运行失败: %v", err)
+		return fmt.Errorf("服务器运行失败: %w", err)
 	}
+	return nil
 }
 
 func startupSummary(address string) string {

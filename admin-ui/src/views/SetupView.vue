@@ -22,7 +22,7 @@ onMounted(async()=>{const onboarding=await fetchOnboardingStatus();if(onboarding
 
 <template><main class="setup-page"><section class="setup-shell">
   <header><span class="brand-mark"><IconSettings :size="20"/></span><div><strong>宠物养成</strong><p>首次配置</p></div><span class="progress">{{step+1}} / 3</span></header>
-  <section v-if="step===0" class="step"><p class="kicker">欢迎使用 QQ-Pet v0.1.0</p><h1>先选择机器人接入方式</h1><p class="lead">管理员账号已经设置完成。平台接入可以稍后补充，不影响你先进入后台查看。</p><div class="choice-grid">
+  <section v-if="step===0" class="step"><p class="kicker">欢迎使用 QQ-Pet v0.1.1</p><h1>先选择机器人接入方式</h1><p class="lead">管理员账号已经设置完成。平台接入可以稍后补充，不影响你先进入后台查看。</p><div class="choice-grid">
     <button v-for="item in choices" :key="item.id" :class="{active:choice===item.id}" @click="choice=item.id"><component :is="item.icon" :size="22"/><span><strong>{{item.label}}</strong><small>{{item.desc}}</small></span></button>
   </div><div class="actions"><button class="btn btn-primary" @click="choice==='skip'?step=2:step=1">继续</button></div></section>
   <section v-else-if="step===1" class="step"><p class="kicker">连接机器人</p><h1>填写接入配置</h1><div class="form-grid"><label>监听地址<select v-model="form.listenAddress"><option value="127.0.0.1">仅本机 127.0.0.1</option><option value="0.0.0.0">所有网卡 0.0.0.0</option></select></label><label>后台端口<input v-model.number="form.port" type="number" min="1" max="65535"/></label></div>

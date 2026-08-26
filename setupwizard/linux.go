@@ -31,7 +31,7 @@ func RunLinux(config security.RuntimeConfig, credentials security.Credentials, i
 		}
 		return value, nil
 	}
-	fmt.Fprintln(output, "QQ-Pet v0.1.0 首次配置")
+	fmt.Fprintln(output, "QQ-Pet v0.1.1 首次配置")
 	fmt.Fprintln(output, "配置只保存在当前系统账号的应用数据目录。机器人平台可以暂时跳过。")
 	var initialUsername, initialPassword string
 	if credentials.PasswordSetupRequired {
