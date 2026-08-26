@@ -2,8 +2,10 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { changePassword } from '../api/auth'
+import { resetSeason } from '../api/ecosystem'
 import {
   CONFIG_STATUS_CHANGED_EVENT,
+  fetchConfig,
   fetchConfigStatus,
   reloadConfigs,
   resetConfigs,
@@ -124,6 +126,50 @@ async function confirmReset() {
     resetErr.value = err instanceof Error ? err.message : '恢复出厂配置失败'
   } finally {
     resetBusy.value = false
+  }
+}
+
+const seasonOpen = ref(false)
+const seasonBusy = ref(false)
+const seasonMsg = ref('')
+const seasonErr = ref('')
+const seasonEventKey = ref('season_01_nature_ruins')
+const seasonReason = ref('')
+const seasonConfirm = ref('')
+
+function openSeasonDialog() {
+  seasonConfirm.value = ''
+  seasonReason.value = ''
+  seasonErr.value = ''
+  seasonOpen.value = true
+  void fetchConfig('live_events').then((rows) => {
+    const events = rows as Array<{ key?: string; active?: boolean }>
+    const active = events.find((row) => row.active && row.key) || events[0]
+    if (active?.key) seasonEventKey.value = active.key
+  }).catch(() => undefined)
+}
+
+async function confirmSeasonReset() {
+  if (seasonBusy.value) return
+  if (!seasonReason.value.trim()) {
+    seasonErr.value = '请填写操作原因'
+    return
+  }
+  const expected = `重置赛季:${seasonEventKey.value}`
+  if (seasonConfirm.value.trim() !== expected) {
+    seasonErr.value = `请输入「${expected}」以确认`
+    return
+  }
+  seasonBusy.value = true
+  seasonErr.value = ''
+  try {
+    await resetSeason(seasonEventKey.value, { reason: seasonReason.value.trim(), confirmation: expected })
+    seasonMsg.value = '赛季限时进度已重置，永久宠物、图鉴、装备和地图进度已保留'
+    seasonOpen.value = false
+  } catch (err) {
+    seasonErr.value = err instanceof Error ? err.message : '赛季重置失败'
+  } finally {
+    seasonBusy.value = false
   }
 }
 
@@ -251,7 +297,7 @@ onBeforeUnmount(() => {
           <span class="danger-badge">需要确认</span>
         </div>
         <p class="card-hint danger-hint">
-          将当前运行配置切换到只读的“官方默认 v0.0.1”方案，并自动热重载。
+          将当前运行配置切换到只读的“官方默认 v0.1.0”方案，并自动热重载。
           用户创建或导入的其他方案不会删除；玩家宠物存档、背包、群组开关和平台凭据均保持不变。
         </p>
 
@@ -262,13 +308,26 @@ onBeforeUnmount(() => {
           恢复出厂配置
         </button>
       </div>
+
+      <div class="card card-danger">
+        <div class="danger-head">
+          <h2 class="card-title danger-title">重置当前赛季</h2>
+          <span class="danger-badge">需要确认</span>
+        </div>
+        <p class="card-hint danger-hint">
+          只清除赛季积分、赛季任务、投票和遗迹季印。宠物、图鉴、装备、蓝图和永久地图进度会保留。
+        </p>
+        <p v-if="seasonMsg" class="form-message is-success" role="status">{{ seasonMsg }}</p>
+        <p v-if="seasonErr && !seasonOpen" class="form-message is-error" role="alert">{{ seasonErr }}</p>
+        <button class="btn btn-danger" type="button" @click="openSeasonDialog">重置赛季进度</button>
+      </div>
     </div>
 
     <!-- 二次确认弹窗 -->
     <UiModal :open="resetOpen" title="确认恢复官方默认配置" description="当前内容配置会被官方默认方案替换，并自动热重载。" :busy="resetBusy" size="small" @close="closeResetDialog">
         <p class="modal-body">
           即将把系统参数、指令、宠物种类、道具、商店、签到、打工、菜单和图片映射等内容切换到
-          <strong>官方默认 v0.0.1</strong>。现有玩家数据、本机参数及其他配置方案不会被删除。
+          <strong>官方默认 v0.1.0</strong>。现有玩家数据、本机参数及其他配置方案不会被删除。
         </p>
         <label class="field">
           <span class="field-label">请输入「恢复出厂」以确认</span>
@@ -295,6 +354,16 @@ onBeforeUnmount(() => {
             {{ resetBusy ? '执行中…' : '确认恢复出厂配置' }}
           </button>
         </template>
+    </UiModal>
+    <UiModal :open="seasonOpen" title="确认重置赛季" description="此操作写入审计日志，且不可用恢复出厂来撤回玩家赛季进度。" :busy="seasonBusy" size="small" @close="seasonOpen=false">
+      <label class="field"><span class="field-label">活动键</span><input v-model="seasonEventKey" class="field-input" :disabled="seasonBusy"/></label>
+      <label class="field"><span class="field-label">操作原因</span><textarea v-model="seasonReason" class="field-input" rows="3" :disabled="seasonBusy"/></label>
+      <label class="field"><span class="field-label">请输入「重置赛季:{{ seasonEventKey }}」</span><input v-model="seasonConfirm" class="field-input" :disabled="seasonBusy"/></label>
+      <p v-if="seasonErr" class="form-message is-error" role="alert">{{ seasonErr }}</p>
+      <template #footer>
+        <button type="button" class="btn btn-ghost" :disabled="seasonBusy" @click="seasonOpen=false">取消</button>
+        <button type="button" class="btn btn-danger" :disabled="seasonBusy" @click="confirmSeasonReset">{{ seasonBusy ? '执行中…' : '确认重置赛季' }}</button>
+      </template>
     </UiModal>
     <AuditLogPanel />
   </section>

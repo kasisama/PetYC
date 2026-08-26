@@ -4,6 +4,7 @@ import {
   fetchConfigStatus,
   normalizeCommand,
   normalizeItem,
+  normalizeMenu,
   normalizeShopItem,
 	imagePreviewUrl,
   reloadConfigs,
@@ -58,7 +59,7 @@ describe('fetchConfigStatus', () => {
 
 describe('内容工作台数据兼容', () => {
 	it('将 Windows 和配置目录路径转为后台可预览地址', () => {
-		expect(imagePreviewUrl('宠物图片\\仙子伊布.gif')).toBe('/images/宠物图片/仙子伊布.gif')
+		expect(imagePreviewUrl('宠物图片\\光芽兽.gif')).toBe('/images/宠物图片/光芽兽.gif')
 		expect(imagePreviewUrl('.\\图片\\物品图片\\书本.jpg')).toBe('/images/物品图片/书本.jpg')
 		expect(imagePreviewUrl('https://cdn.example.com/pet.png')).toBe('https://cdn.example.com/pet.png')
 	})
@@ -108,6 +109,19 @@ describe('内容工作台数据兼容', () => {
       RestockTarget: 50,
     })
   })
+
+  it('菜单场景兼容图片字段并为旧数据补空值', () => {
+    expect(normalizeMenu({ name: '主菜单', reply: '欢迎', image: '上传/main.webp' })).toEqual({
+      Name: '主菜单',
+      Reply: '欢迎',
+      Image: '上传/main.webp',
+    })
+    expect(normalizeMenu({ Name: '旧菜单', Reply: '纯文字' })).toEqual({
+      Name: '旧菜单',
+      Reply: '纯文字',
+      Image: '',
+    })
+  })
 })
 
 describe('内容工作台专用接口', () => {
@@ -125,7 +139,7 @@ describe('内容工作台专用接口', () => {
     await config.saveEventBundle(
       'forest-week',
       { key: 'forest-week', name: '森林调查' },
-      [{ milestone: 100, item_name: '木材', quantity: 2 }],
+      [{ milestone: 100, reward_type: 'item', reward_key: 'wood', reward_name: '木材', quantity: 2 }],
     )
 
     expect(fetchMock).toHaveBeenCalledWith(
@@ -134,7 +148,7 @@ describe('内容工作台专用接口', () => {
         method: 'PUT',
         body: JSON.stringify({
           event: { key: 'forest-week', name: '森林调查' },
-          rewards: [{ milestone: 100, item_name: '木材', quantity: 2 }],
+          rewards: [{ milestone: 100, reward_type: 'item', reward_key: 'wood', reward_name: '木材', quantity: 2 }],
         }),
       }),
     )

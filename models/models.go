@@ -1,7 +1,10 @@
 package models
 
 import (
+	"strings"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 // SystemConfig 核心与互动键值配置表
@@ -23,7 +26,14 @@ type CommandConfig struct {
 
 // PetSpeciesConfig 宠物属性与进化配置表
 type PetSpeciesConfig struct {
-	Name            string `gorm:"primaryKey;size:64;comment:宠物种类"`
+	Key             string `gorm:"primaryKey;size:64;comment:稳定形态键" json:"key"`
+	Name            string `gorm:"size:64;not null;uniqueIndex;comment:宠物形态名称" json:"name"`
+	FamilyKey       string `gorm:"size:64;not null;index;comment:宠物谱系键" json:"family_key"`
+	Stage           string `gorm:"size:24;not null;index;comment:base/evolved/awakened" json:"stage"`
+	PreviousFormKey string `gorm:"size:64;index;comment:前置形态键" json:"previous_form_key"`
+	Adoptable       bool   `gorm:"not null;default:false;index" json:"adoptable"`
+	Archetype       string `gorm:"size:32;not null;comment:成长定位" json:"archetype"`
+	CodexEntryKey   string `gorm:"size:64;index" json:"codex_entry_key"`
 	Image           string `gorm:"size:255;comment:图片文件名"`
 	AdoptImage      string `gorm:"size:255;comment:领养配图"`
 	TrainStartImg   string `gorm:"size:255;comment:锻炼开始图"`
@@ -61,9 +71,31 @@ type PetSpeciesConfig struct {
 	CurrencyBonus   int    `gorm:"comment:金币加成比率"`
 }
 
+func (row *PetSpeciesConfig) BeforeCreate(_ *gorm.DB) error {
+	if strings.TrimSpace(row.Key) == "" {
+		row.Key = strings.TrimSpace(row.Name)
+	}
+	if strings.TrimSpace(row.FamilyKey) == "" {
+		row.FamilyKey = row.Key
+	}
+	if strings.TrimSpace(row.Stage) == "" {
+		row.Stage = "base"
+	}
+	if strings.TrimSpace(row.Archetype) == "" {
+		row.Archetype = "balanced"
+	}
+	return nil
+}
+
 // ItemConfig 道具配置表
 type ItemConfig struct {
-	Name        string `gorm:"primaryKey;size:64;comment:道具名称"`
+	Key         string `gorm:"primaryKey;size:64;comment:稳定物品键" json:"key"`
+	Name        string `gorm:"size:64;not null;uniqueIndex;comment:道具名称" json:"name"`
+	Category    string `gorm:"size:32;not null;index;comment:consumable/gift/material/evolution/event/collectible" json:"category"`
+	Rarity      string `gorm:"size:24;not null;default:'common';index" json:"rarity"`
+	Stackable   bool   `gorm:"not null;default:true" json:"stackable"`
+	MaxStack    int64  `gorm:"not null;default:999999" json:"max_stack"`
+	Usage       string `gorm:"type:text" json:"usage"`
 	Status      string `gorm:"size:16;not null;default:'active';index;comment:active/limited/hidden/disabled"`
 	Type        string `gorm:"size:64;comment:道具类型"`
 	RewardType  string `gorm:"size:64;comment:礼包类型"`
@@ -74,6 +106,52 @@ type ItemConfig struct {
 	Image       string `gorm:"size:255;comment:配图"`
 	Description string `gorm:"type:text;comment:道具描述"`
 	SellPrice   int64  `gorm:"comment:出售价格"`
+}
+
+func (row *ItemConfig) BeforeCreate(_ *gorm.DB) error {
+	if strings.TrimSpace(row.Key) == "" {
+		row.Key = strings.TrimSpace(row.Name)
+	}
+	if strings.TrimSpace(row.Category) == "" {
+		row.Category = "consumable"
+	}
+	if row.MaxStack <= 0 {
+		row.MaxStack = 999999
+	}
+	return nil
+}
+
+// PetEvolutionRuleConfig expresses one deterministic evolution branch.
+type PetEvolutionRuleConfig struct {
+	Key               string `gorm:"primaryKey;size:64" json:"key"`
+	FromFormKey       string `gorm:"size:64;not null;index" json:"from_form_key"`
+	ToFormKey         string `gorm:"size:64;not null;index" json:"to_form_key"`
+	RequiredGrowth    int64  `gorm:"not null;default:0" json:"required_growth"`
+	RequiredAffection int64  `gorm:"not null;default:0" json:"required_affection"`
+	BranchLabel       string `gorm:"size:64;not null" json:"branch_label"`
+	Enabled           bool   `gorm:"not null;default:true;index" json:"enabled"`
+	SortOrder         int    `gorm:"not null;default:0;index" json:"sort_order"`
+}
+
+type PetEvolutionCostConfig struct {
+	ID           uint   `gorm:"primaryKey" json:"id"`
+	EvolutionKey string `gorm:"size:64;not null;uniqueIndex:idx_pet_evolution_cost" json:"evolution_key"`
+	ItemKey      string `gorm:"size:64;not null;uniqueIndex:idx_pet_evolution_cost" json:"item_key"`
+	Quantity     int64  `gorm:"not null" json:"quantity"`
+}
+
+type PetSkillUnlockConfig struct {
+	ID          uint   `gorm:"primaryKey" json:"id"`
+	FormKey     string `gorm:"size:64;not null;uniqueIndex:idx_pet_skill_unlock" json:"form_key"`
+	SkillKey    string `gorm:"size:64;not null;uniqueIndex:idx_pet_skill_unlock" json:"skill_key"`
+	UnlockLevel int    `gorm:"not null;default:1" json:"unlock_level"`
+	SortOrder   int    `gorm:"not null;default:0" json:"sort_order"`
+}
+
+type AdventureLevelConfig struct {
+	Level          int   `gorm:"primaryKey" json:"level"`
+	XPToNext       int64 `gorm:"not null" json:"xp_to_next"`
+	PowerAllowance int64 `gorm:"not null;default:0" json:"power_allowance"`
 }
 
 // ShopItemConfig 商店商品配置表
@@ -115,6 +193,7 @@ type WorkSettingConfig struct {
 type MenuConfig struct {
 	Name  string `gorm:"primaryKey;size:64;comment:菜单指令名"`
 	Reply string `gorm:"type:text;comment:菜单回复内容"`
+	Image string `gorm:"size:255;comment:菜单场景配图"`
 }
 
 // ImageConfig 游戏核心图片表

@@ -39,6 +39,25 @@ func validateDomainConfig(name string, payload json.RawMessage) error {
 			}
 			seen[trigger] = row.DisplayName
 		}
+	case "menus":
+		var rows []models.MenuConfig
+		if err := json.Unmarshal(payload, &rows); err != nil {
+			return err
+		}
+		seen := make(map[string]struct{}, len(rows))
+		for index, row := range rows {
+			name := strings.TrimSpace(row.Name)
+			if name == "" {
+				return configValidationError{fmt.Sprintf("第 %d 个菜单场景缺少名称", index+1)}
+			}
+			if strings.TrimSpace(row.Reply) == "" {
+				return configValidationError{fmt.Sprintf("菜单场景“%s”缺少机器人回复", name)}
+			}
+			if _, exists := seen[name]; exists {
+				return configValidationError{fmt.Sprintf("菜单场景名称重复: %s", name)}
+			}
+			seen[name] = struct{}{}
+		}
 	case "live_events":
 		var rows []models.LiveEventConfig
 		if err := json.Unmarshal(payload, &rows); err != nil {
@@ -72,12 +91,12 @@ func validateDomainConfig(name string, payload json.RawMessage) error {
 		}
 		seen := make(map[string]struct{}, len(rows))
 		for index, row := range rows {
-			if strings.TrimSpace(row.EventKey) == "" || strings.TrimSpace(row.ItemName) == "" || row.Milestone <= 0 || row.Quantity <= 0 {
+			if strings.TrimSpace(row.EventKey) == "" || (row.RewardType != "item" && row.RewardType != "currency") || strings.TrimSpace(row.RewardKey) == "" || strings.TrimSpace(row.RewardName) == "" || row.Milestone <= 0 || row.Quantity <= 0 {
 				return configValidationError{fmt.Sprintf("第 %d 个奖励里程碑无效", index+1)}
 			}
-			key := fmt.Sprintf("%s:%d:%s", row.EventKey, row.Milestone, row.ItemName)
+			key := fmt.Sprintf("%s:%d:%s:%s", row.EventKey, row.Milestone, row.RewardType, row.RewardKey)
 			if _, exists := seen[key]; exists {
-				return configValidationError{fmt.Sprintf("同一里程碑不能重复配置同一物品: %s", key)}
+				return configValidationError{fmt.Sprintf("同一里程碑不能重复配置同一奖励: %s", key)}
 			}
 			seen[key] = struct{}{}
 		}
@@ -197,20 +216,27 @@ func validateRewardItems(db *gorm.DB, payload json.RawMessage) error {
 	if err := json.Unmarshal(payload, &rows); err != nil {
 		return err
 	}
-	modernItems := map[string]bool{"调查记录": true, "木材": true, "林地样本": true, "古代零件": true, "生态样本": true, "陪伴印记": true}
 	for _, row := range rows {
-		if modernItems[row.ItemName] {
-			continue
-		}
-		var item models.ItemConfig
-		if err := db.First(&item, "name = ?", row.ItemName).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-			return err
-		}
-		if strings.TrimSpace(item.Name) == "" {
-			return configValidationError{fmt.Sprintf("奖励物品不存在: %s", row.ItemName)}
-		}
-		if item.Status == "hidden" || item.Status == "disabled" {
-			return configValidationError{fmt.Sprintf("奖励物品当前不可发放: %s", row.ItemName)}
+		switch row.RewardType {
+		case "item":
+			var item models.ItemConfig
+			if err := db.First(&item, "key = ?", row.RewardKey).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return configValidationError{fmt.Sprintf("奖励物品不存在: %s", row.RewardKey)}
+				}
+				return err
+			}
+			if item.Status == "hidden" || item.Status == "disabled" {
+				return configValidationError{fmt.Sprintf("奖励物品当前不可发放: %s", row.RewardKey)}
+			}
+		case "currency":
+			var currency models.CurrencyConfig
+			if err := db.First(&currency, "key = ? AND enabled = ?", row.RewardKey, true).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return configValidationError{fmt.Sprintf("奖励货币不存在或未启用: %s", row.RewardKey)}
+				}
+				return err
+			}
 		}
 	}
 	return nil
@@ -267,8 +293,14 @@ var configSchemas = map[string]configSchema{
 	"system":               newConfigSchema[models.SystemConfig]("key asc"),
 	"commands":             newConfigSchema[models.CommandConfig]("func_name asc"),
 	"pet_species":          newConfigSchema[models.PetSpeciesConfig]("name asc"),
+	"pet_evolution_rules":  newConfigSchema[models.PetEvolutionRuleConfig]("sort_order asc, key asc"),
+	"pet_evolution_costs":  newConfigSchema[models.PetEvolutionCostConfig]("evolution_key asc, item_key asc"),
+	"pet_skill_unlocks":    newConfigSchema[models.PetSkillUnlockConfig]("form_key asc, sort_order asc"),
+	"adventure_levels":     newConfigSchema[models.AdventureLevelConfig]("level asc"),
 	"items":                newConfigSchema[models.ItemConfig]("name asc"),
 	"shop_items":           newConfigSchema[models.ShopItemConfig]("id asc"),
+	"checkin_rewards":      newConfigSchema[models.CheckinRewardConfig]("type asc, day asc"),
+	"work_settings":        newConfigSchema[models.WorkSettingConfig]("name asc"),
 	"menus":                newConfigSchema[models.MenuConfig]("name asc"),
 	"images":               newConfigSchema[models.ImageConfig]("name asc"),
 	"live_events":          newConfigSchema[models.LiveEventConfig]("starts_at desc"),
@@ -286,6 +318,10 @@ var configConsumers = map[string][]string{
 	"system":               {"服务启动", "游戏参数"},
 	"commands":             {"统一命令路由", "OneBot", "QQ 官方群", "QQ 官方频道"},
 	"pet_species":          {"领养", "宠物状态", "进化觉醒", "消息图片"},
+	"pet_evolution_rules":  {"进化预览", "确认进化"},
+	"pet_evolution_costs":  {"进化材料扣除"},
+	"pet_skill_unlocks":    {"宠物技能"},
+	"adventure_levels":     {"冒险等级"},
 	"items":                {"统一背包", "物品效果", "社区共建", "安全交易"},
 	"shop_items":           {"商店", "购买出售", "补货"},
 	"checkin_rewards":      {"签到", "每日奖励结算"},
@@ -401,7 +437,7 @@ func (api *ConfigAPI) ResetConfig(c *gin.Context) {
 		Error(c, codeInternalError, "恢复默认配置热重载失败，已回滚")
 		return
 	}
-	Success(c, gin.H{"message": "已切换到官方默认 v0.0.1，其他配置方案已保留"})
+	Success(c, gin.H{"message": "已切换到官方默认 v0.1.0，其他配置方案已保留"})
 }
 
 func (api *ConfigAPI) DeleteConfigItem(c *gin.Context) {

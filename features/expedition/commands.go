@@ -311,23 +311,14 @@ func adoptTagline(name string) string {
 	return string(runes)
 }
 
-func isStarterPet(name string) bool {
-	for _, candidate := range config.StarterPets() {
-		if candidate == name {
-			return true
-		}
-	}
-	return false
-}
-
 func handleAdopt(ctx context.Context, event core.InboundEvent, service *Service) (core.OutboundMessage, error) {
 	account, err := resolve(ctx, service, event)
 	if err != nil {
 		return core.OutboundMessage{}, err
 	}
 	petType := strings.TrimSpace(strings.TrimPrefix(event.Text, "领养"))
-	if !isStarterPet(petType) {
-		return text("没有找到这位伙伴。\n发送“领养宠物”查看可选伙伴。"), nil
+	if petType == "" {
+		return text("请选择要领养的伙伴。\n发送“领养宠物”查看可选伙伴。"), nil
 	}
 	starterBalance := config.Core.InitialCoin
 	if starterBalance <= 0 {
@@ -335,7 +326,13 @@ func handleAdopt(ctx context.Context, event core.InboundEvent, service *Service)
 	}
 	if _, err = service.AdoptWithStarter(ctx, account.ID, petType, petType, currencyName(), starterBalance); err != nil {
 		if errors.Is(err, gameplay.ErrPetAlreadyExists) {
-			return text("你已经有同行伙伴了。\n发送“我的宠物”查看它的近况。"), nil
+			if gameplay.MaxPetSlotsTx(service.DB.WithContext(ctx)) <= 1 {
+				return text("宠物栏尚未开放，当前只能携带一只调查伙伴。\n发送“我的宠物”查看它的近况。"), nil
+			}
+			return text("宠物栏已经满了。\n发送“宠物列表”查看现有伙伴。"), nil
+		}
+		if errors.Is(err, gameplay.ErrPetRequired) {
+			return text("没有找到这位伙伴。\n发送“领养宠物”查看可选伙伴。"), nil
 		}
 		return core.OutboundMessage{}, err
 	}
@@ -369,17 +366,80 @@ func currencyName() string {
 	return name
 }
 
+func handlePetList(ctx context.Context, event core.InboundEvent, service *Service) (core.OutboundMessage, error) {
+	account, err := resolve(ctx, service, event)
+	if err != nil {
+		return core.OutboundMessage{}, err
+	}
+	slots := gameplay.MaxPetSlotsTx(service.DB.WithContext(ctx))
+	if slots <= 1 {
+		return text("宠物栏尚未开放，当前只能携带一只调查伙伴。\n发送“我的宠物”查看当前伙伴。"), nil
+	}
+	pets, err := gameplay.NewPetService(service.DB).List(ctx, account.ID)
+	if err != nil {
+		return core.OutboundMessage{}, err
+	}
+	if len(pets) == 0 {
+		return text("你还没有调查伙伴。\n发送“领养宠物”选择第一只宠物。"), nil
+	}
+	active, _ := gameplay.ActivePet(ctx, service.DB, account.ID)
+	lines := []string{fmt.Sprintf("【宠物列表】%d / %d", len(pets), slots)}
+	for _, pet := range pets {
+		mark := "·"
+		if active != nil && pet.ID == active.ID {
+			mark = "★"
+		}
+		lines = append(lines, fmt.Sprintf("%s %s（%s） %s", mark, pet.Name, pet.CurrentForm, pet.Status))
+	}
+	lines = append(lines, "", "发送“切换宠物 名称”更换当前伙伴。")
+	return text(strings.Join(lines, "\n")), nil
+}
+
+func handleSwitchPet(ctx context.Context, event core.InboundEvent, service *Service) (core.OutboundMessage, error) {
+	account, err := resolve(ctx, service, event)
+	if err != nil {
+		return core.OutboundMessage{}, err
+	}
+	if gameplay.MaxPetSlotsTx(service.DB.WithContext(ctx)) <= 1 {
+		return text("宠物栏尚未开放，当前只能携带一只调查伙伴。"), nil
+	}
+	query := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(event.Text), "切换宠物"))
+	if query == "" {
+		return text("请指定要切换的宠物名称或编号。\n例如：切换宠物 光芽"), nil
+	}
+	pets, err := gameplay.NewPetService(service.DB).List(ctx, account.ID)
+	if err != nil {
+		return core.OutboundMessage{}, err
+	}
+	var target *models.PetProfile
+	for index := range pets {
+		pet := pets[index]
+		if pet.Name == query || pet.ID == query || pet.CurrentForm == query {
+			target = &pet
+			break
+		}
+	}
+	if target == nil {
+		return text("没有找到这个伙伴。\n发送“宠物列表”查看可切换对象。"), nil
+	}
+	if _, err = gameplay.NewPetService(service.DB).SetActive(ctx, account.ID, target.ID); err != nil {
+		return core.OutboundMessage{}, err
+	}
+	return text(fmt.Sprintf("已切换当前伙伴为「%s」。\n发送“我的宠物”查看它的近况。", target.Name)), nil
+}
+
 func handleStatus(ctx context.Context, event core.InboundEvent, service *Service) (core.OutboundMessage, error) {
 	account, err := resolve(ctx, service, event)
 	if err != nil {
 		return core.OutboundMessage{}, err
 	}
-	var pet models.PetProfile
-	if err = service.DB.WithContext(ctx).First(&pet, "account_id = ?", account.ID).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+	active, err := gameplay.ActivePet(ctx, service.DB, account.ID)
+	if errors.Is(err, gameplay.ErrPetRequired) {
 		return text("你还没有同行伙伴。\n发送“领养宠物”选择第一只宠物。"), nil
 	} else if err != nil {
 		return core.OutboundMessage{}, err
 	}
+	pet := *active
 	activity := "当前空闲，可发送“远征”选择行动。"
 	if pet.Status == gameplay.PetStatusResting {
 		activity = "正在安心休养；想再次同行时，发送“找回”。"
@@ -409,7 +469,7 @@ func handleStatus(ctx context.Context, event core.InboundEvent, service *Service
 		form = pet.PetType
 	}
 	var species models.PetSpeciesConfig
-	speciesResult := service.DB.WithContext(ctx).Limit(1).Find(&species, "name = ?", pet.PetType)
+	speciesResult := service.DB.WithContext(ctx).Limit(1).Find(&species, "key = ? OR name = ?", form, form)
 	wisdomMax, strengthMax, defenseMax := int64(100), int64(100), int64(100)
 	if speciesResult.Error == nil && speciesResult.RowsAffected > 0 {
 		wisdomMax = statusMaximum(species.WisdomMax, wisdomMax)
@@ -619,7 +679,7 @@ func handleClaim(ctx context.Context, event core.InboundEvent, service *Service)
 		lines = append(lines, fmt.Sprintf("活动进度：%d", result.EventProgress))
 	}
 	for _, reward := range result.EventRewards {
-		lines = append(lines, fmt.Sprintf("活动奖励：%s ×%d", reward.ItemName, reward.Quantity))
+		lines = append(lines, fmt.Sprintf("活动奖励：%s ×%d", reward.RewardName, reward.Quantity))
 	}
 	lines = append(lines, "", "发送“远征”选择下一次行动。")
 	message := text(strings.Join(lines, "\n"))
@@ -646,7 +706,7 @@ func handleEvent(ctx context.Context, event core.InboundEvent, service *Service)
 		}
 		lines := []string{"【活动奖励已领取】", fmt.Sprintf("当前进度：%d", progress)}
 		for _, reward := range rewards {
-			lines = append(lines, fmt.Sprintf("%s ×%d", reward.ItemName, reward.Quantity))
+			lines = append(lines, fmt.Sprintf("%s ×%d", reward.RewardName, reward.Quantity))
 		}
 		return text(strings.Join(lines, "\n")), nil
 	}
@@ -670,7 +730,7 @@ func handleEvent(ctx context.Context, event core.InboundEvent, service *Service)
 			if status.Progress >= reward.Milestone {
 				marker = "✅"
 			}
-			lines = append(lines, fmt.Sprintf("%s %d｜%s ×%d", marker, reward.Milestone, reward.ItemName, reward.Quantity))
+			lines = append(lines, fmt.Sprintf("%s %d｜%s ×%d", marker, reward.Milestone, reward.RewardName, reward.Quantity))
 		}
 	}
 	lines = append(lines, "", "完成远征可推进活动进度；发送“活动 领取”领取已达成奖励。")
@@ -1148,6 +1208,19 @@ func menuCatalog(service *Service) []core.UnifiedFeature {
 }
 
 func handleMenu(_ context.Context, _ core.InboundEvent, service *Service) (core.OutboundMessage, error) {
+	if service != nil && service.DB != nil && service.DB.Migrator().HasTable(&models.MenuConfig{}) {
+		var scene models.MenuConfig
+		result := service.DB.Where("name IN ?", []string{"主菜单", "宠物菜单"}).Order("CASE name WHEN '主菜单' THEN 0 ELSE 1 END").First(&scene)
+		if result.Error == nil && strings.TrimSpace(scene.Reply) != "" {
+			message := text(strings.TrimSpace(scene.Reply))
+			message.Image = core.ExistingImageSource(scene.Image)
+			message.MessageKey = "menu.main"
+			return message, nil
+		}
+		if result.Error != nil && !errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return core.OutboundMessage{}, result.Error
+		}
+	}
 	features := menuCatalog(service)
 	categoryOrder := []string{"基础", "物品", "陪伴", "成长", "远征", "扩展", "社区", "账号"}
 	categoryTitle := map[string]string{
@@ -1216,7 +1289,7 @@ func handleConfirmFoster(ctx context.Context, event core.InboundEvent, service *
 	}
 	expectedName := strings.TrimSpace(strings.TrimPrefix(event.Text, "确认放生"))
 	if expectedName == "" {
-		return text("请带上宠物当前名字进行确认。\n例如：确认放生 诺诺"), nil
+		return text("请带上宠物当前名字进行确认。\n例如：确认放生 光芽"), nil
 	}
 	pet, err := gameplay.NewCareService(service.DB).PutToRest(ctx, account.ID, expectedName)
 	if err != nil {

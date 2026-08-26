@@ -11,7 +11,12 @@ import (
 	"qq-pet-saas/models"
 )
 
-const DefaultCurrencyKey = "咔币"
+const (
+	PrimaryCurrencyKey      = "primary_coin"
+	JourneyBadgeCurrencyKey = "journey_badge"
+	SeasonTokenCurrencyKey  = "season_token"
+	DefaultCurrencyKey      = PrimaryCurrencyKey
+)
 
 type WalletService struct {
 	DB  *gorm.DB

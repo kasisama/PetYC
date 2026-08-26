@@ -7,11 +7,38 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"qq-pet-saas/models"
 	"qq-pet-saas/security"
 )
+
+func creditUnifiedItemTx(tx *gorm.DB, accountID, itemName string, quantity int64, now time.Time) error {
+	itemName = strings.TrimSpace(itemName)
+	if accountID == "" || itemName == "" || quantity <= 0 {
+		return errors.New("物品发放参数无效")
+	}
+	itemKey, displayName := itemName, itemName
+	var configured models.ItemConfig
+	if result := tx.Limit(1).Find(&configured, "key = ? OR name = ?", itemName, itemName); result.Error == nil && result.RowsAffected > 0 {
+		if strings.TrimSpace(configured.Key) != "" {
+			itemKey = configured.Key
+		}
+		if strings.TrimSpace(configured.Name) != "" {
+			displayName = configured.Name
+		}
+	}
+	item := models.GlobalInventoryItem{AccountID: accountID, ItemKey: itemKey, ItemName: displayName, Quantity: quantity, UpdatedAt: now}
+	return tx.Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "account_id"}, {Name: "item_key"}},
+		DoUpdates: clause.Assignments(map[string]interface{}{
+			"quantity":   gorm.Expr("quantity + ?", quantity),
+			"updated_at": now,
+			"item_name":  displayName,
+		}),
+	}).Create(&item).Error
+}
 
 var errConcurrentChange = errors.New("数据已发生变化，请刷新后重试")
 
@@ -144,14 +171,42 @@ func (api *EcosystemAPI) GrantItem(c *gin.Context) {
 		if err := tx.Create(&models.AdminOperationKey{Key: request.IdempotencyKey, Action: "grant_item", TargetID: accountID, CreatedAt: time.Now()}).Error; err != nil {
 			return nil, errors.New("幂等键冲突，请刷新结果")
 		}
-		item := models.GlobalInventoryItem{AccountID: accountID, ItemName: request.ItemName, Quantity: request.Quantity, UpdatedAt: time.Now()}
-		if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "account_id"}, {Name: "item_name"}}, DoUpdates: clause.Assignments(map[string]interface{}{"quantity": gorm.Expr("quantity + ?", request.Quantity), "updated_at": time.Now()})}).Create(&item).Error; err != nil {
+		if err := creditUnifiedItemTx(tx, accountID, request.ItemName, request.Quantity, time.Now()); err != nil {
 			return nil, err
 		}
+		var item models.GlobalInventoryItem
 		if err := tx.First(&item, "account_id = ? AND item_name = ?", accountID, request.ItemName).Error; err != nil {
 			return nil, err
 		}
 		return gin.H{"item": item, "replayed": false}, nil
+	})
+}
+
+func (api *EcosystemAPI) SetActivePet(c *gin.Context) {
+	accountID := c.Param("account_id")
+	var request struct {
+		PetID  string `json:"pet_id"`
+		Reason string `json:"reason"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil || strings.TrimSpace(request.PetID) == "" {
+		Error(c, 4000, "请指定要切换的宠物")
+		return
+	}
+	var account models.PlayerAccount
+	if err := api.DB.First(&account, "id = ?", accountID).Error; err != nil {
+		Error(c, 4040, "玩家不存在")
+		return
+	}
+	var pet models.PetProfile
+	if err := api.DB.First(&pet, "id = ? AND account_id = ?", request.PetID, accountID).Error; err != nil {
+		Error(c, 4040, "宠物不存在或不属于该账号")
+		return
+	}
+	api.auditedMutation(c, "set_active_pet", "player", accountID, request.Reason, gin.H{"active_pet_id": account.ActivePetID}, func(tx *gorm.DB) (interface{}, error) {
+		if err := tx.Model(&models.PlayerAccount{}).Where("id = ?", accountID).Update("active_pet_id", pet.ID).Error; err != nil {
+			return nil, err
+		}
+		return gin.H{"active_pet_id": pet.ID, "pet": pet}, nil
 	})
 }
 
@@ -161,6 +216,69 @@ type reasonRequest struct {
 type confirmRequest struct {
 	Reason       string `json:"reason"`
 	Confirmation string `json:"confirmation"`
+}
+
+const seasonTokenCurrencyKey = "season_token"
+
+// ResetSeason removes only season-scoped player state. Permanent pets,
+// equipment, codex, blueprints, adventure level and map progress are kept.
+func (api *EcosystemAPI) ResetSeason(c *gin.Context) {
+	eventKey := strings.TrimSpace(c.Param("event_key"))
+	var request struct {
+		SeasonKey    string `json:"season_key"`
+		Reason       string `json:"reason"`
+		Confirmation string `json:"confirmation"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil || eventKey == "" {
+		Error(c, 4000, "请求格式错误")
+		return
+	}
+	request.SeasonKey = strings.TrimSpace(request.SeasonKey)
+	if request.SeasonKey == "" {
+		request.SeasonKey = eventKey
+	}
+	if request.Confirmation != "重置赛季:"+eventKey {
+		Error(c, 4000, "确认文字不正确")
+		return
+	}
+	var event models.LiveEventConfig
+	if err := api.DB.First(&event, "key = ?", eventKey).Error; err != nil {
+		Error(c, 4040, "赛季活动不存在")
+		return
+	}
+	before := gin.H{"event_key": eventKey, "season_key": request.SeasonKey}
+	api.auditedMutation(c, "reset_season", "live_event", eventKey, request.Reason, before, func(tx *gorm.DB) (interface{}, error) {
+		now := time.Now()
+		var wallets []models.PlayerWallet
+		if err := tx.Where("currency_key = ? AND balance <> 0", seasonTokenCurrencyKey).Find(&wallets).Error; err != nil {
+			return nil, err
+		}
+		for _, wallet := range wallets {
+			ledger := models.WalletLedger{
+				ID: uuid.NewString(), AccountID: wallet.AccountID, CurrencyKey: wallet.CurrencyKey,
+				Delta: -wallet.Balance, BalanceAfter: 0, Reason: "season_reset", ReferenceKey: eventKey, CreatedAt: now,
+			}
+			if err := tx.Create(&ledger).Error; err != nil {
+				return nil, err
+			}
+		}
+		if err := tx.Model(&models.PlayerWallet{}).Where("currency_key = ?", seasonTokenCurrencyKey).Updates(map[string]any{"balance": 0, "updated_at": now}).Error; err != nil {
+			return nil, err
+		}
+		deleted := map[string]int64{}
+		for key, result := range map[string]*gorm.DB{
+			"event_progress": tx.Where("event_key = ?", eventKey).Delete(&models.EventProgress{}),
+			"event_grants":   tx.Where("event_key = ?", eventKey).Delete(&models.EventProgressGrant{}),
+			"event_claims":   tx.Where("event_key = ?", eventKey).Delete(&models.EventRewardClaim{}),
+			"season_votes":   tx.Where("season_key = ?", request.SeasonKey).Delete(&models.SeasonVote{}),
+		} {
+			if result.Error != nil {
+				return nil, result.Error
+			}
+			deleted[key] = result.RowsAffected
+		}
+		return gin.H{"event_key": eventKey, "season_key": request.SeasonKey, "wallets_reset": len(wallets), "deleted": deleted, "permanent_progress_preserved": true}, nil
+	})
 }
 
 func (api *EcosystemAPI) SetPlayerNotifications(c *gin.Context) {
@@ -255,7 +373,7 @@ func (api *EcosystemAPI) DeletePlayer(c *gin.Context) {
 				return nil, err
 			}
 		}
-		accountModels := []interface{}{&models.PlayerIdentity{}, &models.PetProfile{}, &models.GlobalInventoryItem{}, &models.PlayerWallet{}, &models.WalletLedger{}, &models.CompanionJournal{}, &models.CompanionActionDaily{}, &models.ActivityRun{}, &models.ItemUseRecord{}, &models.ExpeditionRun{}, &models.EventProgress{}, &models.EventProgressGrant{}, &models.EventRewardClaim{}, &models.ChanceDailyState{}, &models.ChancePlayerState{}, &models.ChanceOutcome{}, &models.FishingRun{}, &models.BattleRecord{}, &models.TradeAudit{}, &models.CodexEntry{}, &models.CommunityMember{}, &models.SquadMember{}, &models.IdentityBindToken{}, &models.NotificationJob{}, &models.NotificationPreference{}, &models.BossContribution{}, &models.SeasonVote{}, &models.PetBehaviorProfile{}}
+		accountModels := []interface{}{&models.PlayerIdentity{}, &models.PetProfile{}, &models.GlobalInventoryItem{}, &models.PlayerWallet{}, &models.WalletLedger{}, &models.AdventureShopPurchase{}, &models.PlayerEquipment{}, &models.PlayerBlueprintProgress{}, &models.CompanionJournal{}, &models.CompanionActionDaily{}, &models.ActivityRun{}, &models.ItemUseRecord{}, &models.ExpeditionRun{}, &models.EventProgress{}, &models.EventProgressGrant{}, &models.EventRewardClaim{}, &models.ChanceDailyState{}, &models.ChancePlayerState{}, &models.ChanceOutcome{}, &models.FishingRun{}, &models.BattleRecord{}, &models.TradeAudit{}, &models.CodexEntry{}, &models.CommunityMember{}, &models.SquadMember{}, &models.IdentityBindToken{}, &models.NotificationJob{}, &models.NotificationPreference{}, &models.BossContribution{}, &models.SeasonVote{}, &models.PetBehaviorProfile{}}
 		for _, model := range accountModels {
 			if err := tx.Where("account_id = ?", accountID).Delete(model).Error; err != nil {
 				return nil, err
@@ -353,12 +471,15 @@ func (api *EcosystemAPI) ReconcileExpedition(c *gin.Context) {
 			if quantity <= 0 {
 				continue
 			}
-			item := models.GlobalInventoryItem{AccountID: run.AccountID, ItemName: itemName, Quantity: quantity, UpdatedAt: now}
-			if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "account_id"}, {Name: "item_name"}}, DoUpdates: clause.Assignments(map[string]interface{}{"quantity": gorm.Expr("quantity + ?", quantity), "updated_at": now})}).Create(&item).Error; err != nil {
+			if err := creditUnifiedItemTx(tx, run.AccountID, itemName, quantity, now); err != nil {
 				return nil, err
 			}
 		}
-		if err := tx.Model(&models.PetProfile{}).Where("account_id = ?", run.AccountID).UpdateColumn("growth", gorm.Expr("growth + ?", run.RewardGrowth)).Error; err != nil {
+		petQuery := tx.Model(&models.PetProfile{}).Where("account_id = ?", run.AccountID)
+		if strings.TrimSpace(run.PetID) != "" {
+			petQuery = petQuery.Where("id = ?", run.PetID)
+		}
+		if err := petQuery.UpdateColumn("growth", gorm.Expr("growth + ?", run.RewardGrowth)).Error; err != nil {
 			return nil, err
 		}
 		if err := tx.First(&run, "id = ?", id).Error; err != nil {

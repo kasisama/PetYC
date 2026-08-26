@@ -32,9 +32,10 @@ func (service *InventoryService) CreditTx(tx *gorm.DB, accountID, itemName strin
 		return ErrInvalidQuantity
 	}
 	now := service.now()
-	item := models.GlobalInventoryItem{AccountID: accountID, ItemName: itemName, Quantity: quantity, UpdatedAt: now}
+	itemKey, displayName := resolveInventoryItem(tx, itemName)
+	item := models.GlobalInventoryItem{AccountID: accountID, ItemKey: itemKey, ItemName: displayName, Quantity: quantity, UpdatedAt: now}
 	return tx.Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "account_id"}, {Name: "item_name"}},
+		Columns: []clause.Column{{Name: "account_id"}, {Name: "item_key"}},
 		DoUpdates: clause.Assignments(map[string]interface{}{
 			"quantity":   gorm.Expr("quantity + ?", quantity),
 			"updated_at": now,
@@ -54,8 +55,9 @@ func (service *InventoryService) DebitTx(tx *gorm.DB, accountID, itemName string
 	if quantity <= 0 || accountID == "" || itemName == "" {
 		return ErrInvalidQuantity
 	}
+	itemKey, _ := resolveInventoryItem(tx, itemName)
 	result := tx.Model(&models.GlobalInventoryItem{}).
-		Where("account_id = ? AND item_name = ? AND quantity >= ?", accountID, itemName, quantity).
+		Where("account_id = ? AND item_key = ? AND quantity >= ?", accountID, itemKey, quantity).
 		Updates(map[string]interface{}{"quantity": gorm.Expr("quantity - ?", quantity), "updated_at": service.now()})
 	if result.Error != nil {
 		return result.Error
@@ -64,6 +66,18 @@ func (service *InventoryService) DebitTx(tx *gorm.DB, accountID, itemName string
 		return ErrInsufficientItem
 	}
 	return nil
+}
+
+func resolveInventoryItem(tx *gorm.DB, raw string) (string, string) {
+	key, name := strings.TrimSpace(raw), strings.TrimSpace(raw)
+	if tx == nil || key == "" {
+		return key, name
+	}
+	var item models.ItemConfig
+	if result := tx.Limit(1).Find(&item, "key = ? OR name = ?", key, key); result.Error == nil && result.RowsAffected > 0 {
+		return item.Key, item.Name
+	}
+	return key, name
 }
 
 func (service *InventoryService) Transfer(ctx context.Context, fromAccountID, toAccountID, itemName string, quantity int64) error {

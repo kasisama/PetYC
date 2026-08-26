@@ -2,6 +2,8 @@ package admin
 
 import (
 	"errors"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -11,6 +13,22 @@ import (
 )
 
 type AdventureAPI struct{ DB *gorm.DB }
+
+var errAdventureRevisionConflict = errors.New("adventure catalog revision conflict")
+
+type adventureCatalogRequest struct {
+	ExpectedRevision uint64                     `json:"expected_revision"`
+	Catalog          appconfig.AdventureCatalog `json:"catalog"`
+}
+
+type adventureValidationIssue struct {
+	Module    string `json:"module"`
+	Entity    string `json:"entity_key,omitempty"`
+	Field     string `json:"field,omitempty"`
+	Code      string `json:"code"`
+	Message   string `json:"message"`
+	Reference string `json:"reference,omitempty"`
+}
 
 func RegisterAdventureRoutes(group *gin.RouterGroup, db *gorm.DB) {
 	api := &AdventureAPI{DB: db}
@@ -26,7 +44,12 @@ func (api *AdventureAPI) getCatalog(c *gin.Context) {
 		Error(c, codeInternalError, "读取冒险配置失败: "+err.Error())
 		return
 	}
-	Success(c, catalog)
+	status, err := appconfig.GetConfigStatus(api.DB)
+	if err != nil {
+		Error(c, codeInternalError, "读取配置版本失败: "+err.Error())
+		return
+	}
+	Success(c, gin.H{"revision": status.DBRevision, "catalog": catalog})
 }
 
 func (api *AdventureAPI) validateCatalog(c *gin.Context) {
@@ -36,32 +59,67 @@ func (api *AdventureAPI) validateCatalog(c *gin.Context) {
 		return
 	}
 	if err := appconfig.ValidateAdventureCatalog(api.DB, payload); err != nil {
-		Error(c, codeInvalidPayload, err.Error())
+		Success(c, gin.H{"valid": false, "issues": []adventureValidationIssue{adventureIssue(err)}, "summary": adventureCatalogSummary(payload)})
 		return
 	}
-	Success(c, gin.H{"valid": true, "summary": adventureCatalogSummary(payload)})
+	Success(c, gin.H{"valid": true, "issues": []adventureValidationIssue{}, "summary": adventureCatalogSummary(payload)})
 }
 
 func (api *AdventureAPI) saveCatalog(c *gin.Context) {
-	var payload appconfig.AdventureCatalog
-	if err := c.ShouldBindJSON(&payload); err != nil {
+	var request adventureCatalogRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
 		Error(c, codeInvalidPayload, "冒险配置格式无效: "+err.Error())
 		return
 	}
 	if err := api.DB.Transaction(func(tx *gorm.DB) error {
-		if err := appconfig.ReplaceAdventureCatalog(tx, payload); err != nil {
+		status, err := appconfig.GetConfigStatus(tx)
+		if err != nil {
 			return err
 		}
-		return appconfig.MarkConfigSaved(tx)
+		if status.DBRevision != request.ExpectedRevision {
+			return errAdventureRevisionConflict
+		}
+		if err := appconfig.ReplaceAdventureCatalog(tx, request.Catalog); err != nil {
+			return err
+		}
+		if err := appconfig.MarkConfigSaved(tx); err != nil {
+			return err
+		}
+		// 冒险业务直接从 SQL 查询配置，没有进程内旧副本；在同一事务中
+		// 将新版本标记为已加载，避免出现“保存成功但仍待重载”的假状态。
+		return appconfig.MarkConfigLoaded(tx, request.ExpectedRevision+1)
 	}); err != nil {
+		if errors.Is(err, errAdventureRevisionConflict) {
+			c.JSON(http.StatusConflict, gin.H{"code": 4093, "msg": "冒险配置已被其他管理员更新，请刷新后重试", "data": gin.H{"conflict": "revision"}, "request_id": responseRequestID(c)})
+			return
+		}
 		Error(c, codeInvalidPayload, "保存冒险配置失败: "+err.Error())
 		return
 	}
-	Success(c, gin.H{"saved": true, "summary": adventureCatalogSummary(payload)})
+	status, _ := appconfig.GetConfigStatus(api.DB)
+	Success(c, gin.H{"saved": true, "revision": status.DBRevision, "summary": adventureCatalogSummary(request.Catalog)})
 }
 
 func adventureCatalogSummary(payload appconfig.AdventureCatalog) gin.H {
-	return gin.H{"maps": len(payload.Maps), "zones": len(payload.Zones), "monsters": len(payload.Monsters), "bosses": len(payload.Bosses), "equipment": len(payload.EquipmentTemplates), "objectives": len(payload.Objectives)}
+	return gin.H{"maps": len(payload.Maps), "zones": len(payload.Zones), "monsters": len(payload.Monsters), "bosses": len(payload.Bosses), "equipment": len(payload.EquipmentTemplates), "objectives": len(payload.Objectives), "items": len(payload.Items), "shop_items": len(payload.ShopItems)}
+}
+
+func adventureIssue(err error) adventureValidationIssue {
+	message := err.Error()
+	issue := adventureValidationIssue{Module: "catalog", Code: "invalid_reference", Message: message}
+	mappings := []struct{ Prefix, Module string }{
+		{"大地图", "maps"}, {"区域", "exploration"}, {"探索目标", "exploration"}, {"遭遇", "exploration"},
+		{"怪物", "monsters"}, {"战斗技能", "skills"}, {"奖励池", "loot"}, {"远征物品", "inventory"},
+		{"远征货币", "inventory"}, {"远征商店", "shop"}, {"区域远征", "expeditions"}, {"地图首领", "bosses"},
+		{"装备", "equipment"},
+	}
+	for _, mapping := range mappings {
+		if strings.HasPrefix(message, mapping.Prefix) {
+			issue.Module = mapping.Module
+			break
+		}
+	}
+	return issue
 }
 
 func (api *AdventureAPI) getRuntime(c *gin.Context) {

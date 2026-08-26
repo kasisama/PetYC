@@ -26,7 +26,7 @@ const router = createRouter({
         { path: '', name: 'dashboard', component: DashboardView, meta: { title: '运营总览' } },
         { path: 'players', name: 'players', component: PlayersView, meta: { title: '玩家管理' } },
         { path: 'gameplay', name: 'gameplay', component: GameplayView, meta: { title: '玩法运营' } },
-        { path: 'adventure', name: 'adventure', component: AdventureView, meta: { title: '冒险世界' } },
+        { path: 'adventure/:section?', name: 'adventure', component: AdventureView, meta: { title: '冒险世界' } },
         { path: 'communities', name: 'communities', component: CommunitiesView, meta: { title: '社群运营' } },
         { path: 'content', name: 'content', component: ContentView, meta: { title: '内容配置' } },
         { path: 'profiles', name: 'profiles', component: ConfigProfilesView, meta: { title: '配置方案' } },

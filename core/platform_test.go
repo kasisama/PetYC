@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/glebarez/sqlite"
@@ -92,6 +93,127 @@ func TestRebuildUnifiedRouterUsesEnabledConfiguredTrigger(t *testing.T) {
 	}
 }
 
+func TestRebuildUnifiedRouterRegistersConfiguredMenuScene(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.AutoMigrate(&models.CommandConfig{}, &models.MenuConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Create(&models.MenuConfig{Name: "今日与状态", Reply: "今日图文菜单", Image: "https://cdn.example.com/today.webp"}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	previousRouter, previousFeatures := unifiedRouter, unifiedFeatures
+	unifiedRouter, unifiedFeatures = NewCommandRouter(), make(map[string]UnifiedFeature)
+	t.Cleanup(func() { unifiedRouter, unifiedFeatures = previousRouter, previousFeatures })
+	if err = RebuildUnifiedRouter(db); err != nil {
+		t.Fatal(err)
+	}
+	message, handled, routeErr := RouteInbound(context.Background(), InboundEvent{Text: "今日与状态"})
+	if routeErr != nil || !handled {
+		t.Fatalf("菜单场景未注册: handled=%v err=%v", handled, routeErr)
+	}
+	if message.Text != "今日图文菜单" || message.Image != "https://cdn.example.com/today.webp" {
+		t.Fatalf("菜单场景图文不匹配: %#v", message)
+	}
+}
+
+func TestRebuildUnifiedRouterDoesNotLetMenuSceneOverrideBusinessCommand(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.AutoMigrate(&models.CommandConfig{}, &models.MenuConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	previousRouter, previousFeatures := unifiedRouter, unifiedFeatures
+	unifiedRouter, unifiedFeatures = NewCommandRouter(), make(map[string]UnifiedFeature)
+	t.Cleanup(func() { unifiedRouter, unifiedFeatures = previousRouter, previousFeatures })
+	handler := func(context.Context, InboundEvent) (OutboundMessage, error) {
+		return OutboundMessage{Text: "real-command"}, nil
+	}
+	if err = RegisterUnifiedFeature(UnifiedFeature{FuncName: "status", DefaultCommand: "我的宠物", DisplayName: "我的宠物", Enabled: true}, handler); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Create(&models.MenuConfig{Name: "我的宠物", Reply: "菜单劫持", Image: "https://cdn.example.com/hijack.webp"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err = RebuildUnifiedRouter(db); err != nil {
+		t.Fatalf("同名菜单不应导致路由重建失败: %v", err)
+	}
+	message, handled, routeErr := RouteInbound(context.Background(), InboundEvent{Text: "我的宠物"})
+	if routeErr != nil || !handled {
+		t.Fatalf("真实命令未执行: handled=%v err=%v", handled, routeErr)
+	}
+	if message.Text != "real-command" || message.Image != "" {
+		t.Fatalf("菜单场景劫持了真实命令: %#v", message)
+	}
+}
+
+func TestRebuildUnifiedRouterMenuSceneReadsLatestConfigOnTrigger(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.AutoMigrate(&models.CommandConfig{}, &models.MenuConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Create(&models.MenuConfig{Name: "今日与状态", Reply: "旧菜单", Image: "https://cdn.example.com/old.webp"}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	previousRouter, previousFeatures := unifiedRouter, unifiedFeatures
+	unifiedRouter, unifiedFeatures = NewCommandRouter(), make(map[string]UnifiedFeature)
+	t.Cleanup(func() { unifiedRouter, unifiedFeatures = previousRouter, previousFeatures })
+	if err = RebuildUnifiedRouter(db); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Model(&models.MenuConfig{}).Where("name = ?", "今日与状态").Updates(map[string]any{
+		"reply": "新菜单",
+		"image": "https://cdn.example.com/new.webp",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	message, handled, routeErr := RouteInbound(context.Background(), InboundEvent{Text: "今日与状态"})
+	if routeErr != nil || !handled {
+		t.Fatalf("菜单场景未触发: handled=%v err=%v", handled, routeErr)
+	}
+	if message.Text != "新菜单" || message.Image != "https://cdn.example.com/new.webp" {
+		t.Fatalf("菜单场景未读取最新配置: %#v", message)
+	}
+}
+
+func TestRebuildUnifiedRouterRejectsExactTriggerOwnedByDifferentFeatures(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.AutoMigrate(&models.CommandConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	previousRouter, previousFeatures := unifiedRouter, unifiedFeatures
+	unifiedRouter, unifiedFeatures = NewCommandRouter(), make(map[string]UnifiedFeature)
+	t.Cleanup(func() { unifiedRouter, unifiedFeatures = previousRouter, previousFeatures })
+	handler := func(context.Context, InboundEvent) (OutboundMessage, error) { return OutboundMessage{Text: "ok"}, nil }
+	if err = RegisterUnifiedFeature(UnifiedFeature{FuncName: "materials", DefaultCommand: "材料背包", DisplayName: "材料背包", Enabled: true}, handler); err != nil {
+		t.Fatal(err)
+	}
+	if err = RegisterUnifiedFeature(UnifiedFeature{FuncName: "equipment", DefaultCommand: "装备背包", Aliases: []string{"装备"}, DisplayName: "装备背包", Enabled: true}, handler); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Create(&models.CommandConfig{FuncName: "materials", Command: "装备", DisplayName: "材料背包", Enabled: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Create(&models.CommandConfig{FuncName: "equipment", Command: "装备背包", DisplayName: "装备背包", Enabled: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err = RebuildUnifiedRouter(db); err == nil || !strings.Contains(err.Error(), "materials") || !strings.Contains(err.Error(), "equipment") {
+		t.Fatalf("expected named command conflict, got %v", err)
+	}
+}
+
 func TestSyncUnifiedCommandConfigsPreservesCustomTriggersAndAddsFamiliarCommands(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
@@ -136,6 +258,34 @@ func TestSyncUnifiedCommandConfigsPreservesCustomTriggersAndAddsFamiliarCommands
 	}
 	if familiar.Command != "签到" || !familiar.Enabled {
 		t.Fatalf("应补充熟悉命令: %#v", familiar)
+	}
+}
+
+func TestSyncUnifiedCommandConfigsBuildsMenuRoutesWithRootDatabase(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.AutoMigrate(&models.CommandConfig{}, &models.SystemConfig{}, &models.MenuConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Create(&models.MenuConfig{Name: "今日与状态", Reply: "事务外菜单", Image: "https://cdn.example.com/menu.webp"}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	previousRouter, previousFeatures := unifiedRouter, unifiedFeatures
+	unifiedRouter, unifiedFeatures = NewCommandRouter(), make(map[string]UnifiedFeature)
+	t.Cleanup(func() { unifiedRouter, unifiedFeatures = previousRouter, previousFeatures })
+
+	if err = SyncUnifiedCommandConfigs(db); err != nil {
+		t.Fatal(err)
+	}
+	message, handled, routeErr := RouteInbound(context.Background(), InboundEvent{Text: "今日与状态"})
+	if routeErr != nil || !handled {
+		t.Fatalf("事务提交后菜单路由不可用: handled=%v err=%v", handled, routeErr)
+	}
+	if message.Text != "事务外菜单" || message.Image != "https://cdn.example.com/menu.webp" {
+		t.Fatalf("事务提交后菜单图文不匹配: %#v", message)
 	}
 }
 

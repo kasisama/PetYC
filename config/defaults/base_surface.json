@@ -1,0 +1,1530 @@
+{
+  "system": [
+    {
+      "Key": "Core.CheckinLike",
+      "Value": "true"
+    },
+    {
+      "Key": "Core.CoinName",
+      "Value": "星砂"
+    },
+    {
+      "Key": "Core.DyingProtectTime",
+      "Value": "60"
+    },
+    {
+      "Key": "Core.DyingSaveTime",
+      "Value": "2000"
+    },
+    {
+      "Key": "Core.EscapeFindTime",
+      "Value": "2000"
+    },
+    {
+      "Key": "Core.InitialCoin",
+      "Value": "240"
+    },
+    {
+      "Key": "Core.InitialPets",
+      "Value": "光芽兽#苔须灵#烬爪兽#岩甲犀#风耳狐"
+    },
+    {
+      "Key": "Core.LostCooldown",
+      "Value": "720"
+    },
+    {
+      "Key": "Core.RenameBlocklist",
+      "Value": "群主"
+    },
+    {
+      "Key": "Core.RenameCost",
+      "Value": "1000"
+    },
+    {
+      "Key": "Core.TreatCost",
+      "Value": "500"
+    },
+    {
+      "Key": "Core.TxFee",
+      "Value": "30"
+    },
+    {
+      "Key": "Interaction.BuyLimit",
+      "Value": "10"
+    },
+    {
+      "Key": "Interaction.CounterHunger",
+      "Value": "15"
+    },
+    {
+      "Key": "Interaction.CounterSuccess",
+      "Value": "80"
+    },
+    {
+      "Key": "Interaction.CreateFamilyCoin",
+      "Value": "500"
+    },
+    {
+      "Key": "Interaction.CreateFamilyItem",
+      "Value": "共建标识*1"
+    },
+    {
+      "Key": "Interaction.FamilySizeLimit",
+      "Value": "10"
+    },
+    {
+      "Key": "Interaction.FishHungerCost",
+      "Value": "5"
+    },
+    {
+      "Key": "Interaction.FishSpecies",
+      "Value": "溪纹鱼"
+    },
+    {
+      "Key": "Interaction.FishSuccessRate",
+      "Value": "80"
+    },
+    {
+      "Key": "Interaction.FitnessGrowth",
+      "Value": "5"
+    },
+    {
+      "Key": "Interaction.FitnessHungerCost",
+      "Value": "12"
+    },
+    {
+      "Key": "Interaction.FitnessLimit",
+      "Value": "5"
+    },
+    {
+      "Key": "Interaction.GiftLimit",
+      "Value": "5"
+    },
+    {
+      "Key": "Interaction.HungerMoodFlush",
+      "Value": "60"
+    },
+    {
+      "Key": "Interaction.LotteryItem",
+      "Value": "遗迹抽签券*1"
+    },
+    {
+      "Key": "Interaction.LotteryRewardStr",
+      "Value": "1%星辉晶核*1~1"
+    },
+    {
+      "Key": "Interaction.RpsAffectLimit",
+      "Value": "24"
+    },
+    {
+      "Key": "Interaction.RpsAffection",
+      "Value": "8"
+    },
+    {
+      "Key": "Interaction.RpsHungerCost",
+      "Value": "5"
+    },
+    {
+      "Key": "Interaction.RpsInterval",
+      "Value": "180"
+    },
+    {
+      "Key": "Interaction.SellNoPriceGrowth",
+      "Value": "10"
+    },
+    {
+      "Key": "Interaction.SnackHungerCost",
+      "Value": "30"
+    },
+    {
+      "Key": "Interaction.SnackInterval",
+      "Value": "300"
+    },
+    {
+      "Key": "Interaction.SnackProtect",
+      "Value": "300"
+    },
+    {
+      "Key": "Interaction.SnackSuccess",
+      "Value": "99"
+    },
+    {
+      "Key": "Interaction.StudyGrowth",
+      "Value": "5"
+    },
+    {
+      "Key": "Interaction.StudyHungerCost",
+      "Value": "10"
+    },
+    {
+      "Key": "Interaction.StudyLimit",
+      "Value": "5"
+    },
+    {
+      "Key": "Interaction.TouchAffectLimit",
+      "Value": "30"
+    },
+    {
+      "Key": "Interaction.TouchAffection",
+      "Value": "10"
+    },
+    {
+      "Key": "Interaction.TouchGrowth",
+      "Value": "8"
+    },
+    {
+      "Key": "Interaction.TouchGrowthLimit",
+      "Value": "24"
+    },
+    {
+      "Key": "Interaction.TouchHungerCost",
+      "Value": "5"
+    },
+    {
+      "Key": "Interaction.TouchInterval",
+      "Value": "600"
+    },
+    {
+      "Key": "Interaction.TrainGrowth",
+      "Value": "5"
+    },
+    {
+      "Key": "Interaction.TrainHungerCost",
+      "Value": "10"
+    },
+    {
+      "Key": "Interaction.TrainLimit",
+      "Value": "3"
+    },
+    {
+      "Key": "Interaction.CommunityBuildGoal",
+      "Value": "155"
+    },
+    {
+      "Key": "Interaction.CommunityBuildRewardItems",
+      "Value": "晨露果*1"
+    },
+    {
+      "Key": "Interaction.WalkAffectLimit",
+      "Value": "24"
+    },
+    {
+      "Key": "Interaction.WalkAffection",
+      "Value": "8"
+    },
+    {
+      "Key": "Interaction.WalkGrowth",
+      "Value": "5"
+    },
+    {
+      "Key": "Interaction.WalkGrowthLimit",
+      "Value": "20"
+    },
+    {
+      "Key": "Interaction.WalkHungerCost",
+      "Value": "15"
+    },
+    {
+      "Key": "Interaction.WalkInterval",
+      "Value": "600"
+    },
+    {
+      "Key": "Interaction.WashAffection",
+      "Value": "10"
+    },
+    {
+      "Key": "Interaction.WashGrowth",
+      "Value": "8"
+    },
+    {
+      "Key": "Interaction.WashHungerCost",
+      "Value": "5"
+    },
+    {
+      "Key": "Interaction.WorkHungerCost",
+      "Value": "20"
+    },
+    {
+      "Key": "Interaction.WorkRewardCoin",
+      "Value": "300"
+    },
+    {
+      "Key": "Interaction.WorkRewardItems",
+      "Value": "调查便当*1"
+    },
+    {
+      "Key": "Interaction.WorkTime",
+      "Value": "600"
+    },
+    {
+      "Key": "Internal.CommandCatalogVersion",
+      "Value": "5"
+    },
+    {
+      "Key": "Core.MaxPetSlots",
+      "Value": "1"
+    },
+    {
+      "Key": "Core.MaxConcurrentRuns",
+      "Value": "1"
+    }
+  ],
+  "commands": [
+    {
+      "func_name": "pet_menu",
+      "command": "宠物菜单",
+      "display_name": "宠物菜单",
+      "category": "基础",
+      "description": "查看全部宠物功能和对应命令",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "交易",
+      "command": "宠物交易",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "交易信息",
+      "command": "交易信息",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "使用",
+      "command": "宠物使用",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "健身",
+      "command": "宠物健身",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "偷袭",
+      "command": "宠物偷袭",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "出售",
+      "command": "宠物出售",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "创建家族",
+      "command": "创建家族",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "删除交易",
+      "command": "删除交易",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "加入家族",
+      "command": "加入家族",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "取消交易",
+      "command": "取消交易",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "取消出售",
+      "command": "取消出售",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "同意交易",
+      "command": "同意交易",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "商店",
+      "command": "宠物商店",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "喂养",
+      "command": "宠物喂养",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "回击",
+      "command": "宠物回击",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "好感商店",
+      "command": "好感商店",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "学习",
+      "command": "宠物学习",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "完成健身",
+      "command": "完成健身",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "完成学习",
+      "command": "完成学习",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "完成打工",
+      "command": "完成打工",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "完成锻炼",
+      "command": "完成锻炼",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "家族列表",
+      "command": "家族列表",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "家族成员",
+      "command": "家族成员",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "我的宠物",
+      "command": "我的宠物",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "我的家族",
+      "command": "我的家族",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "我的背包",
+      "command": "我的背包",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "打工",
+      "command": "宠物打工",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "找回",
+      "command": "宠物找回",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "抛竿",
+      "command": "宠物抛竿",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "抽奖",
+      "command": "宠物抽奖",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "拒绝交易",
+      "command": "拒绝交易",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "接受交易",
+      "command": "接受交易",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "摸头",
+      "command": "宠物摸头",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "收竿",
+      "command": "宠物收竿",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "改名",
+      "command": "宠物改名",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "放生",
+      "command": "宠物放生",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "散步",
+      "command": "宠物散步",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "查看商品",
+      "command": "查看商品",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "查看宠物",
+      "command": "查看宠物",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "查看物品",
+      "command": "查看物品",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "治疗",
+      "command": "宠物治疗",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "注销家族",
+      "command": "注销家族",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "洗澡",
+      "command": "宠物洗澡",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "添加交易",
+      "command": "添加交易",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "猜拳",
+      "command": "宠物猜拳",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "确认取消",
+      "command": "确认取消",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "确认放生",
+      "command": "确认放生",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "签到",
+      "command": "宠物签到",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "继续出售",
+      "command": "继续出售",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "觉醒",
+      "command": "宠物觉醒",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "购买",
+      "command": "宠物购买",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "踢出成员",
+      "command": "踢出成员",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "进化",
+      "command": "宠物进化",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "退出家族",
+      "command": "退出家族",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "送礼",
+      "command": "宠物送礼",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "锻炼",
+      "command": "宠物锻炼",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "领养",
+      "command": "领养",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "领养宠物",
+      "command": "领养宠物",
+      "display_name": "",
+      "category": "基础",
+      "description": "",
+      "enabled": true,
+      "sort_order": 0
+    },
+    {
+      "func_name": "adopt_list",
+      "command": "领养宠物",
+      "display_name": "领养宠物",
+      "category": "基础",
+      "description": "查看并选择可领养的宠物",
+      "enabled": true,
+      "sort_order": 10
+    },
+    {
+      "func_name": "pet_status",
+      "command": "我的宠物",
+      "display_name": "我的宠物",
+      "category": "基础",
+      "description": "查看宠物状态、属性和当前行动",
+      "enabled": true,
+      "sort_order": 20
+    },
+    {
+      "func_name": "daily_checkin",
+      "command": "签到",
+      "display_name": "每日签到",
+      "category": "基础",
+      "description": "完成每日签到并领取陪伴奖励",
+      "enabled": true,
+      "sort_order": 30
+    },
+    {
+      "func_name": "inventory",
+      "command": "我的背包",
+      "display_name": "我的背包",
+      "category": "基础",
+      "description": "查看当前持有的物品",
+      "enabled": true,
+      "sort_order": 40
+    },
+    {
+      "func_name": "rename_pet",
+      "command": "改名",
+      "display_name": "宠物改名",
+      "category": "基础",
+      "description": "为当前宠物修改名字",
+      "enabled": true,
+      "sort_order": 45
+    },
+    {
+      "func_name": "treat",
+      "command": "治疗",
+      "display_name": "治疗宠物",
+      "category": "基础",
+      "description": "恢复受伤宠物的体力",
+      "enabled": true,
+      "sort_order": 46
+    },
+    {
+      "func_name": "recover_pet",
+      "command": "找回",
+      "display_name": "结束休养",
+      "category": "基础",
+      "description": "让休养中的宠物重新同行",
+      "enabled": true,
+      "sort_order": 47
+    },
+    {
+      "func_name": "foster",
+      "command": "放生",
+      "display_name": "宠物休养",
+      "category": "基础",
+      "description": "让宠物暂时休养并保留全部成长",
+      "enabled": true,
+      "sort_order": 48
+    },
+    {
+      "func_name": "help",
+      "command": "帮助",
+      "display_name": "玩法帮助",
+      "category": "基础",
+      "description": "查看命令和玩法说明",
+      "enabled": true,
+      "sort_order": 50
+    },
+    {
+      "func_name": "shop",
+      "command": "商店",
+      "display_name": "宠物商店",
+      "category": "物品",
+      "description": "查看可以使用货币购买的商品",
+      "enabled": true,
+      "sort_order": 60
+    },
+    {
+      "func_name": "affection_shop",
+      "command": "好感商店",
+      "display_name": "好感商店",
+      "category": "物品",
+      "description": "查看可以使用好感兑换的商品",
+      "enabled": true,
+      "sort_order": 61
+    },
+    {
+      "func_name": "shop_item",
+      "command": "查看商品",
+      "display_name": "商品详情",
+      "category": "物品",
+      "description": "查看商品价格、库存和图片",
+      "enabled": true,
+      "sort_order": 62
+    },
+    {
+      "func_name": "item_detail",
+      "command": "查看物品",
+      "display_name": "物品详情",
+      "category": "物品",
+      "description": "查看物品效果、售价和图片",
+      "enabled": true,
+      "sort_order": 63
+    },
+    {
+      "func_name": "use_item",
+      "command": "使用",
+      "display_name": "使用物品",
+      "category": "物品",
+      "description": "使用背包中的恢复或成长物品",
+      "enabled": true,
+      "sort_order": 66
+    },
+    {
+      "func_name": "feed",
+      "command": "喂养",
+      "display_name": "喂养宠物",
+      "category": "陪伴",
+      "description": "使用食物照料宠物",
+      "enabled": true,
+      "sort_order": 100
+    },
+    {
+      "func_name": "touch",
+      "command": "摸头",
+      "display_name": "摸摸宠物",
+      "category": "陪伴",
+      "description": "和宠物进行温柔互动",
+      "enabled": true,
+      "sort_order": 110
+    },
+    {
+      "func_name": "walk",
+      "command": "散步",
+      "display_name": "带宠物散步",
+      "category": "陪伴",
+      "description": "和宠物一起外出散步",
+      "enabled": true,
+      "sort_order": 120
+    },
+    {
+      "func_name": "gift",
+      "command": "送礼",
+      "display_name": "给宠物送礼",
+      "category": "陪伴",
+      "description": "把背包中的礼物送给宠物",
+      "enabled": true,
+      "sort_order": 130
+    },
+    {
+      "func_name": "wash",
+      "command": "洗澡",
+      "display_name": "给宠物洗澡",
+      "category": "陪伴",
+      "description": "帮助宠物恢复清爽状态",
+      "enabled": true,
+      "sort_order": 140
+    },
+    {
+      "func_name": "study",
+      "command": "学习",
+      "display_name": "宠物学习",
+      "category": "成长",
+      "description": "消耗智慧物品进行计时学习",
+      "enabled": true,
+      "sort_order": 150
+    },
+    {
+      "func_name": "train",
+      "command": "锻炼",
+      "display_name": "宠物锻炼",
+      "category": "成长",
+      "description": "消耗力量物品进行计时锻炼",
+      "enabled": true,
+      "sort_order": 160
+    },
+    {
+      "func_name": "fitness",
+      "command": "健身",
+      "display_name": "宠物健身",
+      "category": "成长",
+      "description": "消耗防御物品进行计时健身",
+      "enabled": true,
+      "sort_order": 170
+    },
+    {
+      "func_name": "work",
+      "command": "打工",
+      "display_name": "宠物打工",
+      "category": "成长",
+      "description": "选择岗位进行计时打工",
+      "enabled": true,
+      "sort_order": 180
+    },
+    {
+      "func_name": "evolution",
+      "command": "进化",
+      "display_name": "宠物进化",
+      "category": "成长",
+      "description": "预览下一形态和所需条件",
+      "enabled": true,
+      "sort_order": 190
+    },
+    {
+      "func_name": "awaken",
+      "command": "觉醒",
+      "display_name": "宠物觉醒",
+      "category": "成长",
+      "description": "预览觉醒形态和所需条件",
+      "enabled": true,
+      "sort_order": 192
+    },
+    {
+      "func_name": "expedition",
+      "command": "远征",
+      "display_name": "宠物远征",
+      "category": "远征",
+      "description": "选择短途、常规或深度远征",
+      "enabled": true,
+      "sort_order": 200
+    },
+    {
+      "func_name": "expedition_status",
+      "command": "远征状态",
+      "display_name": "远征状态",
+      "category": "远征",
+      "description": "查看进行中的远征与返回时间",
+      "enabled": true,
+      "sort_order": 210
+    },
+    {
+      "func_name": "expedition_claim",
+      "command": "领取",
+      "display_name": "领取远征奖励",
+      "category": "远征",
+      "description": "领取已完成远征的结算结果",
+      "enabled": true,
+      "sort_order": 220
+    },
+    {
+      "func_name": "fishing",
+      "command": "钓鱼",
+      "display_name": "宠物钓鱼",
+      "category": "扩展",
+      "description": "查看垂钓成本、概率和保底",
+      "enabled": true,
+      "sort_order": 230
+    },
+    {
+      "func_name": "fishing_cast",
+      "command": "抛竿",
+      "display_name": "抛竿",
+      "category": "扩展",
+      "description": "消耗金币开始一次垂钓",
+      "enabled": true,
+      "sort_order": 231
+    },
+    {
+      "func_name": "fishing_claim",
+      "command": "收竿",
+      "display_name": "收竿",
+      "category": "扩展",
+      "description": "领取已经等待完成的垂钓收获",
+      "enabled": true,
+      "sort_order": 232
+    },
+    {
+      "func_name": "lottery",
+      "command": "抽奖",
+      "display_name": "幸运抽奖",
+      "category": "扩展",
+      "description": "查看公开概率并参与有保底的抽奖",
+      "enabled": true,
+      "sort_order": 240
+    },
+    {
+      "func_name": "rock_paper_scissors",
+      "command": "猜拳",
+      "display_name": "宠物猜拳",
+      "category": "扩展",
+      "description": "参加等概率且有审计记录的猜拳",
+      "enabled": true,
+      "sort_order": 250
+    },
+    {
+      "func_name": "trade",
+      "command": "宠物交易",
+      "display_name": "安全交易",
+      "category": "扩展",
+      "description": "发布物品与金币的托管交易",
+      "enabled": true,
+      "sort_order": 260
+    },
+    {
+      "func_name": "trade_list",
+      "command": "交易列表",
+      "display_name": "交易列表",
+      "category": "扩展",
+      "description": "查看当前可接受的托管交易",
+      "enabled": true,
+      "sort_order": 261
+    },
+    {
+      "func_name": "trade_accept",
+      "command": "接受交易",
+      "display_name": "接受交易",
+      "category": "扩展",
+      "description": "在统一事务中接受托管交易",
+      "enabled": true,
+      "sort_order": 262
+    },
+    {
+      "func_name": "trade_info",
+      "command": "交易信息",
+      "display_name": "交易信息",
+      "category": "扩展",
+      "description": "查看交易物品、价格与状态",
+      "enabled": true,
+      "sort_order": 263
+    },
+    {
+      "func_name": "trade_cancel",
+      "command": "取消交易",
+      "display_name": "取消交易",
+      "category": "扩展",
+      "description": "取消自己发布的交易并退回托管物品",
+      "enabled": true,
+      "sort_order": 264
+    },
+    {
+      "func_name": "growth_role",
+      "command": "定位",
+      "display_name": "成长定位",
+      "category": "成长",
+      "description": "选择宠物长期成长定位",
+      "enabled": true,
+      "sort_order": 300
+    },
+    {
+      "func_name": "expedition_stance",
+      "command": "编队",
+      "display_name": "远征姿态",
+      "category": "成长",
+      "description": "调整探索、守护或支援姿态",
+      "enabled": true,
+      "sort_order": 310
+    },
+    {
+      "func_name": "skills",
+      "command": "技能",
+      "display_name": "宠物技能",
+      "category": "成长",
+      "description": "查看当前定位对应的技能",
+      "enabled": true,
+      "sort_order": 320
+    },
+    {
+      "func_name": "codex",
+      "command": "图鉴",
+      "display_name": "探索图鉴",
+      "category": "成长",
+      "description": "查看区域生物、材料与事件进度",
+      "enabled": true,
+      "sort_order": 330
+    },
+    {
+      "func_name": "community",
+      "command": "营地",
+      "display_name": "社区营地",
+      "category": "社区",
+      "description": "查看当前群或频道社区",
+      "enabled": true,
+      "sort_order": 400
+    },
+    {
+      "func_name": "community_contribute",
+      "command": "共建",
+      "display_name": "社区共建",
+      "category": "社区",
+      "description": "向社区设施贡献材料",
+      "enabled": true,
+      "sort_order": 410
+    },
+    {
+      "func_name": "squad",
+      "command": "小队",
+      "display_name": "远征小队",
+      "category": "社区",
+      "description": "创建、加入或查看远征小队",
+      "enabled": true,
+      "sort_order": 420
+    },
+    {
+      "func_name": "community_boss",
+      "command": "首领",
+      "display_name": "限时地图首领",
+      "category": "远征",
+      "description": "兼容入口：查看和挑战当前限时地图首领",
+      "enabled": true,
+      "sort_order": 430
+    },
+    {
+      "func_name": "live_event",
+      "command": "活动",
+      "display_name": "限时活动",
+      "category": "社区",
+      "description": "查看活动进度并领取里程碑奖励",
+      "enabled": true,
+      "sort_order": 435
+    },
+    {
+      "func_name": "season",
+      "command": "赛季",
+      "display_name": "社区赛季",
+      "category": "社区",
+      "description": "查看并参与社区故事选择",
+      "enabled": true,
+      "sort_order": 440
+    },
+    {
+      "func_name": "facility",
+      "command": "设施",
+      "display_name": "社区设施",
+      "category": "社区",
+      "description": "查看或升级社区设施",
+      "enabled": true,
+      "sort_order": 450
+    },
+    {
+      "func_name": "help_request",
+      "command": "求助",
+      "display_name": "发布求助",
+      "category": "社区",
+      "description": "发布社区物品求助",
+      "enabled": true,
+      "sort_order": 460
+    },
+    {
+      "func_name": "help_list",
+      "command": "求助列表",
+      "display_name": "社区求助列表",
+      "category": "社区",
+      "description": "查看当前社区求助",
+      "enabled": true,
+      "sort_order": 470
+    },
+    {
+      "func_name": "help_support",
+      "command": "支援",
+      "display_name": "支援求助",
+      "category": "社区",
+      "description": "响应其他成员的求助",
+      "enabled": true,
+      "sort_order": 480
+    },
+    {
+      "func_name": "bind_generate",
+      "command": "生成绑定码",
+      "display_name": "生成绑定码",
+      "category": "账号",
+      "description": "生成十分钟有效的一次性绑定码",
+      "enabled": true,
+      "sort_order": 600
+    },
+    {
+      "func_name": "bind_identity",
+      "command": "绑定",
+      "display_name": "绑定身份",
+      "category": "账号",
+      "description": "将当前平台身份绑定到已有账号",
+      "enabled": true,
+      "sort_order": 610
+    },
+    {
+      "func_name": "my_data",
+      "command": "我的数据",
+      "display_name": "我的数据",
+      "category": "账号",
+      "description": "查看账号、身份和隐私数据摘要",
+      "enabled": true,
+      "sort_order": 620
+    }
+  ],
+  "menus": [
+    {
+      "Name": "主菜单",
+      "Reply": "🐾【宠物菜单】\n\n🌟 新手上路\n领养宠物 · 我的宠物 · 签到 · 我的背包\n\n🍖 日常陪伴\n喂养 · 摸头 · 散步 · 送礼 · 洗澡\n\n🧭 冒险世界\n地图 · 探索 区域名 · 普攻 · 防御\n远征 · 远征状态 · 领取 · 装备 · 蓝图 · 地图首领\n\n🏕️ 社群协作\n营地 · 共建 · 小队 · 求助 · 支援\n\n🔐 账号管理\n生成绑定码 · 绑定 · 我的数据\n\n💡 先发送“地图”查看可探索区域"
+    },
+    {
+      "Name": "今日与状态",
+      "Reply": "【签到与宠物状态】\n签到：完成每日签到并领取陪伴奖励\n我的宠物：查看宠物近况和准备度\n喂养／摸头／散步／送礼／洗澡：日常宠物互动\n\n兼容命令：“今日”对应“签到”，“状态”对应“我的宠物”。"
+    },
+    {
+      "Name": "宠物互动",
+      "Reply": "        🍩宠物互动🍩\n宠物散步🔰宠物钓鱼\n宠物猜拳🔰宠物送礼\n宠物锻炼🔰宠物学习\n宠物喂养🔰宠物商店\n宠物交易🔰宠物打工\n宠物健身🔰宠物交易"
+    },
+    {
+      "Name": "宠物家族",
+      "Reply": "      🎶宠物家族🎶\n💡创建家族  家族名\n💗加入家族  家族名\n👤家族人员\n👥家族列表\n💠共建贡献\n⚡注销家族\n🚶退出家族"
+    },
+    {
+      "Name": "宠物攻击",
+      "Reply": "    🔴宠物攻击🔴\n👊宠物偷袭@对方\n✊宠物回击"
+    },
+    {
+      "Name": "宠物菜单",
+      "Reply": "  👾=宠物养成RE=👾\n领养宠物🎈我的宠物\n宠物签到✨宠物互动\n宠物商店🔰我的背包\n宠物进化⚖宠物家族\n宠物攻击⚔宠物银行\n===宠物频道支持==="
+    },
+    {
+      "Name": "宠物钓鱼",
+      "Reply": "    🐳宠物钓鱼🐳\n🐟宠物抛竿\n🐵宠物收竿"
+    },
+    {
+      "Name": "宠物频道支持",
+      "Reply": "==宠物频道支持==\n如果阁下在群游戏中游玩过宠物养成RE，想在频道中继续游玩。\n请在原来的群聊中私聊机器人，发送【宠物密钥】，获取阁下的专属密钥，然后在频道中发送【宠物绑定  你的QQ"
+    },
+    {
+      "Name": "成长与图鉴",
+      "Reply": "【成长与图鉴】\n定位：查看探索者、守护者、学者和支援者\n定位 名称：切换成长方向\n技能：查看当前技能组合\n图鉴：查看区域发现与调查进度\n\n失败仍会获得基础调查进度。"
+    },
+    {
+      "Name": "营地与小队",
+      "Reply": "【营地与小队】\n营地：查看当前群或频道社区\n共建 木材 20：贡献设施材料\n小队：查看远征小队\n地图首领：参加当前地图的限时群体挑战\n求助／支援：发布或响应互助单"
+    },
+    {
+      "Name": "账号与隐私",
+      "Reply": "【账号与隐私】\n生成绑定码：生成十分钟一次性代码\n绑定 ABC123：合并不同平台身份\n我的数据：查看保存的数据摘要\n开启通知／关闭通知：管理低频提醒\n解绑身份：解除当前身份\n删除我的数据：开始数据删除确认"
+    },
+    {
+      "Name": "远征指南",
+      "Reply": "【远征指南】\n远征 1：10 分钟短途\n远征 2：2 小时常规\n远征 3：8 小时深度\n远征状态：查看返回时间\n领取：领取自动结算结果\n编队 守护／支援／探索：调整姿态"
+    },
+    {
+      "Name": "陪伴互动",
+      "Reply": "【陪伴互动】\n喂养：恢复准备度\n摸头：记录温柔陪伴\n散步：记录探索倾向\n送礼：记录支援倾向\n洗澡：恢复清爽状态\n\n这些互动不设置连续打卡惩罚。"
+    }
+  ],
+  "images": [
+    {
+      "Name": "偷袭失败",
+      "Path": "攻击图片\\偷袭失败.gif"
+    },
+    {
+      "Name": "偷袭成功",
+      "Path": "攻击图片\\偷袭成功.gif"
+    },
+    {
+      "Name": "取钱图片",
+      "Path": "互动图片\\取钱.jpg"
+    },
+    {
+      "Name": "回击失败",
+      "Path": ""
+    },
+    {
+      "Name": "回击成功",
+      "Path": ""
+    },
+    {
+      "Name": "存钱图片",
+      "Path": "互动图片\\存钱.jpg"
+    },
+    {
+      "Name": "完成学习",
+      "Path": ""
+    },
+    {
+      "Name": "完成锻炼",
+      "Path": ""
+    },
+    {
+      "Name": "开始学习",
+      "Path": ""
+    },
+    {
+      "Name": "开始锻炼",
+      "Path": ""
+    },
+    {
+      "Name": "抛竿",
+      "Path": "互动图片\\抛竿.jpg"
+    },
+    {
+      "Name": "抽奖图片",
+      "Path": ""
+    },
+    {
+      "Name": "摸头",
+      "Path": "互动图片\\摸头.jpg"
+    },
+    {
+      "Name": "散步",
+      "Path": "互动图片\\散步.jpg"
+    },
+    {
+      "Name": "治疗",
+      "Path": "互动图片\\治疗.jpg"
+    },
+    {
+      "Name": "洗澡",
+      "Path": "互动图片\\洗澡.jpg"
+    },
+    {
+      "Name": "猜拳图片",
+      "Path": "互动图片\\猜拳.jpg"
+    },
+    {
+      "Name": "自爆",
+      "Path": "互动图片\\自爆.jpg"
+    },
+    {
+      "Name": "转账图片",
+      "Path": "互动图片\\转账.jpg"
+    },
+    {
+      "Name": "银行图片",
+      "Path": "互动图片\\银行.jpg"
+    },
+    {
+      "Name": "领养",
+      "Path": "核心图片\\领养.jpg"
+    }
+  ],
+  "growth_roles": [
+    {
+      "name": "探索者",
+      "description": "擅长寻路、观察与环境采样",
+      "skill_1": "寻路",
+      "skill_2": "观察",
+      "skill_3": "采样",
+      "enabled": true,
+      "sort_order": 10
+    },
+    {
+      "name": "守护者",
+      "description": "降低远征风险并保护同行伙伴",
+      "skill_1": "护盾",
+      "skill_2": "警戒",
+      "skill_3": "稳固",
+      "enabled": true,
+      "sort_order": 20
+    },
+    {
+      "name": "学者",
+      "description": "解析遗迹线索并提升调查效率",
+      "skill_1": "解析",
+      "skill_2": "记录",
+      "skill_3": "推演",
+      "enabled": true,
+      "sort_order": 30
+    },
+    {
+      "name": "支援者",
+      "description": "提供急救、鼓舞与协作增益",
+      "skill_1": "急救",
+      "skill_2": "鼓舞",
+      "skill_3": "协同",
+      "enabled": true,
+      "sort_order": 40
+    }
+  ],
+  "growth_stances": [
+    {
+      "name": "攻击",
+      "description": "提高突破能力",
+      "enabled": true,
+      "sort_order": 10
+    },
+    {
+      "name": "守护",
+      "description": "降低事件风险",
+      "enabled": true,
+      "sort_order": 20
+    },
+    {
+      "name": "支援",
+      "description": "强化协作贡献",
+      "enabled": true,
+      "sort_order": 30
+    },
+    {
+      "name": "探索",
+      "description": "提高调查进度",
+      "enabled": true,
+      "sort_order": 40
+    }
+  ],
+  "personality_rules": [
+    {
+      "name": "温柔",
+      "dimension": "care",
+      "min_threshold": 3,
+      "description": "长期照料行为更突出",
+      "enabled": true,
+      "sort_order": 10
+    },
+    {
+      "name": "好奇",
+      "dimension": "explore",
+      "min_threshold": 3,
+      "description": "长期探索行为更突出",
+      "enabled": true,
+      "sort_order": 20
+    },
+    {
+      "name": "可靠",
+      "dimension": "support",
+      "min_threshold": 3,
+      "description": "长期支援行为更突出",
+      "enabled": true,
+      "sort_order": 30
+    }
+  ]
+}

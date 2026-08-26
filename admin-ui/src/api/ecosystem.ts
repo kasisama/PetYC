@@ -14,6 +14,15 @@ export interface Overview {
   today_completed_expeditions: number
   config_pending_reload: boolean
   platform_error_count: number
+  active_explorations: number
+  active_combats: number
+  active_adventure_expeditions: number
+  active_adventure_bosses: number
+  adventure_shop_transactions: number
+  journey_badges_earned: number
+  journey_badges_spent: number
+  adventure_reference_errors: number
+  content_counts: { maps?:number; zones?:number; monsters?:number; items?:number; equipment?:number; events?:number }
   generated_at: string
 }
 
@@ -49,8 +58,10 @@ export interface CodexCatalogItem extends CodexCatalogRule { id:number;discovere
 export interface GameplayCodex {summary:{catalog_count:number;discovered_entries:number;discovery_rate:number};items:CodexCatalogItem[];warnings:string[]}
 
 export interface PlayerDetail {
-  account: { ID: string; CreatedAt: string; UpdatedAt: string }
+  account: { ID: string; CreatedAt: string; UpdatedAt: string; active_pet_id?: string }
   pet: Record<string, unknown>
+  pets?: Array<Record<string, unknown>>
+  active_pet_id?: string
   pet_image: string
   inventory: Array<Record<string, unknown>>
   codex: Array<Record<string, unknown>>
@@ -58,6 +69,11 @@ export interface PlayerDetail {
   expeditions: Array<Record<string, unknown>>
   communities: Array<Record<string, unknown>>
   notifications: { Enabled: boolean }
+  adventure_inventory: Array<Record<string, unknown>>
+  adventure_equipment: Array<Record<string, unknown>>
+  adventure_blueprints: Array<Record<string, unknown>>
+  adventure_wallet: Record<string, unknown>
+  adventure_ledger: Array<Record<string, unknown>>
 }
 
 export interface CommunitySummary {
@@ -143,13 +159,20 @@ export function normalizePlayerDetail(raw: unknown): PlayerDetail {
   return {
     account: (value.account ?? { ID: '', CreatedAt: '', UpdatedAt: '' }) as PlayerDetail['account'],
     pet: value.pet && typeof value.pet === 'object' ? value.pet as Record<string, unknown> : {},
-	pet_image: typeof value.pet_image === 'string' ? value.pet_image : '',
+    pets: arrayOrEmpty<Record<string, unknown>>(value.pets),
+    active_pet_id: typeof value.active_pet_id === 'string' ? value.active_pet_id : '',
+    pet_image: typeof value.pet_image === 'string' ? value.pet_image : '',
     inventory: arrayOrEmpty<Record<string, unknown>>(value.inventory),
     codex: arrayOrEmpty<Record<string, unknown>>(value.codex),
     identities: arrayOrEmpty<PlayerDetail['identities'][number]>(value.identities),
     expeditions: arrayOrEmpty<Record<string, unknown>>(value.expeditions),
     communities: arrayOrEmpty<Record<string, unknown>>(value.communities),
     notifications: { Enabled: typeof notifications.Enabled === 'boolean' ? notifications.Enabled : true },
+    adventure_inventory: arrayOrEmpty<Record<string, unknown>>(value.adventure_inventory),
+    adventure_equipment: arrayOrEmpty<Record<string, unknown>>(value.adventure_equipment),
+    adventure_blueprints: arrayOrEmpty<Record<string, unknown>>(value.adventure_blueprints),
+    adventure_wallet: value.adventure_wallet && typeof value.adventure_wallet === 'object' ? value.adventure_wallet as Record<string, unknown> : {},
+    adventure_ledger: arrayOrEmpty<Record<string, unknown>>(value.adventure_ledger),
   }
 }
 
@@ -157,6 +180,10 @@ export function getOverview(range: '7d' | '30d') { return api.get<Overview>(`/ap
 export async function getPlayers(query: URLSearchParams) { return normalizePlayerPage(await api.get<unknown>(`/api/admin/players?${query}`)) }
 export async function getPlayer(accountId: string) { return normalizePlayerDetail(await api.get<unknown>(`/api/admin/players/${accountId}`)) }
 export function grantItem(accountId: string, body: { item_name: string; quantity: number; reason: string; idempotency_key: string }) { return api.post(`/api/admin/players/${accountId}/grants`, body) }
+export function setActivePet(accountId: string, petId: string, reason: string) { return api.post(`/api/admin/players/${accountId}/active_pet`, { pet_id: petId, reason }) }
+export function resetSeason(eventKey: string, body: { reason: string; confirmation: string; season_key?: string }) {
+  return api.post(`/api/admin/seasons/${encodeURIComponent(eventKey)}/reset`, body)
+}
 export function cancelExpedition(id: string, reason: string) { return api.post(`/api/admin/expeditions/${id}/cancel`, { reason, expected_status: 'running' }) }
 export function reconcileExpedition(id: string, reason: string) { return api.post(`/api/admin/expeditions/${id}/reconcile`, { reason }) }
 export async function getExpeditions(query: URLSearchParams) {

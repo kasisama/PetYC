@@ -17,7 +17,7 @@ import (
 
 func main() {
 	dbPath := flag.String("db", "pet_game.db", "source SQLite database")
-	outPath := flag.String("out", "config/defaults/config_v0.0.1.json", "output snapshot")
+	outPath := flag.String("out", "config/defaults/config_v0.1.0.json", "output snapshot")
 	assetOut := flag.String("assets", "config/defaults/assets", "output asset root")
 	flag.Parse()
 	db, err := gorm.Open(sqlite.Open(*dbPath), &gorm.Config{})

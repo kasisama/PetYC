@@ -73,7 +73,7 @@ func TestBulkItemStatusAndReferencedDeleteProtection(t *testing.T) {
 
 func TestGameSettingsParseHashSeparatedStarterPets(t *testing.T) {
 	router, db := newContentTestRouter(t)
-	db.Create(&models.SystemConfig{Key: "Core.InitialPets", Value: "诺诺#呱呱#菀菀"})
+	db.Create(&models.SystemConfig{Key: "Core.InitialPets", Value: "光芽兽#苔须灵#烬爪兽"})
 	response := doConfigRequest(t, router, http.MethodGet, "/api/admin/settings/game", nil)
 	if response.Code != 0 {
 		t.Fatalf("读取游戏参数失败: %s", response.Msg)
@@ -89,14 +89,14 @@ func TestGameSettingsParseHashSeparatedStarterPets(t *testing.T) {
 		t.Fatalf("unexpected rows: %s", response.Data)
 	}
 	values, ok := rows[0].Value.([]interface{})
-	if !ok || len(values) != 3 || values[0] != "诺诺" || values[2] != "菀菀" {
+	if !ok || len(values) != 3 || values[0] != "光芽兽" || values[2] != "烬爪兽" {
 		t.Fatalf("初始宠物未按列表解析: %+v", rows[0].Value)
 	}
 }
 
 func TestGameSettingsUseChineseStructuredFieldsAndHideRetiredKeys(t *testing.T) {
 	router, db := newContentTestRouter(t)
-	db.Create(&models.SystemConfig{Key: "Core.CoinName", Value: "咔币"})
+	db.Create(&models.SystemConfig{Key: "Core.CoinName", Value: "星砂"})
 	db.Create(&models.SystemConfig{Key: "Core.CheckinLike", Value: "true"})
 	db.Create(&models.SystemConfig{Key: "Interaction.LotteryItem", Value: "抽奖券"})
 	response := doConfigRequest(t, router, http.MethodGet, "/api/admin/settings/game", nil)
@@ -127,8 +127,9 @@ func TestGameSettingsUseChineseStructuredFieldsAndHideRetiredKeys(t *testing.T) 
 
 func TestSaveEventBundlePersistsEventAndMultipleRewardsAtomically(t *testing.T) {
 	router, db := newContentTestRouter(t)
-	db.Create(&models.ItemConfig{Name: "木材", Status: "active"})
-	body := []byte(`{"event":{"key":"forest-week","name":"森林调查周","region":"森林","story_choices":"[\"记录线索\",\"继续调查\",\"呼叫支援\"]","starts_at":"2026-08-20T00:00:00Z","ends_at":"2026-08-27T00:00:00Z","active":true},"rewards":[{"event_key":"forest-week","milestone":100,"item_name":"木材","quantity":5},{"event_key":"forest-week","milestone":100,"item_name":"调查记录","quantity":2}]}`)
+	db.Create(&models.ItemConfig{Key: "wood", Name: "木材", Status: "active"})
+	db.Create(&models.ItemConfig{Key: "survey_log", Name: "调查记录", Status: "active"})
+	body := []byte(`{"event":{"key":"forest-week","name":"森林调查周","region":"森林","story_choices":"[\"记录线索\",\"继续调查\",\"呼叫支援\"]","starts_at":"2026-08-20T00:00:00Z","ends_at":"2026-08-27T00:00:00Z","active":true},"rewards":[{"event_key":"forest-week","milestone":100,"reward_type":"item","reward_key":"wood","reward_name":"木材","quantity":5},{"event_key":"forest-week","milestone":100,"reward_type":"item","reward_key":"survey_log","reward_name":"调查记录","quantity":2}]}`)
 	response := doConfigRequest(t, router, http.MethodPut, "/api/admin/content/events/forest-week", body)
 	if response.Code != 0 {
 		t.Fatalf("保存活动组合失败: %s", response.Msg)
@@ -160,7 +161,8 @@ func TestSaveEventBundleRejectsOverlapWithExistingActiveEvent(t *testing.T) {
 func TestDeleteEventBundleDeletesRelatedRewards(t *testing.T) {
 	router, db := newContentTestRouter(t)
 	db.Create(&models.LiveEventConfig{Key: "forest-week", Name: "森林周", Region: "森林", StoryChoices: `["一","二","三"]`, StartsAt: time.Now(), EndsAt: time.Now().Add(time.Hour), Active: true})
-	db.Create(&models.RewardTrackConfig{EventKey: "forest-week", Milestone: 100, ItemName: "木材", Quantity: 5})
+	db.Create(&models.ItemConfig{Key: "wood", Name: "木材", Status: "active"})
+	db.Create(&models.RewardTrackConfig{EventKey: "forest-week", Milestone: 100, RewardType: "item", RewardKey: "wood", RewardName: "木材", Quantity: 5})
 	response := doConfigRequest(t, router, http.MethodDelete, "/api/admin/content/events/forest-week", nil)
 	if response.Code != 0 {
 		t.Fatalf("删除活动组合失败: %s", response.Msg)

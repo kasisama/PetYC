@@ -2,7 +2,6 @@ package gameplay
 
 import (
 	"context"
-	"errors"
 	"strconv"
 	"strings"
 
@@ -28,6 +27,10 @@ func NewItemEffectService(db *gorm.DB) *ItemEffectService {
 }
 
 func (service *ItemEffectService) Use(ctx context.Context, accountID, itemName string, quantity int64, idempotencyKey string) (*ItemUseResult, error) {
+	return service.UseOn(ctx, accountID, "", itemName, quantity, idempotencyKey)
+}
+
+func (service *ItemEffectService) UseOn(ctx context.Context, accountID, petID, itemName string, quantity int64, idempotencyKey string) (*ItemUseResult, error) {
 	if service == nil || service.DB == nil {
 		return nil, ErrDatabaseUnavailable
 	}
@@ -47,13 +50,11 @@ func (service *ItemEffectService) Use(ctx context.Context, accountID, itemName s
 	}
 	result := &ItemUseResult{}
 	err := WithTransactionRetry(ctx, service.DB, func(tx *gorm.DB) error {
-		var pet models.PetProfile
-		if err := tx.First(&pet, "account_id = ?", accountID).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return ErrPetRequired
-			}
+		activePet, err := PetByIDTx(tx, accountID, petID)
+		if err != nil {
 			return err
 		}
+		pet := *activePet
 		if pet.Status != "" && pet.Status != "空闲" && pet.Status != "濒死" {
 			return ErrActivityActive
 		}
@@ -67,7 +68,7 @@ func (service *ItemEffectService) Use(ctx context.Context, accountID, itemName s
 		}
 		amount := effect * quantity
 		record := models.ItemUseRecord{
-			ID: uuid.NewString(), AccountID: accountID, IdempotencyKey: idempotencyKey,
+			ID: uuid.NewString(), AccountID: accountID, PetID: pet.ID, IdempotencyKey: idempotencyKey,
 			ItemName: item.Name, Quantity: quantity, EffectType: item.Type, CreatedAt: service.inventory().now(),
 		}
 		switch strings.TrimSpace(item.Type) {
@@ -127,10 +128,11 @@ func (service *ItemEffectService) findExisting(ctx context.Context, accountID, k
 	if find.RowsAffected == 0 {
 		return nil, false, nil
 	}
-	var pet models.PetProfile
-	if err := service.DB.WithContext(ctx).First(&pet, "account_id = ?", accountID).Error; err != nil {
+	petRow, err := PetByIDTx(service.DB.WithContext(ctx), accountID, record.PetID)
+	if err != nil {
 		return nil, false, err
 	}
+	pet := *petRow
 	var item models.ItemConfig
 	if err := service.DB.WithContext(ctx).First(&item, "name = ?", record.ItemName).Error; err != nil {
 		return nil, false, err

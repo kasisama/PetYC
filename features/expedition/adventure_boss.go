@@ -117,15 +117,19 @@ func (service *Service) StartAdventureBossChallenge(ctx context.Context, account
 		if instance.Status != "active" || instance.CurrentHealth <= 0 {
 			return ErrBossUnavailable
 		}
-		var pet models.PetProfile
-		if err := tx.First(&pet, "account_id = ?", accountID).Error; err != nil {
-			return ErrPetRequired
+		petRow, err := gameplay.ActivePetTx(tx, accountID)
+		if err != nil {
+			return err
 		}
+		pet := *petRow
 		if pet.Status == "受伤" {
 			return ErrAdventureInjured
 		}
-		if pet.Status != "" && pet.Status != "空闲" {
-			return ErrAdventureBusy
+		if err := gameplay.ReservePetRunTx(tx, accountID, pet.ID); err != nil {
+			if errors.Is(err, gameplay.ErrTooManyConcurrentRuns) || errors.Is(err, gameplay.ErrActivityActive) {
+				return ErrAdventureBusy
+			}
+			return err
 		}
 		var contribution models.AdventureBossContribution
 		lookup := tx.Limit(1).Find(&contribution, "boss_instance_id = ? AND account_id = ?", instance.ID, accountID)
@@ -146,7 +150,7 @@ func (service *Service) StartAdventureBossChallenge(ctx context.Context, account
 			return err
 		}
 		now := service.Now()
-		combat = models.AdventureCombatSession{ID: uuid.NewString(), AccountID: accountID, CommunityID: communityID, BossInstanceID: instance.ID, MonsterKey: config.MonsterKey, Status: "active", Round: 1, PlayerHealth: pet.Health + stats.Health, MonsterHealth: instance.CurrentHealth, CooldownsJSON: "{}", ExpiresAt: minTime(instance.ExpiresAt, now.Add(10*time.Minute)), StartedAt: now}
+		combat = models.AdventureCombatSession{ID: uuid.NewString(), AccountID: accountID, PetID: pet.ID, CommunityID: communityID, BossInstanceID: instance.ID, MonsterKey: config.MonsterKey, Status: "active", Round: 1, PlayerHealth: pet.Health + stats.Health, MonsterHealth: instance.CurrentHealth, CooldownsJSON: "{}", ExpiresAt: minTime(instance.ExpiresAt, now.Add(10*time.Minute)), StartedAt: now}
 		if err := tx.Create(&combat).Error; err != nil {
 			return err
 		}

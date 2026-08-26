@@ -1,11 +1,18 @@
 package models
 
-import "time"
+import (
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"gorm.io/gorm"
+)
 
 type PlayerAccount struct {
-	ID        string `gorm:"primaryKey;size:36"`
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID          string `gorm:"primaryKey;size:36"`
+	ActivePetID string `gorm:"size:36;index" json:"active_pet_id"`
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 type PlayerIdentity struct {
@@ -20,7 +27,8 @@ type PlayerIdentity struct {
 }
 
 type PetProfile struct {
-	AccountID   string `gorm:"primaryKey;size:36"`
+	ID          string `gorm:"primaryKey;size:36" json:"pet_id"`
+	AccountID   string `gorm:"size:36;not null;index" json:"account_id"`
 	PetType     string `gorm:"size:64;not null"`
 	Name        string `gorm:"size:64;not null"`
 	CurrentForm string `gorm:"size:64;not null"`
@@ -46,10 +54,18 @@ type PetProfile struct {
 	UpdatedAt   time.Time
 }
 
+func (pet *PetProfile) BeforeCreate(_ *gorm.DB) error {
+	if strings.TrimSpace(pet.ID) == "" {
+		pet.ID = uuid.NewString()
+	}
+	return nil
+}
+
 type GlobalInventoryItem struct {
 	ID        uint   `gorm:"primaryKey"`
 	AccountID string `gorm:"size:36;not null;uniqueIndex:idx_global_inventory"`
-	ItemName  string `gorm:"size:64;not null;uniqueIndex:idx_global_inventory"`
+	ItemKey   string `gorm:"size:64;not null;uniqueIndex:idx_global_inventory;index" json:"item_key"`
+	ItemName  string `gorm:"size:64;not null;index"`
 	Quantity  int64  `gorm:"not null;default:0"`
 	UpdatedAt time.Time
 }
@@ -79,6 +95,7 @@ type WalletLedger struct {
 type CompanionJournal struct {
 	ID        uint   `gorm:"primaryKey"`
 	AccountID string `gorm:"size:36;not null;uniqueIndex:idx_companion_journal"`
+	PetID     string `gorm:"size:36;not null;uniqueIndex:idx_companion_journal;index"`
 	Day       string `gorm:"size:10;not null;uniqueIndex:idx_companion_journal"`
 	Action    string `gorm:"size:32;not null"`
 	CreatedAt time.Time
@@ -90,6 +107,7 @@ type CompanionJournal struct {
 type CompanionActionDaily struct {
 	ID             uint   `gorm:"primaryKey"`
 	AccountID      string `gorm:"size:36;not null;uniqueIndex:idx_companion_action_day"`
+	PetID          string `gorm:"size:36;not null;uniqueIndex:idx_companion_action_day;index"`
 	Day            string `gorm:"size:10;not null;uniqueIndex:idx_companion_action_day"`
 	Action         string `gorm:"size:32;not null;uniqueIndex:idx_companion_action_day"`
 	Count          int64  `gorm:"not null;default:0"`
@@ -105,6 +123,7 @@ type CompanionActionDaily struct {
 type ActivityRun struct {
 	ID              string `gorm:"primaryKey;size:36"`
 	AccountID       string `gorm:"size:36;not null;index:idx_activity_account_status"`
+	PetID           string `gorm:"size:36;not null;index"`
 	Kind            string `gorm:"size:24;not null;index"`
 	ConfigKey       string `gorm:"size:64;not null"`
 	InputItem       string `gorm:"size:64"`
@@ -128,6 +147,7 @@ type ActivityRun struct {
 type ItemUseRecord struct {
 	ID             string `gorm:"primaryKey;size:36"`
 	AccountID      string `gorm:"size:36;not null;uniqueIndex:idx_item_use_idempotency"`
+	PetID          string `gorm:"size:36;not null;index"`
 	IdempotencyKey string `gorm:"size:255;not null;uniqueIndex:idx_item_use_idempotency"`
 	ItemName       string `gorm:"size:64;not null"`
 	Quantity       int64  `gorm:"not null"`
@@ -163,6 +183,7 @@ type ExpeditionTemplateConfig struct {
 type ExpeditionRun struct {
 	ID             string `gorm:"primaryKey;size:36"`
 	AccountID      string `gorm:"size:36;not null;index:idx_expedition_account_status"`
+	PetID          string `gorm:"size:36;not null;index"`
 	Tier           int    `gorm:"not null"`
 	Name           string `gorm:"size:64;not null"`
 	Stance         string `gorm:"size:24;not null"`
@@ -356,12 +377,32 @@ func (HelpGiftDailyQuota) TableName() string {
 }
 
 type PetBehaviorProfile struct {
-	AccountID string `gorm:"primaryKey;size:36"`
+	PetID     string `gorm:"primaryKey;size:36"`
+	AccountID string `gorm:"size:36;not null;index"`
 	Explore   int64  `gorm:"not null;default:0"`
 	Care      int64  `gorm:"not null;default:0"`
 	Support   int64  `gorm:"not null;default:0"`
 	Trait     string `gorm:"size:32"`
 	UpdatedAt time.Time
+}
+
+// BeforeCreate keeps transitional callers safe while pet_id is being rolled
+// through every command path. New code should always set PetID explicitly.
+func (profile *PetBehaviorProfile) BeforeCreate(tx *gorm.DB) error {
+	if strings.TrimSpace(profile.PetID) != "" || strings.TrimSpace(profile.AccountID) == "" {
+		return nil
+	}
+	var account PlayerAccount
+	if err := tx.Select("active_pet_id").First(&account, "id = ?", profile.AccountID).Error; err == nil && account.ActivePetID != "" {
+		profile.PetID = account.ActivePetID
+		return nil
+	}
+	var pet PetProfile
+	if err := tx.Select("id").Where("account_id = ?", profile.AccountID).Order("created_at asc, id asc").First(&pet).Error; err != nil {
+		return err
+	}
+	profile.PetID = pet.ID
+	return nil
 }
 
 type LiveEventConfig struct {
@@ -382,9 +423,11 @@ type LiveEventConfig struct {
 
 type RewardTrackConfig struct {
 	ID          uint   `gorm:"primaryKey" json:"id"`
-	EventKey    string `gorm:"size:64;not null;uniqueIndex:idx_reward_track_item" json:"event_key"`
-	Milestone   int64  `gorm:"not null;uniqueIndex:idx_reward_track_item" json:"milestone"`
-	ItemName    string `gorm:"size:64;not null;uniqueIndex:idx_reward_track_item" json:"item_name"`
+	EventKey    string `gorm:"size:64;not null;uniqueIndex:idx_reward_track_reward" json:"event_key"`
+	Milestone   int64  `gorm:"not null;uniqueIndex:idx_reward_track_reward" json:"milestone"`
+	RewardType  string `gorm:"size:24;not null;uniqueIndex:idx_reward_track_reward" json:"reward_type"`
+	RewardKey   string `gorm:"size:64;not null;uniqueIndex:idx_reward_track_reward" json:"reward_key"`
+	RewardName  string `gorm:"size:64;not null" json:"reward_name"`
 	Quantity    int64  `gorm:"not null" json:"quantity"`
 	Description string `gorm:"size:255" json:"description"`
 }
@@ -410,13 +453,15 @@ type EventProgressGrant struct {
 }
 
 type EventRewardClaim struct {
-	ID        string `gorm:"primaryKey;size:36"`
-	EventKey  string `gorm:"size:64;not null;uniqueIndex:idx_event_reward_claim"`
-	AccountID string `gorm:"size:36;not null;uniqueIndex:idx_event_reward_claim"`
-	Milestone int64  `gorm:"not null;uniqueIndex:idx_event_reward_claim"`
-	ItemName  string `gorm:"size:64;not null;uniqueIndex:idx_event_reward_claim"`
-	Quantity  int64  `gorm:"not null"`
-	ClaimedAt time.Time
+	ID         string `gorm:"primaryKey;size:36"`
+	EventKey   string `gorm:"size:64;not null;uniqueIndex:idx_event_reward_claim"`
+	AccountID  string `gorm:"size:36;not null;uniqueIndex:idx_event_reward_claim"`
+	Milestone  int64  `gorm:"not null;uniqueIndex:idx_event_reward_claim"`
+	RewardType string `gorm:"size:24;not null;uniqueIndex:idx_event_reward_claim"`
+	RewardKey  string `gorm:"size:64;not null;uniqueIndex:idx_event_reward_claim"`
+	RewardName string `gorm:"size:64;not null"`
+	Quantity   int64  `gorm:"not null"`
+	ClaimedAt  time.Time
 }
 
 type ChanceGameConfig struct {
@@ -483,6 +528,7 @@ type ChanceOutcome struct {
 type FishingRun struct {
 	ID          string `gorm:"primaryKey;size:36"`
 	AccountID   string `gorm:"size:36;not null;index:idx_fishing_account_status"`
+	PetID       string `gorm:"size:36;not null;index"`
 	Status      string `gorm:"size:24;not null;index:idx_fishing_account_status"`
 	ActionKey   string `gorm:"size:160;not null;uniqueIndex"`
 	RewardKey   string `gorm:"size:64;not null"`
@@ -501,6 +547,7 @@ type FishingRun struct {
 type BattleRecord struct {
 	ID             string `gorm:"primaryKey;size:36"`
 	AccountID      string `gorm:"size:36;not null;index"`
+	PetID          string `gorm:"size:36;not null;index"`
 	ActionKey      string `gorm:"size:160;not null;uniqueIndex"`
 	Mode           string `gorm:"size:32;not null"`
 	PlayerChoice   string `gorm:"size:16;not null"`

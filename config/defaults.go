@@ -2,75 +2,74 @@ package config
 
 import (
 	"embed"
-	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 	"qq-pet-saas/models"
 )
 
-//go:embed defaults/config_v0.0.1.json defaults/assets
+//go:embed defaults/config_v0.1.0.json defaults/assets
 var officialDefaults embed.FS
 
 func LoadOfficialSnapshot() (ConfigSnapshot, error) {
-	raw, err := officialDefaults.ReadFile("defaults/config_v0.0.1.json")
+	raw, err := officialDefaults.ReadFile("defaults/config_v0.1.0.json")
 	if err != nil {
 		return ConfigSnapshot{}, err
 	}
 	return DecodeSnapshot(string(raw))
 }
 
-// EnsureOfficialDefaults initializes an empty database and makes the immutable
-// official profile available on both new and upgraded installations.
+func officialProfile(snapshot ConfigSnapshot, payload string) models.ConfigProfile {
+	return models.ConfigProfile{ID: OfficialProfileID, Name: "原创调查默认 v0.1.0", Description: "自然遗迹调查首季 70 天默认运营配置", Source: "official", SchemaVersion: ProfileSchemaVersion, AppVersion: ApplicationVersion, Payload: payload, Builtin: true}
+}
+
+func upsertOfficialProfile(tx *gorm.DB, snapshot ConfigSnapshot) error {
+	payload, err := EncodeSnapshot(snapshot)
+	if err != nil {
+		return err
+	}
+	profile := officialProfile(snapshot, payload)
+	return tx.Where("id = ?", OfficialProfileID).Assign(map[string]any{"name": profile.Name, "description": profile.Description, "source": profile.Source, "schema_version": profile.SchemaVersion, "app_version": profile.AppVersion, "payload": profile.Payload, "builtin": true}).FirstOrCreate(&profile).Error
+}
+
+func activateOfficialProfile(tx *gorm.DB) error {
+	state, err := getOrCreateConfigState(tx)
+	if err != nil {
+		return err
+	}
+	return tx.Model(state).Updates(map[string]any{"active_profile_id": OfficialProfileID, "profile_dirty": false}).Error
+}
+
+// EnsureOfficialDefaults only seeds an empty database. Existing operator
+// databases keep their live tables; the official profile metadata is refreshed
+// so it can be activated explicitly.
 func EnsureOfficialDefaults(db *gorm.DB) error {
 	snapshot, err := LoadOfficialSnapshot()
 	if err != nil {
 		return fmt.Errorf("读取官方默认配置失败: %w", err)
 	}
-	var systemCount int64
+	var systemCount, profileCount int64
 	if err := db.Model(&models.SystemConfig{}).Count(&systemCount).Error; err != nil {
 		return err
 	}
+	if err := db.Model(&models.ConfigProfile{}).Count(&profileCount).Error; err != nil {
+		return err
+	}
 	return db.Transaction(func(tx *gorm.DB) error {
-		if systemCount == 0 {
+		if systemCount == 0 && profileCount == 0 {
 			if err := ApplySnapshot(tx, snapshot); err != nil {
 				return err
 			}
-		} else {
-			// v0.0.1 replaces the old tier-only expedition configuration with the
-			// map/zone adventure catalog. Existing runs keep their own reward
-			// snapshot, so removing these obsolete templates never touches player
-			// progress or an expedition already in flight.
-			if err := tx.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&models.ExpeditionTemplateConfig{}).Error; err != nil {
+			if err := AnchorSeasonSchedule(tx, time.Now()); err != nil {
 				return err
 			}
-			var adventureCount int64
-			if err := tx.Model(&models.AdventureMapConfig{}).Count(&adventureCount).Error; err != nil {
-				return err
-			}
-			if adventureCount == 0 {
-				if err := migrateOfficialAdventureDependencies(tx, snapshot); err != nil {
-					return err
-				}
-				catalog := AdventureCatalog{Maps: snapshot.AdventureMaps, Zones: snapshot.AdventureZones, Prerequisites: snapshot.AdventurePrereqs, Objectives: snapshot.AdventureObjectives, Monsters: snapshot.AdventureMonsters, Skills: snapshot.AdventureSkills, MonsterSkills: snapshot.AdventureMonsterSkills, Encounters: snapshot.AdventureEncounters, LootPools: snapshot.AdventureLootPools, LootEntries: snapshot.AdventureLootEntries, Expeditions: snapshot.AdventureExpeditions, Bosses: snapshot.AdventureBosses, BossRewardTiers: snapshot.AdventureBossRewardTiers, EquipmentTemplates: snapshot.EquipmentTemplates, EquipmentAffixes: snapshot.EquipmentAffixes, EquipmentRecipes: snapshot.EquipmentRecipes, EquipmentRecipeMaterials: snapshot.EquipmentRecipeMaterials}
-				if err := ReplaceAdventureCatalog(tx, catalog); err != nil {
-					return err
-				}
-			}
 		}
-		if err := migrateLegacyLiveEventChoices(tx); err != nil {
-			return err
-		}
-		payload, err := EncodeSnapshot(snapshot)
-		if err != nil {
-			return err
-		}
-		profile := models.ConfigProfile{ID: OfficialProfileID, Name: "官方默认 v0.0.1", Description: "QQ-Pet v0.0.1 内置安全默认配置", Source: "official", SchemaVersion: ProfileSchemaVersion, AppVersion: ApplicationVersion, Payload: payload, Builtin: true}
-		if err := tx.Where("id = ?", OfficialProfileID).Assign(map[string]any{"name": profile.Name, "description": profile.Description, "source": profile.Source, "schema_version": profile.SchemaVersion, "app_version": profile.AppVersion, "payload": profile.Payload, "builtin": true}).FirstOrCreate(&profile).Error; err != nil {
+		if err := upsertOfficialProfile(tx, snapshot); err != nil {
 			return err
 		}
 		state, err := getOrCreateConfigState(tx)
@@ -78,115 +77,62 @@ func EnsureOfficialDefaults(db *gorm.DB) error {
 			return err
 		}
 		if state.ActiveProfileID == "" {
-			return tx.Model(state).Updates(map[string]any{"active_profile_id": OfficialProfileID, "profile_dirty": systemCount != 0}).Error
+			return activateOfficialProfile(tx)
 		}
 		return nil
 	})
 }
 
-// migrateOfficialAdventureDependencies adds only missing configuration rows
-// required by the new adventure catalog. Existing item definitions are never
-// overwritten, and no player/runtime table is read or changed.
-func migrateOfficialAdventureDependencies(tx *gorm.DB, snapshot ConfigSnapshot) error {
-	requiredItems := map[string]bool{}
-	for _, row := range snapshot.AdventureLootEntries {
-		if row.RewardType == "item" || row.RewardType == "blueprint_fragment" {
-			requiredItems[row.RewardKey] = true
-		}
+// RebuildOfficialDefaults replaces live configuration with the official v0.1.0
+// snapshot. Player rows are not deleted.
+func RebuildOfficialDefaults(db *gorm.DB) error {
+	snapshot, err := LoadOfficialSnapshot()
+	if err != nil {
+		return fmt.Errorf("读取官方默认配置失败: %w", err)
 	}
-	for _, row := range snapshot.AdventureExpeditions {
-		if row.RequiredItem != "" {
-			requiredItems[row.RequiredItem] = true
-		}
-	}
-	for _, row := range snapshot.EquipmentTemplates {
-		if row.SalvageItem != "" {
-			requiredItems[row.SalvageItem] = true
-		}
-	}
-	for _, row := range snapshot.EquipmentRecipes {
-		if row.BlueprintFragmentItem != "" {
-			requiredItems[row.BlueprintFragmentItem] = true
-		}
-	}
-	for _, row := range snapshot.EquipmentRecipeMaterials {
-		requiredItems[row.ItemName] = true
-	}
-	officialItems := make(map[string]models.ItemConfig, len(snapshot.Items))
-	for _, row := range snapshot.Items {
-		officialItems[row.Name] = row
-	}
-	for name := range requiredItems {
-		row, ok := officialItems[name]
-		if !ok {
-			return fmt.Errorf("官方冒险配置缺少依赖物品定义 %s", name)
-		}
-		if err := tx.Where("name = ?", name).FirstOrCreate(&row).Error; err != nil {
+	return db.Transaction(func(tx *gorm.DB) error {
+		if err := ApplySnapshot(tx, snapshot); err != nil {
 			return err
 		}
-	}
-
-	officialCodex := make(map[string]models.CodexCatalogConfig, len(snapshot.CodexCatalog))
-	for _, row := range snapshot.CodexCatalog {
-		officialCodex[row.Category+"\x00"+row.EntryKey] = row
-	}
-	for _, objective := range snapshot.AdventureObjectives {
-		if objective.CodexCategory == "" || objective.CodexEntry == "" {
-			continue
+		if err := AnchorSeasonSchedule(tx, time.Now()); err != nil {
+			return err
 		}
-		row, ok := officialCodex[objective.CodexCategory+"\x00"+objective.CodexEntry]
-		if !ok {
-			return fmt.Errorf("官方冒险目标 %s 缺少图鉴定义", objective.Key)
+		if err := upsertOfficialProfile(tx, snapshot); err != nil {
+			return err
 		}
-		var existing models.CodexCatalogConfig
-		lookup := tx.Limit(1).Find(&existing, "category = ? AND entry_key = ?", row.Category, row.EntryKey)
-		if lookup.Error != nil {
-			return lookup.Error
-		}
-		if lookup.RowsAffected == 0 {
-			row.ID = 0
-			if err := tx.Create(&row).Error; err != nil {
-				return err
-			}
-			continue
-		}
-		if existing.SourceType == "" && existing.SourceKey == "" {
-			if err := tx.Model(&existing).Updates(map[string]any{"source_type": row.SourceType, "source_key": row.SourceKey}).Error; err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+		return activateOfficialProfile(tx)
+	})
 }
 
-func migrateLegacyLiveEventChoices(tx *gorm.DB) error {
+func AnchorSeasonSchedule(tx *gorm.DB, now time.Time) error {
+	if tx == nil || !tx.Migrator().HasTable(&models.LiveEventConfig{}) {
+		return nil
+	}
 	var events []models.LiveEventConfig
 	if err := tx.Find(&events).Error; err != nil {
 		return err
 	}
-	effects := []string{"community_material_gain_percent", "facility_upgrade_cost_reduction_percent", "boss_damage_gain_percent", "adventure_xp_gain_percent", "expedition_reward_gain_percent"}
 	for _, event := range events {
-		var count int64
-		if err := tx.Model(&models.LiveEventChoiceConfig{}).Where("event_key = ?", event.Key).Count(&count).Error; err != nil {
+		duration := event.EndsAt.Sub(event.StartsAt)
+		if duration <= 0 {
+			duration = 70 * 24 * time.Hour
+		}
+		if err := tx.Model(&models.LiveEventConfig{}).Where("key = ?", event.Key).Updates(map[string]any{"starts_at": now, "ends_at": now.Add(duration)}).Error; err != nil {
 			return err
 		}
-		if count > 0 {
-			continue
-		}
-		var labels []string
-		if json.Unmarshal([]byte(event.StoryChoices), &labels) != nil || len(labels) < 2 || len(labels) > 5 {
-			continue
-		}
-		for index, label := range labels {
-			effect := ""
-			value := 0
-			if index < len(effects) {
-				effect, value = effects[index], 20
-			}
-			choice := models.LiveEventChoiceConfig{EventKey: event.Key, ChoiceKey: fmt.Sprintf("choice-%d", index+1), Label: strings.TrimSpace(label), EffectType: effect, EffectValue: value, SortOrder: (index + 1) * 10}
-			if err := tx.Create(&choice).Error; err != nil {
-				return err
-			}
+	}
+	if !tx.Migrator().HasTable(&models.AdventureBossConfig{}) {
+		return nil
+	}
+	var bosses []models.AdventureBossConfig
+	if err := tx.Order("recommended_level asc, key asc").Find(&bosses).Error; err != nil {
+		return err
+	}
+	offsets := []time.Duration{10 * 24 * time.Hour, 31 * 24 * time.Hour, 56 * 24 * time.Hour}
+	for index, boss := range bosses {
+		offset := offsets[index%len(offsets)]
+		if err := tx.Model(&models.AdventureBossConfig{}).Where("key = ?", boss.Key).Update("schedule_anchor", now.Add(offset)).Error; err != nil {
+			return err
 		}
 	}
 	return nil

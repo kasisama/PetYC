@@ -11,6 +11,7 @@ import (
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
+	"qq-pet-saas/config"
 	"qq-pet-saas/core"
 	"qq-pet-saas/gameplay"
 	"qq-pet-saas/gameplayrules"
@@ -19,6 +20,9 @@ import (
 
 func newTestService(t *testing.T) (*Service, *gorm.DB, *time.Time) {
 	t.Helper()
+	if len(config.Core.InitialPets) == 0 {
+		config.Core.InitialPets = []string{"光芽兽"}
+	}
 	dsn := fmt.Sprintf("file:expedition-test-%d?mode=memory&cache=shared&_pragma=busy_timeout(5000)", time.Now().UnixNano())
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	if err != nil {
@@ -30,7 +34,7 @@ func newTestService(t *testing.T) (*Service, *gorm.DB, *time.Time) {
 	}
 	sqlDB.SetMaxOpenConns(8)
 	err = db.AutoMigrate(
-		&models.PlayerAccount{}, &models.PlayerIdentity{}, &models.PetProfile{},
+		&models.SystemConfig{}, &models.PlayerAccount{}, &models.PlayerIdentity{}, &models.PetProfile{},
 		&models.GlobalInventoryItem{}, &models.PlayerWallet{}, &models.WalletLedger{}, &models.CompanionJournal{}, &models.CompanionActionDaily{}, &models.ActivityRun{}, &models.ItemUseRecord{}, &models.ExpeditionTemplateConfig{}, &models.ExpeditionRun{},
 		&models.CodexEntry{}, &models.Community{}, &models.CommunityMember{},
 		&models.ExpeditionSquad{}, &models.SquadMember{}, &models.IdentityBindToken{},
@@ -43,41 +47,61 @@ func newTestService(t *testing.T) (*Service, *gorm.DB, *time.Time) {
 		&models.GrowthRoleConfig{}, &models.GrowthStanceConfig{},
 		&models.PersonalityRuleConfig{}, &models.CodexCatalogConfig{},
 		&models.PetSpeciesConfig{}, &models.CheckinRewardConfig{},
+		&models.PetEvolutionRuleConfig{}, &models.PetEvolutionCostConfig{}, &models.PetSkillUnlockConfig{}, &models.AdventureLevelConfig{},
 		&models.ItemConfig{}, &models.ShopItemConfig{},
 		&models.AdventureMapConfig{}, &models.AdventureZoneConfig{}, &models.AdventureZonePrerequisiteConfig{},
 		&models.AdventureObjectiveConfig{}, &models.AdventureMonsterConfig{}, &models.AdventureSkillConfig{},
-		&models.AdventureMonsterSkillConfig{}, &models.AdventureEncounterConfig{}, &models.AdventureLootPoolConfig{},
-		&models.AdventureLootEntryConfig{}, &models.AdventureExpeditionConfig{}, &models.AdventureBossConfig{},
+		&models.AdventureMonsterSkillConfig{}, &models.AdventureEncounterConfig{}, &models.AdventureEncounterEffectConfig{}, &models.AdventureLootPoolConfig{},
+		&models.AdventureLootEntryConfig{}, &models.CurrencyConfig{},
+		&models.AdventureShopItemConfig{}, &models.AdventureExpeditionConfig{}, &models.AdventureBossConfig{},
 		&models.AdventureBossRewardTierConfig{}, &models.EquipmentTemplateConfig{}, &models.EquipmentAffixConfig{},
 		&models.EquipmentRecipeConfig{}, &models.EquipmentRecipeMaterialConfig{}, &models.LiveEventChoiceConfig{},
 		&models.LiveEventExpeditionSourceConfig{}, &models.PlayerAdventureProgress{}, &models.PlayerZoneProgress{},
 		&models.PlayerObjectiveProgress{}, &models.AdventureExplorationSession{}, &models.AdventureCombatSession{},
 		&models.AdventureCombatTurn{}, &models.PlayerEquipment{}, &models.PlayerBlueprintProgress{},
+		&models.AdventureShopPurchase{},
 		&models.AdventureExpeditionRun{}, &models.AdventureBossInstance{}, &models.AdventureBossContribution{},
 		&models.AdventureBossRewardClaim{}, &models.EquipmentCraftRecord{},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = db.Exec(`CREATE UNIQUE INDEX idx_expedition_one_running ON expedition_runs(account_id) WHERE status = 'running'`).Error; err != nil {
+	for _, name := range config.StarterPets() {
+		species := models.PetSpeciesConfig{Key: name, Name: name, FamilyKey: name, Stage: "base", Adoptable: true, Archetype: "balanced"}
+		if configured, ok := config.Pets[name]; ok {
+			species.Health = configured.Health
+			species.HealthMax = configured.HealthMax
+			species.Hunger = configured.Hunger
+			species.HungerMax = configured.HungerMax
+			species.Wisdom = configured.Wisdom
+			species.Strength = configured.Strength
+			species.Defense = configured.Defense
+			species.FavoriteFood = configured.FavoriteFood
+			species.FavoriteGift = configured.FavoriteGift
+		}
+		if err = db.Create(&species).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = db.Exec(`CREATE UNIQUE INDEX idx_expedition_one_running ON expedition_runs(account_id, pet_id) WHERE status = 'running'`).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err = db.Exec(`CREATE UNIQUE INDEX idx_activity_one_running ON activity_runs(account_id) WHERE status = 'running'`).Error; err != nil {
+	if err = db.Exec(`CREATE UNIQUE INDEX idx_activity_one_running ON activity_runs(account_id, pet_id) WHERE status = 'running'`).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err = db.Exec(`CREATE UNIQUE INDEX idx_fishing_one_running ON fishing_runs(account_id) WHERE status = 'running'`).Error; err != nil {
+	if err = db.Exec(`CREATE UNIQUE INDEX idx_fishing_one_running ON fishing_runs(account_id, pet_id) WHERE status = 'running'`).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err = db.Exec(`CREATE UNIQUE INDEX idx_adventure_exploration_one_active ON adventure_exploration_sessions(account_id) WHERE status = 'active'`).Error; err != nil {
+	if err = db.Exec(`CREATE UNIQUE INDEX idx_adventure_exploration_one_active ON adventure_exploration_sessions(account_id, pet_id) WHERE status = 'active'`).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err = db.Exec(`CREATE UNIQUE INDEX idx_adventure_combat_one_active ON adventure_combat_sessions(account_id) WHERE status = 'active'`).Error; err != nil {
+	if err = db.Exec(`CREATE UNIQUE INDEX idx_adventure_combat_one_active ON adventure_combat_sessions(account_id, pet_id) WHERE status = 'active'`).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err = db.Exec(`CREATE UNIQUE INDEX idx_adventure_expedition_one_running ON adventure_expedition_runs(account_id) WHERE status = 'running'`).Error; err != nil {
+	if err = db.Exec(`CREATE UNIQUE INDEX idx_adventure_expedition_one_running ON adventure_expedition_runs(account_id, pet_id) WHERE status = 'running'`).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err = db.Exec(`CREATE UNIQUE INDEX idx_player_equipment_one_slot ON player_equipments(account_id, equipped_slot) WHERE equipped_slot <> ''`).Error; err != nil {
+	if err = db.Exec(`CREATE UNIQUE INDEX idx_player_equipment_one_slot ON player_equipments(equipped_pet_id, equipped_slot) WHERE equipped_pet_id <> '' AND equipped_slot <> ''`).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err = gameplayrules.EnsureDefaults(db); err != nil {
@@ -118,7 +142,7 @@ func TestConcurrentStartExpeditionCreatesOnlyOneRunningRecord(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = service.Adopt(context.Background(), account.ID, "诺诺", "诺诺"); err != nil {
+	if _, err = service.Adopt(context.Background(), account.ID, "光芽兽", "光芽兽"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -177,7 +201,7 @@ func TestConfiguredExpeditionTemplateConsumesCostsAndUsesCatalogReward(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = service.Adopt(context.Background(), account.ID, "诺诺", "诺诺"); err != nil {
+	if _, err = service.Adopt(context.Background(), account.ID, "光芽兽", "光芽兽"); err != nil {
 		t.Fatal(err)
 	}
 	if err = db.Model(&models.PetProfile{}).Where("account_id = ?", account.ID).Updates(map[string]interface{}{
@@ -251,7 +275,7 @@ func TestConfiguredGrowthRulesDriveRoleStanceAndPersonality(t *testing.T) {
 	}
 	event := oneBotEvent("100", "configured", "")
 	account, _ := service.ResolveAccount(context.Background(), event)
-	_, _ = service.Adopt(context.Background(), account.ID, "诺诺", "配置测试宠物")
+	_, _ = service.Adopt(context.Background(), account.ID, "光芽兽", "配置测试宠物")
 	pet, err := service.SetRole(context.Background(), account.ID, "采集者")
 	if err != nil || pet.Skills != "辨识、采样、整理" {
 		t.Fatalf("configured role did not drive loadout: pet=%+v err=%v", pet, err)
@@ -276,7 +300,7 @@ func TestCommunityBossAggregatesPositiveContributionWithoutPlayerLoss(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = service.Adopt(context.Background(), account.ID, "诺诺", "诺诺"); err != nil {
+	if _, err = service.Adopt(context.Background(), account.ID, "光芽兽", "光芽兽"); err != nil {
 		t.Fatal(err)
 	}
 	if err = service.AddInventory(context.Background(), account.ID, "调查记录", 10); err != nil {
@@ -391,7 +415,7 @@ func TestLeadingSeasonChoiceChangesCommunitySettlement(t *testing.T) {
 	if err = service.VoteSeason(context.Background(), event, account.ID, 3); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = service.Adopt(context.Background(), account.ID, "诺诺", "诺诺"); err != nil {
+	if _, err = service.Adopt(context.Background(), account.ID, "光芽兽", "光芽兽"); err != nil {
 		t.Fatal(err)
 	}
 	if err = service.AddInventory(context.Background(), account.ID, "调查记录", 10); err != nil {
@@ -544,7 +568,7 @@ func TestPersonalityEmergesFromRepeatedCareBehavior(t *testing.T) {
 	service, db, now := newTestService(t)
 	event := oneBotEvent("100", "42", "今日")
 	account, _ := service.ResolveAccount(context.Background(), event)
-	_, _ = service.Adopt(context.Background(), account.ID, "诺诺", "诺诺")
+	_, _ = service.Adopt(context.Background(), account.ID, "光芽兽", "光芽兽")
 	for day := 0; day < 3; day++ {
 		if _, _, err := service.RecordDaily(context.Background(), account.ID, "陪伴"); err != nil {
 			t.Fatal(err)
@@ -564,7 +588,7 @@ func TestSetRoleAssignsDeterministicSkillLoadout(t *testing.T) {
 	service, _, _ := newTestService(t)
 	event := oneBotEvent("100", "42", "定位 守护者")
 	account, _ := service.ResolveAccount(context.Background(), event)
-	_, _ = service.Adopt(context.Background(), account.ID, "诺诺", "诺诺")
+	_, _ = service.Adopt(context.Background(), account.ID, "光芽兽", "光芽兽")
 	pet, err := service.SetRole(context.Background(), account.ID, "守护者")
 	if err != nil {
 		t.Fatal(err)
@@ -600,9 +624,16 @@ func TestEventProgressAndRewardTrackAreIdempotent(t *testing.T) {
 	if err := db.Create(&event).Error; err != nil {
 		t.Fatal(err)
 	}
+	if err := db.Create(&[]models.ItemConfig{
+		{Key: "wood", Name: "木材", Status: "active"},
+		{Key: "survey_log", Name: "调查记录", Status: "active"},
+		{Key: "eco_sample", Name: "生态样本", Status: "active"},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
 	rewards := []models.RewardTrackConfig{
-		{EventKey: event.Key, Milestone: 10, ItemName: "木材", Quantity: 5},
-		{EventKey: event.Key, Milestone: 10, ItemName: "调查记录", Quantity: 2},
+		{EventKey: event.Key, Milestone: 10, RewardType: "item", RewardKey: "wood", RewardName: "木材", Quantity: 5},
+		{EventKey: event.Key, Milestone: 10, RewardType: "item", RewardKey: "survey_log", RewardName: "调查记录", Quantity: 2},
 	}
 	if err := db.Create(&rewards).Error; err != nil {
 		t.Fatal(err)
@@ -643,7 +674,7 @@ func TestEventProgressAndRewardTrackAreIdempotent(t *testing.T) {
 		t.Fatalf("unexpected event audit rows: grants=%d claims=%d", grantCount, claimCount)
 	}
 
-	lateReward := models.RewardTrackConfig{EventKey: event.Key, Milestone: 5, ItemName: "生态样本", Quantity: 2}
+	lateReward := models.RewardTrackConfig{EventKey: event.Key, Milestone: 5, RewardType: "item", RewardKey: "eco_sample", RewardName: "生态样本", Quantity: 2}
 	if err = db.Create(&lateReward).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -651,12 +682,44 @@ func TestEventProgressAndRewardTrackAreIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if progress != 10 || len(granted) != 1 || granted[0].ItemName != "生态样本" {
+	if progress != 10 || len(granted) != 1 || granted[0].RewardName != "生态样本" || granted[0].RewardKey != "eco_sample" {
 		t.Fatalf("new configured milestone was not claimable: progress=%d rewards=%#v", progress, granted)
 	}
 	_, granted, err = service.ClaimEventRewards(context.Background(), account.ID)
 	if err != nil || len(granted) != 0 {
 		t.Fatalf("event reward claim was not idempotent: err=%v rewards=%#v", err, granted)
+	}
+}
+
+func TestEventCurrencyMilestoneCreditsSeasonWallet(t *testing.T) {
+	service, db, now := newTestService(t)
+	if err := db.Create(&models.LiveEventConfig{
+		Key: "season-01", Name: "调查季", Region: "全域", Active: true,
+		StartsAt: now.Add(-time.Hour), EndsAt: now.Add(7 * 24 * time.Hour), StoryChoices: `["一","二","三"]`,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.CurrencyConfig{Key: gameplay.SeasonTokenCurrencyKey, Name: "遗迹季印", Enabled: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.RewardTrackConfig{EventKey: "season-01", Milestone: 8, RewardType: "currency", RewardKey: gameplay.SeasonTokenCurrencyKey, RewardName: "遗迹季印", Quantity: 6}).Error; err != nil {
+		t.Fatal(err)
+	}
+	account, err := service.ResolveAccount(context.Background(), oneBotEvent("100", "season-player", "活动"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	progress, granted, err := service.AddEventProgress(context.Background(), account.ID, "season:run-1", 8)
+	if err != nil || progress != 8 || len(granted) != 1 || granted[0].RewardType != "currency" {
+		t.Fatalf("currency milestone failed: progress=%d rewards=%#v err=%v", progress, granted, err)
+	}
+	var wallet models.PlayerWallet
+	if err = db.First(&wallet, "account_id = ? AND currency_key = ?", account.ID, gameplay.SeasonTokenCurrencyKey).Error; err != nil || wallet.Balance != 6 {
+		t.Fatalf("season token wallet mismatch: %#v err=%v", wallet, err)
+	}
+	_, granted, err = service.AddEventProgress(context.Background(), account.ID, "season:run-1", 8)
+	if err != nil || len(granted) != 0 {
+		t.Fatalf("duplicate source granted again: %#v err=%v", granted, err)
 	}
 }
 
@@ -678,7 +741,7 @@ func TestLotteryPublishesPityAndSettlesExactlyOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = service.AdoptWithStarter(context.Background(), account.ID, "诺诺", "诺诺", gameplay.DefaultCurrencyKey, 100); err != nil {
+	if _, err = service.AdoptWithStarter(context.Background(), account.ID, "光芽兽", "光芽兽", gameplay.DefaultCurrencyKey, 100); err != nil {
 		t.Fatal(err)
 	}
 	for index := 1; index <= 3; index++ {
@@ -728,7 +791,7 @@ func TestFishingUsesTimedClaimAndAuditedReward(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = service.AdoptWithStarter(context.Background(), account.ID, "诺诺", "诺诺", gameplay.DefaultCurrencyKey, 20); err != nil {
+	if _, err = service.AdoptWithStarter(context.Background(), account.ID, "光芽兽", "光芽兽", gameplay.DefaultCurrencyKey, 20); err != nil {
 		t.Fatal(err)
 	}
 	run, attempts, limit, err := service.StartFishing(context.Background(), account.ID, "message:cast-1")
@@ -772,7 +835,7 @@ func TestRockPaperScissorsIsEqualChanceAndIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = service.Adopt(context.Background(), account.ID, "诺诺", "诺诺"); err != nil {
+	if _, err = service.Adopt(context.Background(), account.ID, "光芽兽", "光芽兽"); err != nil {
 		t.Fatal(err)
 	}
 	result, err := service.PlayRockPaperScissors(context.Background(), account.ID, "message:battle-1", "布")
@@ -872,7 +935,7 @@ func TestExpeditionClaimIsAutomaticAndIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = service.Adopt(context.Background(), account.ID, "诺诺", "诺诺"); err != nil {
+	if _, err = service.Adopt(context.Background(), account.ID, "光芽兽", "光芽兽"); err != nil {
 		t.Fatal(err)
 	}
 	run, err := service.StartExpedition(context.Background(), account.ID, 1)
@@ -986,7 +1049,9 @@ func TestBindingRejectsTargetIdentityWithIndependentProgress(t *testing.T) {
 	token, _ := service.GenerateBindToken(context.Background(), source.ID)
 	targetEvent := officialGroupEvent("group-openid", "member-openid", "")
 	target, _ := service.ResolveAccount(context.Background(), targetEvent)
-	_, _ = service.Adopt(context.Background(), target.ID, "菀菀", "菀菀")
+	if _, err := service.Adopt(context.Background(), target.ID, "光芽兽", "光芽兽"); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := service.RedeemBindToken(context.Background(), targetEvent, token); err != ErrBindConflict {
 		t.Fatalf("expected independent progress conflict, got %v", err)
 	}

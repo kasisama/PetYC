@@ -183,9 +183,9 @@ func handleEquipment(ctx context.Context, event core.InboundEvent, service *Serv
 		return core.OutboundMessage{}, err
 	}
 	if len(rows) == 0 {
-		return text("还没有装备。探索地图、挑战首领或制造装备都能获得武器、防具与秘宝。"), nil
+		return text("🎒【装备背包】\n还没有装备。探索地图、挑战首领或制造装备都能获得武器、防具与秘宝。"), nil
 	}
-	lines := []string{"🎒【装备】"}
+	lines := []string{"🎒【装备背包】"}
 	buttons := []core.KeyboardButton{}
 	for _, row := range rows {
 		status := "未穿戴"
@@ -234,9 +234,9 @@ func handleBlueprints(ctx context.Context, event core.InboundEvent, service *Ser
 		return core.OutboundMessage{}, err
 	}
 	if len(rows) == 0 {
-		return text("还没有收集到装备蓝图碎片。"), nil
+		return text("📜【蓝图背包】\n还没有收集到装备蓝图碎片。"), nil
 	}
-	lines := []string{"📜【装备蓝图】"}
+	lines := []string{"📜【蓝图背包】"}
 	for _, row := range rows {
 		status := "收集中"
 		if row.Unlocked {

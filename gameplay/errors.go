@@ -26,6 +26,7 @@ var (
 	ErrPetNotAway            = errors.New("宠物当前不需要找回")
 	ErrTreatmentNotNeeded    = errors.New("宠物当前不需要治疗")
 	ErrActivityActive        = errors.New("宠物正在进行其他行动")
+	ErrTooManyConcurrentRuns = errors.New("同时进行的行动已达上限")
 	ErrActivityNotReady      = errors.New("活动还没有完成")
 	ErrNoActiveActivity      = errors.New("宠物当前没有进行这项活动")
 	ErrAttributeMax          = errors.New("对应属性已经达到上限")

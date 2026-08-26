@@ -16,7 +16,8 @@ func profileTestDB(t *testing.T) *gorm.DB {
 		t.Fatal(err)
 	}
 	modelsToMigrate := []any{
-		&models.SystemConfig{}, &models.CommandConfig{}, &models.PetSpeciesConfig{}, &models.ItemConfig{}, &models.ShopItemConfig{},
+		&models.SystemConfig{}, &models.CommandConfig{}, &models.PetSpeciesConfig{}, &models.PetEvolutionRuleConfig{},
+		&models.PetEvolutionCostConfig{}, &models.PetSkillUnlockConfig{}, &models.AdventureLevelConfig{}, &models.ItemConfig{}, &models.ShopItemConfig{},
 		&models.CheckinRewardConfig{}, &models.WorkSettingConfig{}, &models.MenuConfig{}, &models.ImageConfig{}, &models.LiveEventConfig{},
 		&models.RewardTrackConfig{}, &models.GrowthRoleConfig{}, &models.GrowthStanceConfig{}, &models.PersonalityRuleConfig{},
 		&models.CodexCatalogConfig{}, &models.ExpeditionTemplateConfig{}, &models.ChanceGameConfig{}, &models.ChanceRewardConfig{},
@@ -24,8 +25,9 @@ func profileTestDB(t *testing.T) *gorm.DB {
 		&models.ActivityRun{}, &models.ExpeditionRun{}, &models.TradeOffer{}, &models.FishingRun{},
 		&models.AdventureMapConfig{}, &models.AdventureZoneConfig{}, &models.AdventureZonePrerequisiteConfig{},
 		&models.AdventureObjectiveConfig{}, &models.AdventureMonsterConfig{}, &models.AdventureSkillConfig{},
-		&models.AdventureMonsterSkillConfig{}, &models.AdventureEncounterConfig{}, &models.AdventureLootPoolConfig{},
-		&models.AdventureLootEntryConfig{}, &models.AdventureExpeditionConfig{}, &models.AdventureBossConfig{},
+		&models.AdventureMonsterSkillConfig{}, &models.AdventureEncounterConfig{}, &models.AdventureEncounterEffectConfig{}, &models.AdventureLootPoolConfig{},
+		&models.AdventureLootEntryConfig{}, &models.CurrencyConfig{},
+		&models.AdventureShopItemConfig{}, &models.AdventureExpeditionConfig{}, &models.AdventureBossConfig{},
 		&models.AdventureBossRewardTierConfig{}, &models.EquipmentTemplateConfig{}, &models.EquipmentAffixConfig{},
 		&models.EquipmentRecipeConfig{}, &models.EquipmentRecipeMaterialConfig{}, &models.LiveEventChoiceConfig{},
 		&models.LiveEventExpeditionSourceConfig{},
@@ -129,7 +131,7 @@ func TestOfficialDefaultsAreVersionedAndContainNoLocalKeys(t *testing.T) {
 	if err := db.First(&profile, "id = ?", OfficialProfileID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if !profile.Builtin || profile.AppVersion != "0.0.2" {
+	if !profile.Builtin || profile.AppVersion != "0.1.0" || profile.SchemaVersion != 2 {
 		t.Fatalf("unexpected official profile: %+v", profile)
 	}
 	snapshot, err := DecodeSnapshot(profile.Payload)
@@ -146,7 +148,7 @@ func TestOfficialDefaultsAreVersionedAndContainNoLocalKeys(t *testing.T) {
 	}
 }
 
-func TestOfficialDefaultsUpgradeRemovesInvalidLegacyExpeditionsAndSeedsDependencies(t *testing.T) {
+func TestEnsureOfficialDefaultsDoesNotOverwriteNonEmptyDatabase(t *testing.T) {
 	db := profileTestDB(t)
 	if err := db.Create(&models.SystemConfig{Key: "Core.Currency", Value: "金币"}).Error; err != nil {
 		t.Fatal(err)
@@ -168,33 +170,74 @@ func TestOfficialDefaultsUpgradeRemovesInvalidLegacyExpeditionsAndSeedsDependenc
 	}
 
 	if err := EnsureOfficialDefaults(db); err != nil {
-		t.Fatalf("upgrade must not be blocked by an obsolete template: %v", err)
+		t.Fatalf("ensure must not fail on an existing database: %v", err)
 	}
-	var legacyCount, mapCount, dependencyCount int64
+	var legacyCount, mapCount int64
 	if err := db.Model(&models.ExpeditionTemplateConfig{}).Count(&legacyCount).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Model(&models.AdventureMapConfig{}).Count(&mapCount).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Model(&models.ItemConfig{}).Where("name IN ?", []string{"林地样本", "古代零件", "生态样本", "辉光剑蓝图碎片", "装备粉尘"}).Count(&dependencyCount).Error; err != nil {
-		t.Fatal(err)
-	}
-	if legacyCount != 0 || mapCount == 0 || dependencyCount != 5 {
-		t.Fatalf("unexpected migration result: legacy=%d maps=%d dependencies=%d", legacyCount, mapCount, dependencyCount)
+	if legacyCount != 1 || mapCount != 0 {
+		t.Fatalf("startup must not overwrite live config: legacy=%d maps=%d", legacyCount, mapCount)
 	}
 	var inventory models.GlobalInventoryItem
 	if err := db.First(&inventory, "account_id = ? AND item_name = ?", "player-1", "苹果").Error; err != nil {
 		t.Fatal(err)
 	}
 	if inventory.Quantity != 7 {
-		t.Fatalf("player inventory changed during config migration: %+v", inventory)
+		t.Fatalf("player inventory changed during config ensure: %+v", inventory)
 	}
-	var codex models.CodexCatalogConfig
-	if err := db.First(&codex, "category = ? AND entry_key = ?", "生物", "林间足迹").Error; err != nil {
+}
+
+func TestRebuildOfficialDefaultsReplacesConfigAndKeepsPlayerInventory(t *testing.T) {
+	db := profileTestDB(t)
+	if err := db.Create(&models.SystemConfig{Key: "Core.Currency", Value: "金币"}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if codex.SourceType != "zone" || codex.SourceKey != "forest-edge" {
-		t.Fatalf("codex source was not migrated: %+v", codex)
+	if err := db.Create(&models.ItemConfig{Name: "苹果", Status: "active"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.ExpeditionTemplateConfig{Tier: 2, Name: "遗迹调查", Enabled: true, DurationMinutes: 60, RewardItem: "古代零件", RewardQuantity: 1}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.GlobalInventoryItem{AccountID: "player-1", ItemName: "苹果", Quantity: 7}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := RebuildOfficialDefaults(db); err != nil {
+		t.Fatalf("rebuild failed: %v", err)
+	}
+	var legacyCount, mapCount, currencyCount int64
+	if err := db.Model(&models.ExpeditionTemplateConfig{}).Count(&legacyCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&models.AdventureMapConfig{}).Count(&mapCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&models.CurrencyConfig{}).Count(&currencyCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if legacyCount != 0 || mapCount != 3 || currencyCount != 3 {
+		t.Fatalf("unexpected rebuild result: legacy=%d maps=%d currencies=%d", legacyCount, mapCount, currencyCount)
+	}
+	for _, table := range []string{"adventure_item_configs", "player_adventure_inventory_items", "player_adventure_wallets", "adventure_wallet_ledgers"} {
+		if db.Migrator().HasTable(table) {
+			t.Fatalf("deprecated economy table must not be migrated: %s", table)
+		}
+	}
+	var inventory models.GlobalInventoryItem
+	if err := db.First(&inventory, "account_id = ? AND item_name = ?", "player-1", "苹果").Error; err != nil {
+		t.Fatal(err)
+	}
+	if inventory.Quantity != 7 {
+		t.Fatalf("player inventory changed during rebuild: %+v", inventory)
+	}
+	var codex models.CodexCatalogConfig
+	if err := db.First(&codex, "category = ? AND entry_key = ?", "区域生态", "sunlit_steppe_z1").Error; err != nil {
+		t.Fatal(err)
+	}
+	if codex.SourceType != "zone" || codex.SourceKey != "sunlit_steppe_z1" {
+		t.Fatalf("codex source was not rebuilt: %+v", codex)
 	}
 }

@@ -43,7 +43,14 @@ func newConfigTestDB(t *testing.T) *gorm.DB {
 		&models.SystemConfig{},
 		&models.CommandConfig{},
 		&models.PetSpeciesConfig{},
+		&models.PetEvolutionRuleConfig{},
+		&models.PetEvolutionCostConfig{},
+		&models.PetSkillUnlockConfig{},
+		&models.AdventureLevelConfig{},
 		&models.ItemConfig{},
+		&models.CurrencyConfig{},
+		&models.RewardTrackConfig{},
+		&models.LiveEventConfig{},
 		&models.ShopItemConfig{},
 		&models.WorkSettingConfig{},
 		&models.MenuConfig{},
@@ -130,7 +137,13 @@ func TestRewardTrackAllowsMultipleItemsAtSameMilestone(t *testing.T) {
 	if err := db.AutoMigrate(&models.RewardTrackConfig{}); err != nil {
 		t.Fatal(err)
 	}
-	body := []byte(`[{"event_key":"forest","milestone":100,"item_name":"木材","quantity":5},{"event_key":"forest","milestone":100,"item_name":"调查记录","quantity":2}]`)
+	if err := db.Create(&models.ItemConfig{Key: "wood", Name: "木材", Status: "active"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.ItemConfig{Key: "survey_log", Name: "调查记录", Status: "active"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`[{"event_key":"forest","milestone":100,"reward_type":"item","reward_key":"wood","reward_name":"木材","quantity":5},{"event_key":"forest","milestone":100,"reward_type":"item","reward_key":"survey_log","reward_name":"调查记录","quantity":2}]`)
 	response := doConfigRequest(t, newConfigTestRouter(db), http.MethodPut, "/api/admin/config/reward_tracks", body)
 	if response.Code != 0 {
 		t.Fatalf("同一里程碑应允许多个不同物品，实际 code=%d msg=%s", response.Code, response.Msg)
@@ -147,7 +160,7 @@ func TestRewardTrackRejectsDuplicateItemAtSameMilestone(t *testing.T) {
 	if err := db.AutoMigrate(&models.RewardTrackConfig{}); err != nil {
 		t.Fatal(err)
 	}
-	body := []byte(`[{"event_key":"forest","milestone":100,"item_name":"木材","quantity":5},{"event_key":"forest","milestone":100,"item_name":"木材","quantity":2}]`)
+	body := []byte(`[{"event_key":"forest","milestone":100,"reward_type":"item","reward_key":"wood","reward_name":"木材","quantity":5},{"event_key":"forest","milestone":100,"reward_type":"item","reward_key":"wood","reward_name":"木材","quantity":2}]`)
 	response := doConfigRequest(t, newConfigTestRouter(db), http.MethodPut, "/api/admin/config/reward_tracks", body)
 	if response.Code != codeInvalidPayload {
 		t.Fatalf("同一里程碑的同一物品应被拒绝，实际 code=%d msg=%s", response.Code, response.Msg)
@@ -205,7 +218,8 @@ func TestGetConfigCoversEveryConfigSchema(t *testing.T) {
 	router := newConfigTestRouter(newConfigTestDB(t))
 	// 后台需要管理的 9 张配置表都必须可读，否则 Vue 前端会缺少数据源。
 	schemas := []string{
-		"system", "commands", "pet_species", "items", "shop_items",
+		"system", "commands", "pet_species", "pet_evolution_rules", "pet_evolution_costs", "pet_skill_unlocks",
+		"items", "shop_items", "checkin_rewards", "work_settings", "adventure_levels",
 		"menus", "images",
 		"growth_roles", "growth_stances", "personality_rules", "codex_catalog",
 		"expedition_templates",
@@ -218,12 +232,12 @@ func TestGetConfigCoversEveryConfigSchema(t *testing.T) {
 	}
 }
 
-func TestHistoricalSchemasAreNotExposed(t *testing.T) {
+func TestCheckinAndWorkSettingsAreExposed(t *testing.T) {
 	router := newConfigTestRouter(newConfigTestDB(t))
-	for _, schema := range []string{"work_settings", "checkin_rewards"} {
+	for _, schema := range []string{"work_settings", "checkin_rewards", "adventure_levels", "pet_evolution_rules"} {
 		response := doConfigRequest(t, router, http.MethodGet, "/api/admin/config/"+schema, nil)
-		if response.Code != codeSchemaNotFound {
-			t.Fatalf("历史配置域 %s 不应继续暴露，实际 code=%d", schema, response.Code)
+		if response.Code != 0 {
+			t.Fatalf("配置域 %s 应可管理，实际 code=%d msg=%s", schema, response.Code, response.Msg)
 		}
 	}
 }
@@ -272,7 +286,7 @@ func TestSaveConfigPersistsRows(t *testing.T) {
 	}
 	db.Create(&models.MenuConfig{Name: "主菜单", Reply: "旧内容"})
 
-	body := []byte(`[{"Name":"主菜单","Reply":"新内容"},{"Name":"帮助","Reply":"帮助内容"}]`)
+	body := []byte(`[{"Name":"主菜单","Reply":"新内容","Image":"上传/main.webp"},{"Name":"帮助","Reply":"帮助内容","Image":""}]`)
 	response := doConfigRequest(t, newConfigTestRouter(db), http.MethodPut, "/api/admin/config/menus", body)
 	if response.Code != 0 {
 		t.Fatalf("期望 code 0，实际 %d，msg=%s", response.Code, response.Msg)
@@ -287,6 +301,9 @@ func TestSaveConfigPersistsRows(t *testing.T) {
 	db.First(&updated, "name = ?", "主菜单")
 	if updated.Reply != "新内容" {
 		t.Fatalf("既有记录未被更新，Reply=%q", updated.Reply)
+	}
+	if updated.Image != "上传/main.webp" {
+		t.Fatalf("菜单图片未被保存，Image=%q", updated.Image)
 	}
 
 	status, err := configstate.GetConfigStatus(db)
@@ -369,6 +386,41 @@ func TestMarkConfigLoadedDoesNotHideNewerSavedRevision(t *testing.T) {
 	}
 	if status.PendingReload || status.LoadedRevision != latestRevision {
 		t.Fatalf("较旧重载不应让已加载版本倒退，实际 %+v", status)
+	}
+}
+
+func TestSaveMenuConfigValidatesRequiredFieldsAndDuplicateNames(t *testing.T) {
+	router := newConfigTestRouter(newConfigTestDB(t))
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "empty-name", body: `[{"Name":"  ","Reply":"有效回复","Image":""}]`},
+		{name: "empty-reply", body: `[{"Name":"主菜单","Reply":"  ","Image":""}]`},
+		{name: "duplicate-name", body: `[{"Name":"主菜单","Reply":"回复一","Image":""},{"Name":" 主菜单 ","Reply":"回复二","Image":""}]`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			response := doConfigRequest(t, router, http.MethodPut, "/api/admin/config/menus", []byte(tc.body))
+			if response.Code != codeInvalidPayload {
+				t.Fatalf("期望 code %d，实际 %d，msg=%s", codeInvalidPayload, response.Code, response.Msg)
+			}
+		})
+	}
+}
+
+func TestSaveMenuConfigAllowsEmptyImage(t *testing.T) {
+	db := newConfigTestDB(t)
+	response := doConfigRequest(t, newConfigTestRouter(db), http.MethodPut, "/api/admin/config/menus", []byte(`[{"Name":"主菜单","Reply":"纯文字菜单","Image":""}]`))
+	if response.Code != 0 {
+		t.Fatalf("空图片菜单应允许保存，code=%d msg=%s", response.Code, response.Msg)
+	}
+	var row models.MenuConfig
+	if err := db.First(&row, "name = ?", "主菜单").Error; err != nil {
+		t.Fatal(err)
+	}
+	if row.Reply != "纯文字菜单" || row.Image != "" {
+		t.Fatalf("纯文字菜单保存结果错误: %#v", row)
 	}
 }
 

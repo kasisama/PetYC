@@ -20,7 +20,10 @@ func newEcosystemTestRouter(t *testing.T) (*gin.Engine, *gorm.DB) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = db.AutoMigrate(&models.PlayerAccount{}, &models.PlayerIdentity{}, &models.PetProfile{}, &models.GlobalInventoryItem{}, &models.PlayerWallet{}, &models.WalletLedger{}, &models.CompanionActionDaily{}, &models.ActivityRun{}, &models.ItemUseRecord{}, &models.ExpeditionRun{}, &models.EventProgress{}, &models.EventProgressGrant{}, &models.EventRewardClaim{}, &models.ChanceDailyState{}, &models.ChancePlayerState{}, &models.ChanceOutcome{}, &models.FishingRun{}, &models.BattleRecord{}, &models.TradeOffer{}, &models.TradeAudit{}, &models.CodexEntry{}, &models.Community{}, &models.CommunityMember{}, &models.ExpeditionSquad{}, &models.SquadMember{}, &models.IdentityBindToken{}, &models.NotificationPreference{}, &models.NotificationJob{}, &models.CommunityBoss{}, &models.BossContribution{}, &models.CommunityFacility{}, &models.SeasonVote{}, &models.CommunityHelpRequest{}, &models.HelpGiftLog{}, &models.HelpGiftDailyQuota{}, &models.PetBehaviorProfile{}, &models.GameplayMetric{}, &models.AdminAuditLog{}, &models.AdminOperationKey{}, &models.GrowthRoleConfig{}, &models.GrowthStanceConfig{}, &models.PersonalityRuleConfig{}, &models.CodexCatalogConfig{}, &models.ItemConfig{}, &models.PetSpeciesConfig{}); err != nil {
+	if err = db.AutoMigrate(&models.PlayerAccount{}, &models.PlayerIdentity{}, &models.PetProfile{}, &models.GlobalInventoryItem{}, &models.PlayerWallet{}, &models.WalletLedger{}, &models.CompanionActionDaily{}, &models.ActivityRun{}, &models.ItemUseRecord{}, &models.ExpeditionRun{}, &models.EventProgress{}, &models.EventProgressGrant{}, &models.EventRewardClaim{}, &models.LiveEventConfig{}, &models.ChanceDailyState{}, &models.ChancePlayerState{}, &models.ChanceOutcome{}, &models.FishingRun{}, &models.BattleRecord{}, &models.TradeOffer{}, &models.TradeAudit{}, &models.CodexEntry{}, &models.Community{}, &models.CommunityMember{}, &models.ExpeditionSquad{}, &models.SquadMember{}, &models.IdentityBindToken{}, &models.NotificationPreference{}, &models.NotificationJob{}, &models.CommunityBoss{}, &models.BossContribution{}, &models.CommunityFacility{}, &models.SeasonVote{}, &models.CommunityHelpRequest{}, &models.HelpGiftLog{}, &models.HelpGiftDailyQuota{}, &models.PetBehaviorProfile{}, &models.GameplayMetric{}, &models.AdminAuditLog{}, &models.AdminOperationKey{}, &models.GrowthRoleConfig{}, &models.GrowthStanceConfig{}, &models.PersonalityRuleConfig{}, &models.CodexCatalogConfig{}, &models.ItemConfig{}, &models.PetSpeciesConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.AutoMigrate(&models.AdminConfigState{}, &models.AdventureMapConfig{}, &models.AdventureZoneConfig{}, &models.AdventureZonePrerequisiteConfig{}, &models.AdventureObjectiveConfig{}, &models.AdventureMonsterConfig{}, &models.AdventureSkillConfig{}, &models.AdventureMonsterSkillConfig{}, &models.AdventureEncounterConfig{}, &models.AdventureLootPoolConfig{}, &models.AdventureLootEntryConfig{}, &models.CurrencyConfig{}, &models.ItemConfig{}, &models.AdventureShopItemConfig{}, &models.AdventureExpeditionConfig{}, &models.AdventureBossConfig{}, &models.AdventureBossRewardTierConfig{}, &models.EquipmentTemplateConfig{}, &models.EquipmentAffixConfig{}, &models.EquipmentRecipeConfig{}, &models.EquipmentRecipeMaterialConfig{}, &models.AdventureShopPurchase{}, &models.PlayerAdventureProgress{}, &models.PlayerZoneProgress{}, &models.PlayerObjectiveProgress{}, &models.AdventureExplorationSession{}, &models.AdventureCombatSession{}, &models.AdventureCombatTurn{}, &models.PlayerEquipment{}, &models.PlayerBlueprintProgress{}, &models.AdventureExpeditionRun{}, &models.AdventureBossInstance{}, &models.AdventureBossContribution{}, &models.AdventureBossRewardClaim{}, &models.EquipmentCraftRecord{}); err != nil {
 		t.Fatal(err)
 	}
 	router := gin.New()
@@ -191,6 +194,63 @@ func TestEmptyPlayerCollectionsAreJSONArrays(t *testing.T) {
 	for _, field := range []string{"inventory", "codex", "identities", "expeditions", "communities"} {
 		if !strings.Contains(string(detailResponse.Data), `"`+field+`":[]`) {
 			t.Fatalf("empty %s must return [], got %s", field, detailResponse.Data)
+		}
+	}
+}
+
+func TestSeasonResetClearsOnlySeasonScopedState(t *testing.T) {
+	router, db := newEcosystemTestRouter(t)
+	accountID := "season-player"
+	now := time.Now()
+	rows := []any{
+		&models.PlayerAccount{ID: accountID},
+		&models.LiveEventConfig{Key: "season-01", Name: "第一调查季", Region: "全域", StoryChoices: `[]`, StartsAt: now.Add(-time.Hour), EndsAt: now.Add(time.Hour), Active: true},
+		&models.PlayerWallet{AccountID: accountID, CurrencyKey: "season_token", Balance: 77},
+		&models.EventProgress{EventKey: "season-01", AccountID: accountID, Progress: 123},
+		&models.EventProgressGrant{ID: "grant-1", EventKey: "season-01", AccountID: accountID, SourceKey: "test", Delta: 123},
+		&models.EventRewardClaim{ID: "claim-1", EventKey: "season-01", AccountID: accountID, Milestone: 100, RewardType: "item", RewardKey: "season_memento", RewardName: "首季纪念叶", Quantity: 1},
+		&models.SeasonVote{SeasonKey: "S01", CommunityID: "community", AccountID: accountID, Choice: 1},
+		&models.CodexEntry{AccountID: accountID, Category: "遗迹", EntryKey: "永久条目", Progress: 100},
+		&models.PlayerAdventureProgress{AccountID: accountID, Level: 8, XP: 99},
+		&models.PlayerEquipment{ID: "gear-1", AccountID: accountID, TemplateKey: "permanent-gear"},
+	}
+	for _, row := range rows {
+		if err := db.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	body := []byte(`{"season_key":"S01","reason":"第一调查季结算","confirmation":"重置赛季:season-01"}`)
+	response := doConfigRequest(t, router, http.MethodPost, "/api/admin/seasons/season-01/reset", body)
+	if response.Code != 0 {
+		t.Fatalf("season reset failed: %s", response.Msg)
+	}
+	var wallet models.PlayerWallet
+	if err := db.First(&wallet, "account_id = ? AND currency_key = ?", accountID, "season_token").Error; err != nil || wallet.Balance != 0 {
+		t.Fatalf("season wallet not reset: %#v err=%v", wallet, err)
+	}
+	var ledger models.WalletLedger
+	if err := db.First(&ledger, "account_id = ? AND reason = ?", accountID, "season_reset").Error; err != nil || ledger.Delta != -77 || ledger.BalanceAfter != 0 {
+		t.Fatalf("season reset ledger missing: %#v err=%v", ledger, err)
+	}
+	for _, check := range []struct {
+		model any
+		where string
+		args  []any
+	}{
+		{&models.EventProgress{}, "event_key = ?", []any{"season-01"}},
+		{&models.EventProgressGrant{}, "event_key = ?", []any{"season-01"}},
+		{&models.EventRewardClaim{}, "event_key = ?", []any{"season-01"}},
+		{&models.SeasonVote{}, "season_key = ?", []any{"S01"}},
+	} {
+		var count int64
+		if err := db.Model(check.model).Where(check.where, check.args...).Count(&count).Error; err != nil || count != 0 {
+			t.Fatalf("season row survived reset: %T count=%d err=%v", check.model, count, err)
+		}
+	}
+	for _, check := range []any{&models.CodexEntry{}, &models.PlayerAdventureProgress{}, &models.PlayerEquipment{}} {
+		var count int64
+		if err := db.Model(check).Where("account_id = ?", accountID).Count(&count).Error; err != nil || count != 1 {
+			t.Fatalf("permanent progress was removed: %T count=%d err=%v", check, count, err)
 		}
 	}
 }

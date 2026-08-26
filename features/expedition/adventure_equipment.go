@@ -158,8 +158,16 @@ func equipmentStats(template models.EquipmentTemplateConfig, affixes []Equipment
 }
 
 func (service *Service) EquippedStatsTx(tx *gorm.DB, accountID string) (EquipmentStats, error) {
+	pet, err := gameplay.ActivePetTx(tx, accountID)
+	if err != nil {
+		return EquipmentStats{}, err
+	}
+	return service.EquippedStatsForPetTx(tx, accountID, pet.ID)
+}
+
+func (service *Service) EquippedStatsForPetTx(tx *gorm.DB, accountID, petID string) (EquipmentStats, error) {
 	var rows []models.PlayerEquipment
-	if err := tx.Where("account_id = ? AND equipped_slot <> ''", accountID).Find(&rows).Error; err != nil {
+	if err := tx.Where("account_id = ? AND equipped_pet_id = ? AND equipped_slot <> ''", accountID, petID).Find(&rows).Error; err != nil {
 		return EquipmentStats{}, err
 	}
 	result := EquipmentStats{}
@@ -194,6 +202,10 @@ func (service *Service) EquippedStatsTx(tx *gorm.DB, accountID string) (Equipmen
 func (service *Service) Equip(ctx context.Context, accountID, equipmentID string) (*models.PlayerEquipment, error) {
 	var equipped models.PlayerEquipment
 	err := gameplay.WithTransactionRetry(ctx, service.DB, func(tx *gorm.DB) error {
+		pet, err := gameplay.ActivePetTx(tx, accountID)
+		if err != nil {
+			return err
+		}
 		if err := tx.First(&equipped, "id = ? AND account_id = ?", equipmentID, accountID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return ErrEquipmentNotFound
@@ -211,10 +223,11 @@ func (service *Service) Equip(ctx context.Context, accountID, equipmentID string
 		if progress.Level < template.RequiredLevel {
 			return fmt.Errorf("需要冒险等级 %d 才能穿戴", template.RequiredLevel)
 		}
-		if err := tx.Model(&models.PlayerEquipment{}).Where("account_id = ? AND equipped_slot = ?", accountID, template.Slot).Updates(map[string]any{"equipped_slot": "", "updated_at": service.Now()}).Error; err != nil {
+		if err := tx.Model(&models.PlayerEquipment{}).Where("account_id = ? AND equipped_pet_id = ? AND equipped_slot = ?", accountID, pet.ID, template.Slot).Updates(map[string]any{"equipped_slot": "", "equipped_pet_id": "", "updated_at": service.Now()}).Error; err != nil {
 			return err
 		}
 		equipped.EquippedSlot = template.Slot
+		equipped.EquippedPetID = pet.ID
 		equipped.UpdatedAt = service.Now()
 		return tx.Save(&equipped).Error
 	})
@@ -222,7 +235,7 @@ func (service *Service) Equip(ctx context.Context, accountID, equipmentID string
 }
 
 func (service *Service) Unequip(ctx context.Context, accountID, equipmentID string) error {
-	result := service.DB.WithContext(ctx).Model(&models.PlayerEquipment{}).Where("id = ? AND account_id = ? AND equipped_slot <> ''", equipmentID, accountID).Updates(map[string]any{"equipped_slot": "", "updated_at": service.Now()})
+	result := service.DB.WithContext(ctx).Model(&models.PlayerEquipment{}).Where("id = ? AND account_id = ? AND equipped_slot <> ''", equipmentID, accountID).Updates(map[string]any{"equipped_slot": "", "equipped_pet_id": "", "updated_at": service.Now()})
 	if result.Error != nil {
 		return result.Error
 	}
@@ -254,7 +267,7 @@ func (service *Service) SalvageEquipment(ctx context.Context, accountID, equipme
 		if err := tx.Delete(&equipment).Error; err != nil {
 			return err
 		}
-		return gameplay.NewInventoryService(tx).CreditTx(tx, accountID, template.SalvageItem, template.SalvageQuantity)
+		return creditAdventureItemTx(tx, accountID, template.SalvageItem, template.SalvageQuantity, service.Now())
 	})
 }
 
@@ -277,12 +290,12 @@ func (service *Service) CraftEquipment(ctx context.Context, accountID, templateK
 			return err
 		}
 		for _, material := range materials {
-			if err := gameplay.NewInventoryService(tx).DebitTx(tx, accountID, material.ItemName, material.Quantity); err != nil {
+			if err := debitAdventureItemTx(tx, accountID, material.ItemName, material.Quantity, service.Now()); err != nil {
 				return fmt.Errorf("制造材料 %s 不足: %w", material.ItemName, err)
 			}
 		}
 		if recipe.CurrencyCost > 0 {
-			if err := gameplay.NewWalletService(tx).DebitTxWithReason(tx, accountID, gameplay.DefaultCurrencyKey, recipe.CurrencyCost, "equipment_craft", templateKey); err != nil {
+			if _, err := debitAdventureCurrencyTx(tx, accountID, recipe.CurrencyCost, "equipment_craft", templateKey, service.Now()); err != nil {
 				return err
 			}
 		}
@@ -297,35 +310,27 @@ func (service *Service) CraftEquipment(ctx context.Context, accountID, templateK
 	return crafted, err
 }
 
-func (service *Service) grantBlueprintFragmentsTx(tx *gorm.DB, accountID, fragmentItem string, quantity int64) error {
-	var recipes []models.EquipmentRecipeConfig
-	if err := tx.Where("blueprint_fragment_item = ? AND enabled = ?", fragmentItem, true).Find(&recipes).Error; err != nil {
-		return err
+func (service *Service) grantBlueprintFragmentsTx(tx *gorm.DB, accountID, equipmentKey string, quantity int64) error {
+	var recipe models.EquipmentRecipeConfig
+	if err := tx.First(&recipe, "equipment_key = ? AND enabled = ?", equipmentKey, true).Error; err != nil {
+		return fmt.Errorf("装备蓝图 %s 没有关联配方", equipmentKey)
 	}
-	if len(recipes) == 0 {
-		return fmt.Errorf("蓝图碎片 %s 没有关联配方", fragmentItem)
+	var progress models.PlayerBlueprintProgress
+	lookup := tx.Limit(1).Find(&progress, "account_id = ? AND equipment_key = ?", accountID, equipmentKey)
+	if lookup.Error != nil {
+		return lookup.Error
 	}
-	for _, recipe := range recipes {
-		var progress models.PlayerBlueprintProgress
-		lookup := tx.Limit(1).Find(&progress, "account_id = ? AND equipment_key = ?", accountID, recipe.EquipmentKey)
-		if lookup.Error != nil {
-			return lookup.Error
-		}
-		if lookup.RowsAffected == 0 {
-			progress = models.PlayerBlueprintProgress{AccountID: accountID, EquipmentKey: recipe.EquipmentKey}
-		}
-		progress.Fragments += quantity
-		if progress.Fragments >= recipe.BlueprintFragments && !progress.Unlocked {
-			now := service.Now()
-			progress.Unlocked = true
-			progress.UnlockedAt = &now
-		}
-		progress.UpdatedAt = service.Now()
-		if err := tx.Save(&progress).Error; err != nil {
-			return err
-		}
+	if lookup.RowsAffected == 0 {
+		progress = models.PlayerBlueprintProgress{AccountID: accountID, EquipmentKey: equipmentKey}
 	}
-	return nil
+	progress.Fragments += quantity
+	if progress.Fragments >= recipe.BlueprintFragments && !progress.Unlocked {
+		now := service.Now()
+		progress.Unlocked = true
+		progress.UnlockedAt = &now
+	}
+	progress.UpdatedAt = service.Now()
+	return tx.Save(&progress).Error
 }
 
 func (service *Service) grantLootPoolTx(tx *gorm.DB, accountID, poolKey, source string, firstClear bool) ([]AdventureReward, error) {
@@ -333,16 +338,41 @@ func (service *Service) grantLootPoolTx(tx *gorm.DB, accountID, poolKey, source 
 }
 
 func (service *Service) grantLootPoolWithRollsTx(tx *gorm.DB, accountID, poolKey, source string, firstClear bool, rollsOverride int) ([]AdventureReward, error) {
+	pool, entries, err := loadLootPoolSnapshotTx(tx, poolKey)
+	if err != nil {
+		return nil, err
+	}
+	return service.grantLootSnapshotTx(tx, accountID, pool, entries, source, firstClear, rollsOverride)
+}
+
+func loadLootPoolSnapshotTx(tx *gorm.DB, poolKey string) (models.AdventureLootPoolConfig, []models.AdventureLootEntryConfig, error) {
 	if poolKey == "" {
-		return nil, nil
+		return models.AdventureLootPoolConfig{}, nil, nil
 	}
 	var pool models.AdventureLootPoolConfig
 	if err := tx.First(&pool, "key = ?", poolKey).Error; err != nil {
-		return nil, ErrInvalidLootPool
+		return models.AdventureLootPoolConfig{}, nil, ErrInvalidLootPool
 	}
 	var entries []models.AdventureLootEntryConfig
 	if err := tx.Where("pool_key = ?", poolKey).Order("sort_order asc, id asc").Find(&entries).Error; err != nil {
-		return nil, err
+		return models.AdventureLootPoolConfig{}, nil, err
+	}
+	return pool, entries, nil
+}
+
+func (service *Service) grantExpeditionSnapshotLootTx(tx *gorm.DB, accountID string, pool models.AdventureLootPoolConfig, entries []models.AdventureLootEntryConfig, legacyPoolKey, source string, rollsOverride int) ([]AdventureReward, error) {
+	// Snapshots created before v0.0.1 did not contain reward rows. Keep a
+	// compatibility path for those already-running records; all new runs settle
+	// exclusively from the immutable reward definition captured at departure.
+	if pool.Key == "" && legacyPoolKey != "" {
+		return service.grantLootPoolWithRollsTx(tx, accountID, legacyPoolKey, source, false, rollsOverride)
+	}
+	return service.grantLootSnapshotTx(tx, accountID, pool, entries, source, false, rollsOverride)
+}
+
+func (service *Service) grantLootSnapshotTx(tx *gorm.DB, accountID string, pool models.AdventureLootPoolConfig, entries []models.AdventureLootEntryConfig, source string, firstClear bool, rollsOverride int) ([]AdventureReward, error) {
+	if pool.Key == "" {
+		return nil, nil
 	}
 	selected := make([]models.AdventureLootEntryConfig, 0)
 	weighted := make([]models.AdventureLootEntryConfig, 0)
@@ -395,13 +425,21 @@ func (service *Service) grantLootPoolWithRollsTx(tx *gorm.DB, accountID, poolKey
 		reward := AdventureReward{Type: entry.RewardType, Key: entry.RewardKey, Name: entry.RewardKey, Quantity: quantity}
 		switch entry.RewardType {
 		case "item":
-			if err := gameplay.NewInventoryService(tx).CreditTx(tx, accountID, entry.RewardKey, quantity); err != nil {
+			if err := creditAdventureItemTx(tx, accountID, entry.RewardKey, quantity, service.Now()); err != nil {
 				return nil, err
+			}
+			var item models.ItemConfig
+			if err := tx.First(&item, "key = ?", entry.RewardKey).Error; err == nil {
+				reward.Name = item.Name
 			}
 		case "currency":
-			if err := gameplay.NewWalletService(tx).CreditTxWithReason(tx, accountID, gameplay.DefaultCurrencyKey, quantity, "adventure_reward", source); err != nil {
+			if entry.RewardKey != JourneyBadgeCurrencyKey {
+				return nil, ErrInvalidLootPool
+			}
+			if _, err := creditAdventureCurrencyTx(tx, accountID, quantity, "adventure_reward", source, service.Now()); err != nil {
 				return nil, err
 			}
+			reward.Name = "旅途徽章"
 		case "equipment":
 			if quantity != 1 {
 				return nil, fmt.Errorf("装备奖励 %s 的数量必须为 1", entry.RewardKey)

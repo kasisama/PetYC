@@ -486,9 +486,6 @@ func parseProfileArchive(raw []byte) (profileManifest, appconfig.ConfigSnapshot,
 	if err = json.Unmarshal(files["manifest.json"], &manifest); err != nil {
 		return manifest, snapshot, nil, errors.New("manifest.json 无效")
 	}
-	if manifest.SchemaVersion != appconfig.ProfileSchemaVersion {
-		return manifest, snapshot, nil, fmt.Errorf("不支持的配置包版本 %d", manifest.SchemaVersion)
-	}
 	if _, exists := manifest.Files["config.json"]; !exists {
 		return manifest, snapshot, nil, errors.New("manifest.json 未声明 config.json")
 	}
@@ -499,6 +496,9 @@ func parseProfileArchive(raw []byte) (profileManifest, appconfig.ConfigSnapshot,
 		if _, declared := manifest.Files[name]; !declared {
 			return manifest, snapshot, nil, fmt.Errorf("文件未在清单中声明: %s", name)
 		}
+	}
+	if manifest.SchemaVersion != appconfig.ProfileSchemaVersion {
+		return manifest, snapshot, nil, fmt.Errorf("不支持的配置包版本 %d", manifest.SchemaVersion)
 	}
 	for name, want := range manifest.Files {
 		if name == "manifest.json" || (name != "config.json" && !strings.HasPrefix(name, "assets/")) {
@@ -603,6 +603,9 @@ func snapshotAssetPaths(snapshot appconfig.ConfigSnapshot) []string {
 	for _, r := range snapshot.WorkSettings {
 		add(r.StartImage, r.EndImage)
 	}
+	for _, r := range snapshot.Menus {
+		add(r.Image)
+	}
 	for _, r := range snapshot.Images {
 		add(r.Path)
 	}
@@ -636,6 +639,9 @@ func rewriteSnapshotAssets(snapshot *appconfig.ConfigSnapshot, assets map[string
 		rewrite(&r.FitnessEndImg)
 		rewrite(&r.EvolutionImage)
 		rewrite(&r.AwakenImage)
+	}
+	for i := range snapshot.Menus {
+		rewrite(&snapshot.Menus[i].Image)
 	}
 	for i := range snapshot.Items {
 		rewrite(&snapshot.Items[i].Image)

@@ -11,6 +11,10 @@ export type ConfigSchema =
   | 'system'
   | 'commands'
   | 'pet_species'
+  | 'pet_evolution_rules'
+  | 'pet_evolution_costs'
+  | 'pet_skill_unlocks'
+  | 'adventure_levels'
   | 'items'
   | 'shop_items'
   | 'work_settings'
@@ -31,6 +35,10 @@ export const CONFIG_SCHEMAS: ConfigSchema[] = [
   'system',
   'commands',
   'pet_species',
+  'pet_evolution_rules',
+  'pet_evolution_costs',
+  'pet_skill_unlocks',
+  'adventure_levels',
   'items',
   'shop_items',
   'work_settings',
@@ -63,12 +71,16 @@ export const SCHEMA_LABELS: Partial<Record<ConfigSchema, string>> = {
   shop_items: '商店货架',
   items: '游戏道具',
   pet_species: '宠物种类',
+  pet_evolution_rules: '进化规则',
+  pet_evolution_costs: '进化材料',
+  pet_skill_unlocks: '宠物技能解锁',
+  adventure_levels: '冒险等级',
   menus: '菜单回复',
   images: '图片映射',
 }
 
 /** 删除接口 path 段 type 与主键字段（旧 DELETE /configs/:type/:key） */
-type DeletableConfigSchema=Exclude<ConfigSchema,'system'|'growth_roles'|'growth_stances'|'personality_rules'|'codex_catalog'>
+type DeletableConfigSchema=Exclude<ConfigSchema,'system'|'growth_roles'|'growth_stances'|'personality_rules'|'codex_catalog'|'pet_evolution_rules'|'pet_evolution_costs'|'pet_skill_unlocks'|'adventure_levels'>
 export const DELETE_TYPE_MAP: Record<
   DeletableConfigSchema,
   { type: string; keyOf: (row: Record<string, unknown>) => string }
@@ -76,8 +88,8 @@ export const DELETE_TYPE_MAP: Record<
 	 live_events: { type: 'live_event', keyOf: (r) => String(r.key ?? r.Key ?? '') },
 	 reward_tracks: { type: 'reward_track', keyOf: (r) => String(r.id ?? r.ID ?? '') },
   commands: { type: 'command', keyOf: (r) => String(r.FuncName ?? r.func_name ?? '') },
-  pet_species: { type: 'pet_species', keyOf: (r) => String(r.Name ?? r.name ?? '') },
-  items: { type: 'item', keyOf: (r) => String(r.Name ?? r.name ?? '') },
+  pet_species: { type: 'pet_species', keyOf: (r) => String(r.Key ?? r.key ?? r.Name ?? r.name ?? '') },
+  items: { type: 'item', keyOf: (r) => String(r.Key ?? r.key ?? r.Name ?? r.name ?? '') },
   shop_items: {
     type: 'shop_item',
     keyOf: (r) => String(r.ID ?? r.id ?? r.Name ?? r.name ?? ''),
@@ -133,6 +145,13 @@ export interface CommandConfigRow {
 export type ItemStatus = 'active' | 'limited' | 'hidden' | 'disabled'
 
 export interface PetSpeciesConfigRow {
+  Key: string
+  FamilyKey: string
+  Stage: string
+  PreviousFormKey: string
+  Adoptable: boolean
+  Archetype: string
+  CodexEntryKey: string
   Name: string
   Image: string
   AdoptImage: string
@@ -172,7 +191,13 @@ export interface PetSpeciesConfigRow {
 }
 
 export interface ItemConfigRow {
+  Key: string
   Name: string
+  Category: string
+  Rarity: string
+  Stackable: boolean
+  MaxStack: number
+  Usage: string
   Status: ItemStatus
   Type: string
   RewardType: string
@@ -220,6 +245,7 @@ export interface WorkSettingConfigRow {
 export interface MenuConfigRow {
   Name: string
   Reply: string
+  Image: string
 }
 
 export interface ImageConfigRow {
@@ -269,7 +295,9 @@ export interface ContentRewardRow {
   id?: number
   event_key: string
   milestone: number
-  item_name: string
+  reward_type: 'item' | 'currency'
+  reward_key: string
+  reward_name: string
   quantity: number
   description: string
 }
@@ -364,6 +392,13 @@ export function normalizeCommand(raw: unknown): CommandConfigRow {
 export function normalizePetSpecies(raw: unknown): PetSpeciesConfigRow {
   const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
   return {
+    Key: asString(pick(o, 'Key', 'key')),
+    FamilyKey: asString(pick(o, 'FamilyKey', 'family_key')),
+    Stage: asString(pick(o, 'Stage', 'stage'), 'base'),
+    PreviousFormKey: asString(pick(o, 'PreviousFormKey', 'previous_form_key')),
+    Adoptable: Boolean(pick(o, 'Adoptable', 'adoptable')),
+    Archetype: asString(pick(o, 'Archetype', 'archetype'), 'balanced'),
+    CodexEntryKey: asString(pick(o, 'CodexEntryKey', 'codex_entry_key')),
     Name: asString(pick(o, 'Name', 'name')),
     Image: asString(pick(o, 'Image', 'image')),
     AdoptImage: asString(pick(o, 'AdoptImage', 'adopt_image', 'AdoptImg')),
@@ -410,7 +445,13 @@ export function normalizeItem(raw: unknown): ItemConfigRow {
     ? rawStatus as ItemStatus
     : 'active'
   return {
+    Key: asString(pick(o, 'Key', 'key')),
     Name: asString(pick(o, 'Name', 'name')),
+    Category: asString(pick(o, 'Category', 'category'), 'consumable'),
+    Rarity: asString(pick(o, 'Rarity', 'rarity'), 'common'),
+    Stackable: pick(o, 'Stackable', 'stackable') !== false,
+    MaxStack: asNumber(pick(o, 'MaxStack', 'max_stack'), 9999),
+    Usage: asString(pick(o, 'Usage', 'usage')),
     Status: status,
     Type: asString(pick(o, 'Type', 'type')),
     RewardType: asString(pick(o, 'RewardType', 'reward_type')),
@@ -471,6 +512,7 @@ export function normalizeMenu(raw: unknown): MenuConfigRow {
   return {
     Name: asString(pick(o, 'Name', 'name')),
     Reply: asString(pick(o, 'Reply', 'reply')),
+    Image: asString(pick(o, 'Image', 'image')),
   }
 }
 
@@ -708,8 +750,8 @@ export const SYSTEM_KEY_META: Record<string, { label: string; group: string }> =
   'Interaction.CreateFamilyCoin': { label: '创建家族所需货币', group: '家族' },
   'Interaction.CreateFamilyItem': { label: '创建家族所需物品', group: '家族' },
   'Interaction.FamilySizeLimit': { label: '家族人数上限', group: '家族' },
-  'Interaction.TreeResultNutri': { label: '神树成熟所需养分', group: '家族' },
-  'Interaction.TreeRewardItems': { label: '神树奖励物品池', group: '家族' },
+  'Interaction.CommunityBuildGoal': { label: '营地共建阶段目标', group: '社区' },
+  'Interaction.CommunityBuildRewardItems': { label: '营地共建奖励物品池', group: '社区' },
   'Interaction.FishHungerCost': { label: '钓鱼饱食消耗', group: '钓鱼抽奖' },
   'Interaction.FishSuccessRate': { label: '钓鱼成功率', group: '钓鱼抽奖' },
   'Interaction.FishSpecies': { label: '可钓鱼类', group: '钓鱼抽奖' },
@@ -774,6 +816,13 @@ export const CHECKIN_TYPES = [
 
 export function emptyPetSpecies(name = ''): PetSpeciesConfigRow {
   return {
+    Key: '',
+    FamilyKey: '',
+    Stage: 'base',
+    PreviousFormKey: '',
+    Adoptable: true,
+    Archetype: 'balanced',
+    CodexEntryKey: '',
     Name: name,
     Image: '',
     AdoptImage: '',
@@ -815,7 +864,13 @@ export function emptyPetSpecies(name = ''): PetSpeciesConfigRow {
 
 export function emptyItem(name = ''): ItemConfigRow {
   return {
+    Key: '',
     Name: name,
+    Category: 'consumable',
+    Rarity: 'common',
+    Stackable: true,
+    MaxStack: 9999,
+    Usage: '',
     Status: 'active',
     Type: '礼包',
     RewardType: '',
@@ -856,7 +911,7 @@ export function emptyWork(name = ''): WorkSettingConfigRow {
 }
 
 export function emptyMenu(name = ''): MenuConfigRow {
-  return { Name: name, Reply: '' }
+  return { Name: name, Reply: '', Image: '' }
 }
 
 export function emptyImage(name = ''): ImageConfigRow {

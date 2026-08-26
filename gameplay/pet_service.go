@@ -21,12 +21,26 @@ func (service *PetService) Get(ctx context.Context, accountID string) (*models.P
 	if service == nil || service.DB == nil {
 		return nil, ErrDatabaseUnavailable
 	}
-	var pet models.PetProfile
-	err := service.DB.WithContext(ctx).First(&pet, "account_id = ?", accountID).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, ErrPetRequired
-	}
-	return &pet, err
+	return ActivePet(ctx, service.DB, accountID)
+}
+
+func (service *PetService) List(ctx context.Context, accountID string) ([]models.PetProfile, error) {
+	rows := make([]models.PetProfile, 0)
+	err := service.DB.WithContext(ctx).Where("account_id = ?", accountID).Order("created_at asc, id asc").Find(&rows).Error
+	return rows, err
+}
+
+func (service *PetService) SetActive(ctx context.Context, accountID, petID string) (*models.PetProfile, error) {
+	var pet *models.PetProfile
+	err := WithTransactionRetry(ctx, service.DB, func(tx *gorm.DB) error {
+		var err error
+		pet, err = PetByIDTx(tx, accountID, petID)
+		if err != nil {
+			return err
+		}
+		return tx.Model(&models.PlayerAccount{}).Where("id = ?", accountID).Update("active_pet_id", pet.ID).Error
+	})
+	return pet, err
 }
 
 func (service *PetService) Adopt(ctx context.Context, accountID, petType, name string) (*models.PetProfile, error) {
@@ -42,15 +56,37 @@ func (service *PetService) AdoptWithStarter(ctx context.Context, accountID, petT
 	if petType == "" || ValidatePetName(name) != nil {
 		return nil, errors.New("宠物名称需要在 2 到 12 个字符之间")
 	}
+	// Prefer the stable slot-limit result even when a stale client submits a
+	// species that is no longer present in the current content profile.
+	var existing int64
+	if err := service.DB.WithContext(ctx).Model(&models.PetProfile{}).Where("account_id = ?", accountID).Count(&existing).Error; err != nil {
+		return nil, err
+	}
+	if existing >= int64(systemPositiveIntTx(service.DB.WithContext(ctx), MaxPetSlotsConfigKey, 1)) {
+		return nil, ErrPetAlreadyExists
+	}
 
 	var species models.PetSpeciesConfig
-	result := service.DB.WithContext(ctx).Limit(1).Find(&species, "name = ?", petType)
+	result := service.DB.WithContext(ctx).Limit(1).Find(&species, "key = ? OR name = ?", petType, petType)
 	if result.Error != nil {
 		return nil, result.Error
 	}
-	pet := initialPet(accountID, petType, name, species)
+	if result.RowsAffected == 0 || (species.Key != species.Name && !species.Adoptable) {
+		return nil, ErrPetRequired
+	}
+	pet := initialPet(accountID, species.Key, name, species)
 	err := WithTransactionRetry(ctx, service.DB, func(tx *gorm.DB) error {
+		var count int64
+		if err := tx.Model(&models.PetProfile{}).Where("account_id = ?", accountID).Count(&count).Error; err != nil {
+			return err
+		}
+		if count >= int64(systemPositiveIntTx(tx, MaxPetSlotsConfigKey, 1)) {
+			return ErrPetAlreadyExists
+		}
 		if err := tx.Create(&pet).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&models.PlayerAccount{}).Where("id = ? AND (active_pet_id = '' OR active_pet_id IS NULL)", accountID).Update("active_pet_id", pet.ID).Error; err != nil {
 			return err
 		}
 		if starterBalance > 0 {
@@ -82,14 +118,18 @@ func (service *PetService) RenameWithCost(ctx context.Context, accountID, name, 
 				return err
 			}
 		}
-		result := tx.Model(&models.PetProfile{}).Where("account_id = ?", accountID).Update("name", name)
+		active, err := ActivePetTx(tx, accountID)
+		if err != nil {
+			return err
+		}
+		result := tx.Model(&models.PetProfile{}).Where("id = ? AND account_id = ?", active.ID, accountID).Update("name", name)
 		if result.Error != nil {
 			return result.Error
 		}
 		if result.RowsAffected != 1 {
 			return ErrPetRequired
 		}
-		return tx.First(&pet, "account_id = ?", accountID).Error
+		return tx.First(&pet, "id = ?", active.ID).Error
 	})
 	return &pet, err
 }
@@ -99,12 +139,15 @@ func (service *PetService) Rename(ctx context.Context, accountID, name string) (
 	if err := ValidatePetName(name); err != nil {
 		return nil, err
 	}
-	result := service.DB.WithContext(ctx).Model(&models.PetProfile{}).
-		Where("account_id = ?", accountID).Update("name", name)
-	if result.Error != nil {
-		return nil, result.Error
+	pet, err := service.Get(ctx, accountID)
+	if err != nil {
+		return nil, err
 	}
-	if result.RowsAffected != 1 {
+	result := service.DB.WithContext(ctx).Model(&models.PetProfile{}).Where("id = ? AND account_id = ?", pet.ID, accountID).Update("name", name)
+	if result.Error != nil || result.RowsAffected != 1 {
+		if result.Error != nil {
+			return nil, result.Error
+		}
 		return nil, ErrPetRequired
 	}
 	return service.Get(ctx, accountID)
@@ -142,7 +185,7 @@ func initialPet(accountID, petType, name string, species models.PetSpeciesConfig
 		hungerMax = hunger
 	}
 	return models.PetProfile{
-		AccountID: accountID, PetType: petType, Name: name, CurrentForm: petType,
+		AccountID: accountID, PetType: species.FamilyKey, Name: name, CurrentForm: petType,
 		Role: "探索者", Stance: "探索", Status: "空闲", Mood: moodFromPoints(70), MoodPoints: 70,
 		Readiness: 100, BondLevel: 1, Health: health, HealthMax: healthMax,
 		Hunger: hunger, HungerMax: hungerMax, Wisdom: positiveOr(species.Wisdom, 10),

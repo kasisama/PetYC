@@ -24,6 +24,7 @@ func RegisterEcosystemRoutes(group *gin.RouterGroup, db *gorm.DB) {
 	group.GET("/players", api.Players)
 	group.GET("/players/:account_id", api.PlayerDetail)
 	group.POST("/players/:account_id/grants", api.GrantItem)
+	group.POST("/players/:account_id/active_pet", api.SetActivePet)
 	group.PUT("/players/:account_id/notifications", api.SetPlayerNotifications)
 	group.DELETE("/players/:account_id/identities/:identity_id", api.DeleteIdentity)
 	group.DELETE("/players/:account_id", api.DeletePlayer)
@@ -40,6 +41,7 @@ func RegisterEcosystemRoutes(group *gin.RouterGroup, db *gorm.DB) {
 	group.POST("/communities/:id/boss/reset", api.ResetBoss)
 	group.POST("/help-requests/:code/close", api.CloseHelpRequest)
 	group.POST("/squads/:id/disband", api.DisbandSquad)
+	group.POST("/seasons/:event_key/reset", api.ResetSeason)
 	group.GET("/audit-logs", api.AuditLogs)
 	RegisterPlatformRoutes(group, db)
 }
@@ -145,6 +147,11 @@ func (api *EcosystemAPI) Overview(c *gin.Context) {
 		{"active_communities", &models.Community{}, "updated_at >= ?", []interface{}{cutoff}},
 		{"boss_participants", &models.BossContribution{}, "updated_at >= ?", []interface{}{cutoff}},
 		{"overdue_expeditions", &models.ExpeditionRun{}, "status = ? AND ends_at < ?", []interface{}{"running", now}},
+		{"active_explorations", &models.AdventureExplorationSession{}, "status = ?", []interface{}{"active"}},
+		{"active_combats", &models.AdventureCombatSession{}, "status = ? AND expires_at > ?", []interface{}{"active", now}},
+		{"active_adventure_expeditions", &models.AdventureExpeditionRun{}, "status = ?", []interface{}{"running"}},
+		{"active_adventure_bosses", &models.AdventureBossInstance{}, "status = ? AND expires_at > ?", []interface{}{"active", now}},
+		{"adventure_shop_transactions", &models.AdventureShopPurchase{}, "created_at >= ?", []interface{}{cutoff}},
 	}
 	for _, item := range counts {
 		var count int64
@@ -175,6 +182,32 @@ func (api *EcosystemAPI) Overview(c *gin.Context) {
 	today := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, localNow.Location())
 	api.DB.Model(&models.ExpeditionRun{}).Where("status = ? AND claimed_at >= ?", "claimed", today).Count(&todayCompleted)
 	data["today_completed_expeditions"] = todayCompleted
+	var journeyEarned, journeySpent int64
+	api.DB.Model(&models.WalletLedger{}).Where("currency_key = ? AND created_at >= ? AND delta > 0", "journey_badge", cutoff).Select("COALESCE(SUM(delta), 0)").Scan(&journeyEarned)
+	api.DB.Model(&models.WalletLedger{}).Where("currency_key = ? AND created_at >= ? AND delta < 0", "journey_badge", cutoff).Select("COALESCE(SUM(-delta), 0)").Scan(&journeySpent)
+	data["journey_badges_earned"], data["journey_badges_spent"] = journeyEarned, journeySpent
+	contentCounts := gin.H{}
+	contentModels := []struct {
+		key   string
+		model any
+	}{
+		{"maps", &models.AdventureMapConfig{}}, {"zones", &models.AdventureZoneConfig{}},
+		{"monsters", &models.AdventureMonsterConfig{}}, {"items", &models.ItemConfig{}},
+		{"equipment", &models.EquipmentTemplateConfig{}}, {"events", &models.LiveEventConfig{}},
+	}
+	for _, entry := range contentModels {
+		var count int64
+		if err := api.DB.Model(entry.model).Count(&count).Error; err == nil {
+			contentCounts[entry.key] = count
+		}
+	}
+	data["content_counts"] = contentCounts
+	data["adventure_reference_errors"] = 0
+	if catalog, err := appconfig.CaptureAdventureCatalog(api.DB); err != nil {
+		data["adventure_reference_errors"] = 1
+	} else if err := appconfig.ValidateAdventureCatalog(api.DB, catalog); err != nil {
+		data["adventure_reference_errors"] = 1
+	}
 	if status, err := appconfig.GetConfigStatus(api.DB); err == nil {
 		data["config_pending_reload"] = status.PendingReload
 	}
@@ -305,27 +338,40 @@ func (api *EcosystemAPI) PlayerDetail(c *gin.Context) {
 		Error(c, 4040, "玩家不存在")
 		return
 	}
+	pets := make([]models.PetProfile, 0)
+	api.DB.Where("account_id = ?", accountID).Order("created_at asc, id asc").Find(&pets)
 	var pet models.PetProfile
-	api.DB.First(&pet, "account_id = ?", accountID)
+	if account.ActivePetID != "" {
+		api.DB.First(&pet, "id = ? AND account_id = ?", account.ActivePetID, accountID)
+	}
+	if pet.ID == "" && len(pets) > 0 {
+		pet = pets[0]
+	}
 	petImage := ""
-	if pet.PetType != "" {
+	if pet.CurrentForm != "" || pet.PetType != "" {
 		var species models.PetSpeciesConfig
-		if err := api.DB.First(&species, "name = ?", pet.PetType).Error; err == nil {
+		lookup := pet.CurrentForm
+		if lookup == "" {
+			lookup = pet.PetType
+		}
+		if err := api.DB.First(&species, "key = ? OR name = ?", lookup, lookup).Error; err == nil {
 			petImage = species.Image
-			if pet.CurrentForm != "" && pet.CurrentForm == species.Evolution && species.EvolutionImage != "" {
-				petImage = species.EvolutionImage
-			}
-			if pet.CurrentForm != "" && pet.CurrentForm == species.Awaken && species.AwakenImage != "" {
-				petImage = species.AwakenImage
-			}
 		}
 	}
 	inventory := make([]models.GlobalInventoryItem, 0)
+	equipment := make([]models.PlayerEquipment, 0)
+	blueprints := make([]models.PlayerBlueprintProgress, 0)
+	journeyLedger := make([]models.WalletLedger, 0)
+	journeyWallet := models.PlayerWallet{AccountID: accountID, CurrencyKey: "journey_badge"}
 	codex := make([]models.CodexEntry, 0)
 	expeditions := make([]models.ExpeditionRun, 0)
 	memberships := make([]models.CommunityMember, 0)
 	identities := make([]models.PlayerIdentity, 0)
-	api.DB.Where("account_id = ?", accountID).Order("item_name").Find(&inventory)
+	api.DB.Where("account_id = ? AND quantity > 0", accountID).Order("item_name").Find(&inventory)
+	api.DB.Where("account_id = ?", accountID).Order("created_at desc").Find(&equipment)
+	api.DB.Where("account_id = ?", accountID).Order("equipment_key").Find(&blueprints)
+	api.DB.Where("account_id = ? AND currency_key = ?", accountID, "journey_badge").Order("created_at desc").Limit(100).Find(&journeyLedger)
+	api.DB.Limit(1).Find(&journeyWallet, "account_id = ? AND currency_key = ?", accountID, "journey_badge")
 	api.DB.Where("account_id = ?", accountID).Order("category, entry_key").Find(&codex)
 	api.DB.Where("account_id = ?", accountID).Order("started_at DESC").Limit(100).Find(&expeditions)
 	api.DB.Where("account_id = ?", accountID).Order("joined_at DESC").Find(&memberships)
@@ -336,7 +382,7 @@ func (api *EcosystemAPI) PlayerDetail(c *gin.Context) {
 	}
 	preference := models.NotificationPreference{AccountID: accountID, Enabled: true}
 	api.DB.First(&preference, "account_id = ?", accountID)
-	Success(c, gin.H{"account": account, "pet": pet, "pet_image": petImage, "inventory": inventory, "codex": codex, "identities": masked, "expeditions": expeditions, "communities": memberships, "notifications": preference})
+	Success(c, gin.H{"account": account, "pet": pet, "pets": pets, "active_pet_id": account.ActivePetID, "pet_image": petImage, "inventory": inventory, "adventure_inventory": inventory, "adventure_equipment": equipment, "adventure_blueprints": blueprints, "adventure_wallet": journeyWallet, "adventure_ledger": journeyLedger, "codex": codex, "identities": masked, "expeditions": expeditions, "communities": memberships, "notifications": preference})
 }
 
 type communitySummary struct {

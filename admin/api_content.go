@@ -532,21 +532,33 @@ func (api *ContentAPI) bulkItems(c *gin.Context) {
 }
 
 func itemDeleteBlocker(tx *gorm.DB, names []string) (string, error) {
+	keys := make([]string, 0, len(names))
+	if tx.Migrator().HasTable(&models.ItemConfig{}) {
+		var configured []models.ItemConfig
+		if err := tx.Where("name IN ? OR key IN ?", names, names).Find(&configured).Error; err != nil {
+			return "", err
+		}
+		for _, item := range configured {
+			keys = append(keys, item.Key, item.Name)
+		}
+	}
+	lookup := append(append([]string{}, names...), keys...)
 	checks := []struct {
 		model  interface{}
 		column string
 		label  string
 	}{
 		{&models.ShopItemConfig{}, "name", "商店"},
-		{&models.RewardTrackConfig{}, "item_name", "活动奖励"},
+		{&models.RewardTrackConfig{}, "reward_key", "活动奖励"},
 		{&models.GlobalInventoryItem{}, "item_name", "玩家背包"},
+		{&models.GlobalInventoryItem{}, "item_key", "玩家背包"},
 	}
 	for _, check := range checks {
 		if !tx.Migrator().HasTable(check.model) {
 			continue
 		}
 		var count int64
-		if err := tx.Model(check.model).Where(fmt.Sprintf("%s IN ?", check.column), names).Count(&count).Error; err != nil {
+		if err := tx.Model(check.model).Where(fmt.Sprintf("%s IN ?", check.column), lookup).Count(&count).Error; err != nil {
 			return "", err
 		}
 		if count > 0 {

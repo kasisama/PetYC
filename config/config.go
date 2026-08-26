@@ -127,65 +127,65 @@ func StarterPets() []string {
 		names = append(names, name)
 	}
 	if len(names) == 0 {
-		return []string{"诺诺"}
+		return []string{"光芽兽"}
 	}
 	return names
 }
 
 // InteractionConfig 对应 核心配置.ini [互动]
 type InteractionConfig struct {
-	TrainGrowth       int64
-	TrainLimit        int64
-	TrainHungerCost   int64
-	StudyGrowth       int64
-	StudyLimit        int64
-	StudyHungerCost   int64
-	WashGrowth        int64
-	WashAffection     int64
-	WashHungerCost    int64
-	WalkGrowth        int64
-	WalkAffection     int64
-	WalkGrowthLimit   int64
-	WalkAffectLimit   int64
-	WalkInterval      int64
-	WalkHungerCost    int64
-	TouchGrowth       int64
-	TouchAffection    int64
-	TouchGrowthLimit  int64
-	TouchAffectLimit  int64
-	TouchInterval     int64
-	TouchHungerCost   int64
-	RpsAffection      int64
-	RpsAffectLimit    int64
-	RpsHungerCost     int64
-	RpsInterval       int64
-	SnackHungerCost   int64
-	SnackSuccess      int64
-	SnackInterval     int64
-	SnackProtect      int64
-	CounterHunger     int64
-	CounterSuccess    int64
-	CreateFamilyCoin  int64
-	CreateFamilyItem  string
-	FamilySizeLimit   int
-	FishHungerCost    int64
-	FishSuccessRate   int64
-	GiftLimit         int64
-	FishSpecies       []string
-	HungerMoodFlush   int64
-	LotteryItem       string
-	LotteryRewardStr  string
-	WorkTime          int64
-	WorkRewardCoin    int64
-	WorkRewardItems   string
-	WorkHungerCost    int64
-	FitnessGrowth     int64
-	FitnessLimit      int64
-	FitnessHungerCost int64
-	SellNoPriceGrowth int64
-	TreeResultNutri   int64
-	TreeRewardItems   string
-	BuyLimit          int
+	TrainGrowth               int64
+	TrainLimit                int64
+	TrainHungerCost           int64
+	StudyGrowth               int64
+	StudyLimit                int64
+	StudyHungerCost           int64
+	WashGrowth                int64
+	WashAffection             int64
+	WashHungerCost            int64
+	WalkGrowth                int64
+	WalkAffection             int64
+	WalkGrowthLimit           int64
+	WalkAffectLimit           int64
+	WalkInterval              int64
+	WalkHungerCost            int64
+	TouchGrowth               int64
+	TouchAffection            int64
+	TouchGrowthLimit          int64
+	TouchAffectLimit          int64
+	TouchInterval             int64
+	TouchHungerCost           int64
+	RpsAffection              int64
+	RpsAffectLimit            int64
+	RpsHungerCost             int64
+	RpsInterval               int64
+	SnackHungerCost           int64
+	SnackSuccess              int64
+	SnackInterval             int64
+	SnackProtect              int64
+	CounterHunger             int64
+	CounterSuccess            int64
+	CreateFamilyCoin          int64
+	CreateFamilyItem          string
+	FamilySizeLimit           int
+	FishHungerCost            int64
+	FishSuccessRate           int64
+	GiftLimit                 int64
+	FishSpecies               []string
+	HungerMoodFlush           int64
+	LotteryItem               string
+	LotteryRewardStr          string
+	WorkTime                  int64
+	WorkRewardCoin            int64
+	WorkRewardItems           string
+	WorkHungerCost            int64
+	FitnessGrowth             int64
+	FitnessLimit              int64
+	FitnessHungerCost         int64
+	SellNoPriceGrowth         int64
+	CommunityBuildGoal        int64
+	CommunityBuildRewardItems string
+	BuyLimit                  int
 }
 
 // PetSpecies 对应 宠物配置.ini 中的各个宠物种类
@@ -300,58 +300,58 @@ func seedSystemConfig(tx *gorm.DB) {
 	}
 
 	interactionFields := map[string]string{
-		"Interaction.TrainGrowth":       strconv.FormatInt(Interaction.TrainGrowth, 10),
-		"Interaction.TrainLimit":        strconv.FormatInt(Interaction.TrainLimit, 10),
-		"Interaction.TrainHungerCost":   strconv.FormatInt(Interaction.TrainHungerCost, 10),
-		"Interaction.StudyGrowth":       strconv.FormatInt(Interaction.StudyGrowth, 10),
-		"Interaction.StudyLimit":        strconv.FormatInt(Interaction.StudyLimit, 10),
-		"Interaction.StudyHungerCost":   strconv.FormatInt(Interaction.StudyHungerCost, 10),
-		"Interaction.WashGrowth":        strconv.FormatInt(Interaction.WashGrowth, 10),
-		"Interaction.WashAffection":     strconv.FormatInt(Interaction.WashAffection, 10),
-		"Interaction.WashHungerCost":    strconv.FormatInt(Interaction.WashHungerCost, 10),
-		"Interaction.WalkGrowth":        strconv.FormatInt(Interaction.WalkGrowth, 10),
-		"Interaction.WalkAffection":     strconv.FormatInt(Interaction.WalkAffection, 10),
-		"Interaction.WalkGrowthLimit":   strconv.FormatInt(Interaction.WalkGrowthLimit, 10),
-		"Interaction.WalkAffectLimit":   strconv.FormatInt(Interaction.WalkAffectLimit, 10),
-		"Interaction.WalkInterval":      strconv.FormatInt(Interaction.WalkInterval, 10),
-		"Interaction.WalkHungerCost":    strconv.FormatInt(Interaction.WalkHungerCost, 10),
-		"Interaction.TouchGrowth":       strconv.FormatInt(Interaction.TouchGrowth, 10),
-		"Interaction.TouchAffection":    strconv.FormatInt(Interaction.TouchAffection, 10),
-		"Interaction.TouchGrowthLimit":  strconv.FormatInt(Interaction.TouchGrowthLimit, 10),
-		"Interaction.TouchAffectLimit":  strconv.FormatInt(Interaction.TouchAffectLimit, 10),
-		"Interaction.TouchInterval":     strconv.FormatInt(Interaction.TouchInterval, 10),
-		"Interaction.TouchHungerCost":   strconv.FormatInt(Interaction.TouchHungerCost, 10),
-		"Interaction.RpsAffection":      strconv.FormatInt(Interaction.RpsAffection, 10),
-		"Interaction.RpsAffectLimit":    strconv.FormatInt(Interaction.RpsAffectLimit, 10),
-		"Interaction.RpsHungerCost":     strconv.FormatInt(Interaction.RpsHungerCost, 10),
-		"Interaction.RpsInterval":       strconv.FormatInt(Interaction.RpsInterval, 10),
-		"Interaction.SnackHungerCost":   strconv.FormatInt(Interaction.SnackHungerCost, 10),
-		"Interaction.SnackSuccess":      strconv.FormatInt(Interaction.SnackSuccess, 10),
-		"Interaction.SnackInterval":     strconv.FormatInt(Interaction.SnackInterval, 10),
-		"Interaction.SnackProtect":      strconv.FormatInt(Interaction.SnackProtect, 10),
-		"Interaction.CounterHunger":     strconv.FormatInt(Interaction.CounterHunger, 10),
-		"Interaction.CounterSuccess":    strconv.FormatInt(Interaction.CounterSuccess, 10),
-		"Interaction.CreateFamilyCoin":  strconv.FormatInt(Interaction.CreateFamilyCoin, 10),
-		"Interaction.CreateFamilyItem":  Interaction.CreateFamilyItem,
-		"Interaction.FamilySizeLimit":   strconv.Itoa(Interaction.FamilySizeLimit),
-		"Interaction.FishHungerCost":    strconv.FormatInt(Interaction.FishHungerCost, 10),
-		"Interaction.FishSuccessRate":   strconv.FormatInt(Interaction.FishSuccessRate, 10),
-		"Interaction.GiftLimit":         strconv.FormatInt(Interaction.GiftLimit, 10),
-		"Interaction.FishSpecies":       strings.Join(Interaction.FishSpecies, "#"),
-		"Interaction.HungerMoodFlush":   strconv.FormatInt(Interaction.HungerMoodFlush, 10),
-		"Interaction.LotteryItem":       Interaction.LotteryItem,
-		"Interaction.LotteryRewardStr":  Interaction.LotteryRewardStr,
-		"Interaction.WorkTime":          strconv.FormatInt(Interaction.WorkTime, 10),
-		"Interaction.WorkRewardCoin":    strconv.FormatInt(Interaction.WorkRewardCoin, 10),
-		"Interaction.WorkRewardItems":   Interaction.WorkRewardItems,
-		"Interaction.WorkHungerCost":    strconv.FormatInt(Interaction.WorkHungerCost, 10),
-		"Interaction.FitnessGrowth":     strconv.FormatInt(Interaction.FitnessGrowth, 10),
-		"Interaction.FitnessLimit":      strconv.FormatInt(Interaction.FitnessLimit, 10),
-		"Interaction.FitnessHungerCost": strconv.FormatInt(Interaction.FitnessHungerCost, 10),
-		"Interaction.SellNoPriceGrowth": strconv.FormatInt(Interaction.SellNoPriceGrowth, 10),
-		"Interaction.TreeResultNutri":   strconv.FormatInt(Interaction.TreeResultNutri, 10),
-		"Interaction.TreeRewardItems":   Interaction.TreeRewardItems,
-		"Interaction.BuyLimit":          strconv.Itoa(Interaction.BuyLimit),
+		"Interaction.TrainGrowth":               strconv.FormatInt(Interaction.TrainGrowth, 10),
+		"Interaction.TrainLimit":                strconv.FormatInt(Interaction.TrainLimit, 10),
+		"Interaction.TrainHungerCost":           strconv.FormatInt(Interaction.TrainHungerCost, 10),
+		"Interaction.StudyGrowth":               strconv.FormatInt(Interaction.StudyGrowth, 10),
+		"Interaction.StudyLimit":                strconv.FormatInt(Interaction.StudyLimit, 10),
+		"Interaction.StudyHungerCost":           strconv.FormatInt(Interaction.StudyHungerCost, 10),
+		"Interaction.WashGrowth":                strconv.FormatInt(Interaction.WashGrowth, 10),
+		"Interaction.WashAffection":             strconv.FormatInt(Interaction.WashAffection, 10),
+		"Interaction.WashHungerCost":            strconv.FormatInt(Interaction.WashHungerCost, 10),
+		"Interaction.WalkGrowth":                strconv.FormatInt(Interaction.WalkGrowth, 10),
+		"Interaction.WalkAffection":             strconv.FormatInt(Interaction.WalkAffection, 10),
+		"Interaction.WalkGrowthLimit":           strconv.FormatInt(Interaction.WalkGrowthLimit, 10),
+		"Interaction.WalkAffectLimit":           strconv.FormatInt(Interaction.WalkAffectLimit, 10),
+		"Interaction.WalkInterval":              strconv.FormatInt(Interaction.WalkInterval, 10),
+		"Interaction.WalkHungerCost":            strconv.FormatInt(Interaction.WalkHungerCost, 10),
+		"Interaction.TouchGrowth":               strconv.FormatInt(Interaction.TouchGrowth, 10),
+		"Interaction.TouchAffection":            strconv.FormatInt(Interaction.TouchAffection, 10),
+		"Interaction.TouchGrowthLimit":          strconv.FormatInt(Interaction.TouchGrowthLimit, 10),
+		"Interaction.TouchAffectLimit":          strconv.FormatInt(Interaction.TouchAffectLimit, 10),
+		"Interaction.TouchInterval":             strconv.FormatInt(Interaction.TouchInterval, 10),
+		"Interaction.TouchHungerCost":           strconv.FormatInt(Interaction.TouchHungerCost, 10),
+		"Interaction.RpsAffection":              strconv.FormatInt(Interaction.RpsAffection, 10),
+		"Interaction.RpsAffectLimit":            strconv.FormatInt(Interaction.RpsAffectLimit, 10),
+		"Interaction.RpsHungerCost":             strconv.FormatInt(Interaction.RpsHungerCost, 10),
+		"Interaction.RpsInterval":               strconv.FormatInt(Interaction.RpsInterval, 10),
+		"Interaction.SnackHungerCost":           strconv.FormatInt(Interaction.SnackHungerCost, 10),
+		"Interaction.SnackSuccess":              strconv.FormatInt(Interaction.SnackSuccess, 10),
+		"Interaction.SnackInterval":             strconv.FormatInt(Interaction.SnackInterval, 10),
+		"Interaction.SnackProtect":              strconv.FormatInt(Interaction.SnackProtect, 10),
+		"Interaction.CounterHunger":             strconv.FormatInt(Interaction.CounterHunger, 10),
+		"Interaction.CounterSuccess":            strconv.FormatInt(Interaction.CounterSuccess, 10),
+		"Interaction.CreateFamilyCoin":          strconv.FormatInt(Interaction.CreateFamilyCoin, 10),
+		"Interaction.CreateFamilyItem":          Interaction.CreateFamilyItem,
+		"Interaction.FamilySizeLimit":           strconv.Itoa(Interaction.FamilySizeLimit),
+		"Interaction.FishHungerCost":            strconv.FormatInt(Interaction.FishHungerCost, 10),
+		"Interaction.FishSuccessRate":           strconv.FormatInt(Interaction.FishSuccessRate, 10),
+		"Interaction.GiftLimit":                 strconv.FormatInt(Interaction.GiftLimit, 10),
+		"Interaction.FishSpecies":               strings.Join(Interaction.FishSpecies, "#"),
+		"Interaction.HungerMoodFlush":           strconv.FormatInt(Interaction.HungerMoodFlush, 10),
+		"Interaction.LotteryItem":               Interaction.LotteryItem,
+		"Interaction.LotteryRewardStr":          Interaction.LotteryRewardStr,
+		"Interaction.WorkTime":                  strconv.FormatInt(Interaction.WorkTime, 10),
+		"Interaction.WorkRewardCoin":            strconv.FormatInt(Interaction.WorkRewardCoin, 10),
+		"Interaction.WorkRewardItems":           Interaction.WorkRewardItems,
+		"Interaction.WorkHungerCost":            strconv.FormatInt(Interaction.WorkHungerCost, 10),
+		"Interaction.FitnessGrowth":             strconv.FormatInt(Interaction.FitnessGrowth, 10),
+		"Interaction.FitnessLimit":              strconv.FormatInt(Interaction.FitnessLimit, 10),
+		"Interaction.FitnessHungerCost":         strconv.FormatInt(Interaction.FitnessHungerCost, 10),
+		"Interaction.SellNoPriceGrowth":         strconv.FormatInt(Interaction.SellNoPriceGrowth, 10),
+		"Interaction.CommunityBuildGoal":        strconv.FormatInt(Interaction.CommunityBuildGoal, 10),
+		"Interaction.CommunityBuildRewardItems": Interaction.CommunityBuildRewardItems,
+		"Interaction.BuyLimit":                  strconv.Itoa(Interaction.BuyLimit),
 	}
 
 	for k, v := range coreFields {
@@ -585,8 +585,8 @@ func LoadAllConfigsFromDB(db *gorm.DB) error {
 
 	// 填充 Core
 	Core = CoreConfig{
-		InitialPets:         SplitConfigList(readStr("Core.InitialPets", "诺诺")),
-		CoinName:            readStr("Core.CoinName", "咔币"),
+		InitialPets:         SplitConfigList(readStr("Core.InitialPets", "光芽兽")),
+		CoinName:            readStr("Core.CoinName", "星砂"),
 		InitialCoin:         readInt64("Core.InitialCoin", 100),
 		RenameCost:          readInt64("Core.RenameCost", 1000),
 		RenameBlocklist:     SplitConfigList(readStr("Core.RenameBlocklist", "")),
@@ -608,58 +608,58 @@ func LoadAllConfigsFromDB(db *gorm.DB) error {
 
 	// 填充 Interaction
 	Interaction = InteractionConfig{
-		TrainGrowth:       readInt64("Interaction.TrainGrowth", 5),
-		TrainLimit:        readInt64("Interaction.TrainLimit", 3),
-		TrainHungerCost:   readInt64("Interaction.TrainHungerCost", 10),
-		StudyGrowth:       readInt64("Interaction.StudyGrowth", 5),
-		StudyLimit:        readInt64("Interaction.StudyLimit", 5),
-		StudyHungerCost:   readInt64("Interaction.StudyHungerCost", 10),
-		WashGrowth:        readInt64("Interaction.WashGrowth", 8),
-		WashAffection:     readInt64("Interaction.WashAffection", 10),
-		WashHungerCost:    readInt64("Interaction.WashHungerCost", 5),
-		WalkGrowth:        readInt64("Interaction.WalkGrowth", 5),
-		WalkAffection:     readInt64("Interaction.WalkAffection", 8),
-		WalkGrowthLimit:   readInt64("Interaction.WalkGrowthLimit", 20),
-		WalkAffectLimit:   readInt64("Interaction.WalkAffectLimit", 24),
-		WalkInterval:      readInt64("Interaction.WalkInterval", 600),
-		WalkHungerCost:    readInt64("Interaction.WalkHungerCost", 15),
-		TouchGrowth:       readInt64("Interaction.TouchGrowth", 8),
-		TouchAffection:    readInt64("Interaction.TouchAffection", 10),
-		TouchGrowthLimit:  readInt64("Interaction.TouchGrowthLimit", 24),
-		TouchAffectLimit:  readInt64("Interaction.TouchAffectLimit", 30),
-		TouchInterval:     readInt64("Interaction.TouchInterval", 600),
-		TouchHungerCost:   readInt64("Interaction.TouchHungerCost", 5),
-		RpsAffection:      readInt64("Interaction.RpsAffection", 8),
-		RpsAffectLimit:    readInt64("Interaction.RpsAffectLimit", 24),
-		RpsHungerCost:     readInt64("Interaction.RpsHungerCost", 5),
-		RpsInterval:       readInt64("Interaction.RpsInterval", 180),
-		SnackHungerCost:   readInt64("Interaction.SnackHungerCost", 30),
-		SnackSuccess:      readInt64("Interaction.SnackSuccess", 99),
-		SnackInterval:     readInt64("Interaction.SnackInterval", 300),
-		SnackProtect:      readInt64("Interaction.SnackProtect", 300),
-		CounterHunger:     readInt64("Interaction.CounterHunger", 15),
-		CounterSuccess:    readInt64("Interaction.CounterSuccess", 80),
-		CreateFamilyCoin:  readInt64("Interaction.CreateFamilyCoin", 500),
-		CreateFamilyItem:  readStr("Interaction.CreateFamilyItem", "家族商标*1"),
-		FamilySizeLimit:   readInt("Interaction.FamilySizeLimit", 10),
-		FishHungerCost:    readInt64("Interaction.FishHungerCost", 5),
-		FishSuccessRate:   readInt64("Interaction.FishSuccessRate", 80),
-		GiftLimit:         readInt64("Interaction.GiftLimit", 5),
-		FishSpecies:       strings.Split(readStr("Interaction.FishSpecies", ""), "#"),
-		HungerMoodFlush:   readInt64("Interaction.HungerMoodFlush", 60),
-		LotteryItem:       readStr("Interaction.LotteryItem", "抽奖券*10"),
-		LotteryRewardStr:  readStr("Interaction.LotteryRewardStr", ""),
-		WorkTime:          readInt64("Interaction.WorkTime", 600),
-		WorkRewardCoin:    readInt64("Interaction.WorkRewardCoin", 300),
-		WorkRewardItems:   readStr("Interaction.WorkRewardItems", ""),
-		WorkHungerCost:    readInt64("Interaction.WorkHungerCost", 20),
-		FitnessGrowth:     readInt64("Interaction.FitnessGrowth", 5),
-		FitnessLimit:      readInt64("Interaction.FitnessLimit", 5),
-		FitnessHungerCost: readInt64("Interaction.FitnessHungerCost", 12),
-		SellNoPriceGrowth: readInt64("Interaction.SellNoPriceGrowth", 10),
-		TreeResultNutri:   readInt64("Interaction.TreeResultNutri", 155),
-		TreeRewardItems:   readStr("Interaction.TreeRewardItems", "神树果实*1#抽奖券*10"),
-		BuyLimit:          readInt("Interaction.BuyLimit", 10),
+		TrainGrowth:               readInt64("Interaction.TrainGrowth", 5),
+		TrainLimit:                readInt64("Interaction.TrainLimit", 3),
+		TrainHungerCost:           readInt64("Interaction.TrainHungerCost", 10),
+		StudyGrowth:               readInt64("Interaction.StudyGrowth", 5),
+		StudyLimit:                readInt64("Interaction.StudyLimit", 5),
+		StudyHungerCost:           readInt64("Interaction.StudyHungerCost", 10),
+		WashGrowth:                readInt64("Interaction.WashGrowth", 8),
+		WashAffection:             readInt64("Interaction.WashAffection", 10),
+		WashHungerCost:            readInt64("Interaction.WashHungerCost", 5),
+		WalkGrowth:                readInt64("Interaction.WalkGrowth", 5),
+		WalkAffection:             readInt64("Interaction.WalkAffection", 8),
+		WalkGrowthLimit:           readInt64("Interaction.WalkGrowthLimit", 20),
+		WalkAffectLimit:           readInt64("Interaction.WalkAffectLimit", 24),
+		WalkInterval:              readInt64("Interaction.WalkInterval", 600),
+		WalkHungerCost:            readInt64("Interaction.WalkHungerCost", 15),
+		TouchGrowth:               readInt64("Interaction.TouchGrowth", 8),
+		TouchAffection:            readInt64("Interaction.TouchAffection", 10),
+		TouchGrowthLimit:          readInt64("Interaction.TouchGrowthLimit", 24),
+		TouchAffectLimit:          readInt64("Interaction.TouchAffectLimit", 30),
+		TouchInterval:             readInt64("Interaction.TouchInterval", 600),
+		TouchHungerCost:           readInt64("Interaction.TouchHungerCost", 5),
+		RpsAffection:              readInt64("Interaction.RpsAffection", 8),
+		RpsAffectLimit:            readInt64("Interaction.RpsAffectLimit", 24),
+		RpsHungerCost:             readInt64("Interaction.RpsHungerCost", 5),
+		RpsInterval:               readInt64("Interaction.RpsInterval", 180),
+		SnackHungerCost:           readInt64("Interaction.SnackHungerCost", 30),
+		SnackSuccess:              readInt64("Interaction.SnackSuccess", 99),
+		SnackInterval:             readInt64("Interaction.SnackInterval", 300),
+		SnackProtect:              readInt64("Interaction.SnackProtect", 300),
+		CounterHunger:             readInt64("Interaction.CounterHunger", 15),
+		CounterSuccess:            readInt64("Interaction.CounterSuccess", 80),
+		CreateFamilyCoin:          readInt64("Interaction.CreateFamilyCoin", 500),
+		CreateFamilyItem:          readStr("Interaction.CreateFamilyItem", "家族商标*1"),
+		FamilySizeLimit:           readInt("Interaction.FamilySizeLimit", 10),
+		FishHungerCost:            readInt64("Interaction.FishHungerCost", 5),
+		FishSuccessRate:           readInt64("Interaction.FishSuccessRate", 80),
+		GiftLimit:                 readInt64("Interaction.GiftLimit", 5),
+		FishSpecies:               strings.Split(readStr("Interaction.FishSpecies", ""), "#"),
+		HungerMoodFlush:           readInt64("Interaction.HungerMoodFlush", 60),
+		LotteryItem:               readStr("Interaction.LotteryItem", "抽奖券*10"),
+		LotteryRewardStr:          readStr("Interaction.LotteryRewardStr", ""),
+		WorkTime:                  readInt64("Interaction.WorkTime", 600),
+		WorkRewardCoin:            readInt64("Interaction.WorkRewardCoin", 300),
+		WorkRewardItems:           readStr("Interaction.WorkRewardItems", ""),
+		WorkHungerCost:            readInt64("Interaction.WorkHungerCost", 20),
+		FitnessGrowth:             readInt64("Interaction.FitnessGrowth", 5),
+		FitnessLimit:              readInt64("Interaction.FitnessLimit", 5),
+		FitnessHungerCost:         readInt64("Interaction.FitnessHungerCost", 12),
+		SellNoPriceGrowth:         readInt64("Interaction.SellNoPriceGrowth", 10),
+		CommunityBuildGoal:        readInt64("Interaction.CommunityBuildGoal", 155),
+		CommunityBuildRewardItems: readStr("Interaction.CommunityBuildRewardItems", "晨露果*1"),
+		BuyLimit:                  readInt("Interaction.BuyLimit", 10),
 	}
 
 	// 2. 加载 Commands

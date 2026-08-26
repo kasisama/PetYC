@@ -22,7 +22,7 @@ func newGameplayDB(t *testing.T, dsn string) *gorm.DB {
 	}
 	if err = db.AutoMigrate(
 		&models.PlayerAccount{}, &models.PlayerIdentity{}, &models.PetProfile{},
-		&models.PetSpeciesConfig{}, &models.GlobalInventoryItem{}, &models.PlayerWallet{}, &models.WalletLedger{},
+		&models.PetSpeciesConfig{}, &models.PetEvolutionRuleConfig{}, &models.PetEvolutionCostConfig{}, &models.PetSkillUnlockConfig{}, &models.GlobalInventoryItem{}, &models.PlayerWallet{}, &models.WalletLedger{},
 		&models.ItemConfig{}, &models.ShopItemConfig{},
 		&models.CompanionJournal{}, &models.CompanionActionDaily{}, &models.CheckinRewardConfig{}, &models.PetBehaviorProfile{},
 		&models.ActivityRun{}, &models.ItemUseRecord{}, &models.ExpeditionRun{},
@@ -37,13 +37,13 @@ func newGameplayDB(t *testing.T, dsn string) *gorm.DB {
 func TestCompanionFeedAndGiftConsumeUnifiedInventoryAndApplyFavorites(t *testing.T) {
 	db := newGameplayDB(t, ":memory:")
 	if err := db.Create(&models.PetSpeciesConfig{
-		Name: "诺诺", FavoriteFood: "小饼干", FavoriteGift: "小铃铛",
+		Name: "光芽兽", FavoriteFood: "小饼干", FavoriteGift: "小铃铛",
 		Hunger: 100, HungerMax: 100, AffectionBonus: 10,
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Create(&models.PetProfile{
-		AccountID: "account-1", PetType: "诺诺", Name: "诺诺", CurrentForm: "诺诺",
+		AccountID: "account-1", PetType: "光芽兽", Name: "光芽兽", CurrentForm: "光芽兽",
 		Role: "探索者", Stance: "探索", Status: "空闲", Mood: "一般", MoodPoints: 50,
 		Readiness: 100, Health: 100, HealthMax: 100, Hunger: 50, HungerMax: 100,
 	}).Error; err != nil {
@@ -101,7 +101,7 @@ func TestCompanionFeedAndGiftConsumeUnifiedInventoryAndApplyFavorites(t *testing
 func TestCompanionCooldownAndDailyLimitSurviveServiceRestart(t *testing.T) {
 	db := newGameplayDB(t, ":memory:")
 	if err := db.Create(&models.PetProfile{
-		AccountID: "account-1", PetType: "诺诺", Name: "诺诺", CurrentForm: "诺诺",
+		AccountID: "account-1", PetType: "光芽兽", Name: "光芽兽", CurrentForm: "光芽兽",
 		Role: "探索者", Stance: "探索", Status: "空闲", Mood: "一般", MoodPoints: 50,
 		Readiness: 100, Health: 100, HealthMax: 100, Hunger: 100, HungerMax: 100,
 	}).Error; err != nil {
@@ -143,7 +143,7 @@ func TestCompanionCooldownAndDailyLimitSurviveServiceRestart(t *testing.T) {
 func TestCareServiceKeepsRestRecoverAndTreatmentOnOnePetAndWallet(t *testing.T) {
 	db := newGameplayDB(t, ":memory:")
 	if err := db.Create(&models.PetProfile{
-		AccountID: "account-1", PetType: "诺诺", Name: "星星", CurrentForm: "诺诺",
+		AccountID: "account-1", PetType: "光芽兽", Name: "星星", CurrentForm: "光芽兽",
 		Role: "探索者", Stance: "探索", Status: "空闲", Mood: "一般", MoodPoints: 50,
 		Readiness: 100, Health: 20, HealthMax: 100, Hunger: 100, HungerMax: 100,
 	}).Error; err != nil {
@@ -186,7 +186,7 @@ func TestCareServiceKeepsRestRecoverAndTreatmentOnOnePetAndWallet(t *testing.T) 
 func TestCareTreatmentRollsBackWhenWalletIsInsufficient(t *testing.T) {
 	db := newGameplayDB(t, ":memory:")
 	if err := db.Create(&models.PetProfile{
-		AccountID: "account-1", PetType: "诺诺", Name: "诺诺", CurrentForm: "诺诺",
+		AccountID: "account-1", PetType: "光芽兽", Name: "光芽兽", CurrentForm: "光芽兽",
 		Role: "探索者", Stance: "探索", Status: "濒死", Mood: "一般",
 		Readiness: 100, Health: 10, HealthMax: 100, Hunger: 100, HungerMax: 100,
 	}).Error; err != nil {
@@ -206,11 +206,11 @@ func TestCareTreatmentRollsBackWhenWalletIsInsufficient(t *testing.T) {
 
 func TestActivityRunConsumesItemAndClaimsAttributeRewardExactlyOnce(t *testing.T) {
 	db := newGameplayDB(t, ":memory:")
-	if err := db.Create(&models.PetSpeciesConfig{Name: "诺诺", WisdomMax: 20, AttributeBonus: 10}).Error; err != nil {
+	if err := db.Create(&models.PetSpeciesConfig{Name: "光芽兽", WisdomMax: 20, AttributeBonus: 10}).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Create(&models.PetProfile{
-		AccountID: "account-1", PetType: "诺诺", Name: "诺诺", CurrentForm: "诺诺",
+		AccountID: "account-1", PetType: "光芽兽", Name: "光芽兽", CurrentForm: "光芽兽",
 		Role: "探索者", Stance: "探索", Status: "空闲", Mood: "一般", MoodPoints: 50,
 		Readiness: 100, Health: 100, HealthMax: 100, Hunger: 100, HungerMax: 100, Wisdom: 10,
 	}).Error; err != nil {
@@ -265,11 +265,11 @@ func TestActivityRunConsumesItemAndClaimsAttributeRewardExactlyOnce(t *testing.T
 
 func TestActivityWorkPaysUnifiedWalletAndInventoryFromSnapshot(t *testing.T) {
 	db := newGameplayDB(t, ":memory:")
-	if err := db.Create(&models.PetSpeciesConfig{Name: "诺诺", CurrencyBonus: 20}).Error; err != nil {
+	if err := db.Create(&models.PetSpeciesConfig{Name: "光芽兽", CurrencyBonus: 20}).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Create(&models.PetProfile{
-		AccountID: "account-1", PetType: "诺诺", Name: "诺诺", CurrentForm: "诺诺",
+		AccountID: "account-1", PetType: "光芽兽", Name: "光芽兽", CurrentForm: "光芽兽",
 		Role: "探索者", Stance: "探索", Status: "空闲", Mood: "开心", MoodPoints: 70,
 		Readiness: 100, Health: 100, HealthMax: 100, Hunger: 100, HungerMax: 100,
 	}).Error; err != nil {
@@ -311,7 +311,7 @@ func TestConcurrentActivityCompletionPaysOnce(t *testing.T) {
 	}
 	sqlDB.SetMaxOpenConns(8)
 	if err = db.Create(&models.PetProfile{
-		AccountID: "account-1", PetType: "诺诺", Name: "诺诺", CurrentForm: "诺诺",
+		AccountID: "account-1", PetType: "光芽兽", Name: "光芽兽", CurrentForm: "光芽兽",
 		Role: "探索者", Stance: "探索", Status: ActivityWork, Mood: "一般", MoodPoints: 50,
 		Readiness: 100, Health: 100, HealthMax: 100, Hunger: 90, HungerMax: 100,
 	}).Error; err != nil {
@@ -363,15 +363,14 @@ func TestConcurrentActivityCompletionPaysOnce(t *testing.T) {
 
 func TestEvolutionPreviewAndAwakeningUseConfiguredConditionsAndUnifiedInventory(t *testing.T) {
 	db := newGameplayDB(t, ":memory:")
-	if err := db.Create(&models.PetSpeciesConfig{
-		Name: "诺诺", Image: "宠物/诺诺.png",
-		Evolution: "辉光诺诺", EvolutionGrowth: 10, EvolutionAffect: 5, EvolutionImage: "宠物/辉光诺诺.png",
-		Awaken: "星耀诺诺", AwakenGrowth: 20, AwakenAffect: 10, AwakenItems: "光之石*2", AwakenImage: "宠物/星耀诺诺.png",
-	}).Error; err != nil {
+	if err := db.Create(&[]models.PetSpeciesConfig{{Key: "lumisprout_base", Name: "光芽兽", FamilyKey: "lumisprout", Stage: "base", Image: "宠物/光芽兽.png"}, {Key: "lumisprout_evolved", Name: "曜叶兽", FamilyKey: "lumisprout", Stage: "evolved", PreviousFormKey: "lumisprout_base", Image: "宠物/曜叶兽.png"}, {Key: "lumisprout_awaken_a", Name: "曦冠灵", FamilyKey: "lumisprout", Stage: "awakened", PreviousFormKey: "lumisprout_evolved", Image: "宠物/曦冠灵.png"}}).Error; err != nil {
 		t.Fatal(err)
 	}
+	db.Create(&[]models.PetEvolutionRuleConfig{{Key: "nono_standard", FromFormKey: "lumisprout_base", ToFormKey: "lumisprout_evolved", RequiredGrowth: 10, RequiredAffection: 5, BranchLabel: "标准进化", Enabled: true}, {Key: "lumisprout_awaken_a_rule", FromFormKey: "lumisprout_evolved", ToFormKey: "lumisprout_awaken_a", RequiredGrowth: 20, RequiredAffection: 10, BranchLabel: "星耀路线", Enabled: true}})
+	db.Create(&models.ItemConfig{Key: "light_stone", Name: "光之石", Status: "active"})
+	db.Create(&models.PetEvolutionCostConfig{EvolutionKey: "lumisprout_awaken_a_rule", ItemKey: "light_stone", Quantity: 2})
 	if err := db.Create(&models.PetProfile{
-		AccountID: "account-1", PetType: "诺诺", Name: "诺诺", CurrentForm: "诺诺",
+		AccountID: "account-1", PetType: "lumisprout", Name: "光芽兽", CurrentForm: "lumisprout_base",
 		Role: "探索者", Stance: "探索", Status: "空闲", Mood: "一般",
 		Readiness: 100, Health: 100, HealthMax: 100, Hunger: 100, HungerMax: 100, Growth: 10, Affection: 5,
 	}).Error; err != nil {
@@ -379,11 +378,11 @@ func TestEvolutionPreviewAndAwakeningUseConfiguredConditionsAndUnifiedInventory(
 	}
 	evolution := NewEvolutionService(db)
 	preview, err := evolution.Preview(context.Background(), "account-1", "进化")
-	if err != nil || !preview.Ready || preview.TargetForm != "辉光诺诺" || preview.TargetImage != "宠物/辉光诺诺.png" {
+	if err != nil || !preview.Ready || preview.TargetForm != "曜叶兽" || preview.TargetImage != "宠物/曜叶兽.png" {
 		t.Fatalf("evolution preview mismatch: %#v err=%v", preview, err)
 	}
 	completed, err := evolution.Evolve(context.Background(), "account-1")
-	if err != nil || completed.TargetForm != "辉光诺诺" {
+	if err != nil || completed.TargetForm != "曜叶兽" {
 		t.Fatalf("evolution failed: %#v err=%v", completed, err)
 	}
 	preview, err = evolution.Preview(context.Background(), "account-1", "觉醒")
@@ -397,7 +396,7 @@ func TestEvolutionPreviewAndAwakeningUseConfiguredConditionsAndUnifiedInventory(
 		t.Fatal(err)
 	}
 	completed, err = evolution.Awaken(context.Background(), "account-1")
-	if err != nil || completed.TargetForm != "星耀诺诺" || completed.TargetImage != "宠物/星耀诺诺.png" {
+	if err != nil || completed.TargetForm != "曦冠灵" || completed.TargetImage != "宠物/曦冠灵.png" {
 		t.Fatalf("awakening failed: %#v err=%v", completed, err)
 	}
 	var pet models.PetProfile
@@ -405,10 +404,14 @@ func TestEvolutionPreviewAndAwakeningUseConfiguredConditionsAndUnifiedInventory(
 		t.Fatal(err)
 	}
 	var species models.PetSpeciesConfig
-	if err = db.First(&species, "name = ?", "诺诺").Error; err != nil {
+	if err = db.First(&species, "name = ?", "光芽兽").Error; err != nil {
 		t.Fatal(err)
 	}
-	if pet.CurrentForm != "星耀诺诺" || ResolvePetImage(pet, species) != "宠物/星耀诺诺.png" {
+	species = models.PetSpeciesConfig{}
+	if err = db.First(&species, "key = ?", pet.CurrentForm).Error; err != nil {
+		t.Fatal(err)
+	}
+	if pet.CurrentForm != "lumisprout_awaken_a" || ResolvePetImage(pet, species) != "宠物/曦冠灵.png" {
 		t.Fatalf("awakened form or image was not persisted: pet=%#v", pet)
 	}
 	items, err := NewInventoryService(db).List(context.Background(), "account-1", 10)
@@ -419,11 +422,12 @@ func TestEvolutionPreviewAndAwakeningUseConfiguredConditionsAndUnifiedInventory(
 
 func TestAwakeningFailureDoesNotChangeFormOrPartiallyConsumeItems(t *testing.T) {
 	db := newGameplayDB(t, ":memory:")
-	db.Create(&models.PetSpeciesConfig{
-		Name: "诺诺", Evolution: "辉光诺诺", Awaken: "星耀诺诺", AwakenGrowth: 20, AwakenAffect: 10, AwakenItems: "光之石*2#星尘*1",
-	})
+	db.Create(&[]models.PetSpeciesConfig{{Key: "lumisprout_evolved", Name: "曜叶兽", FamilyKey: "lumisprout", Stage: "evolved"}, {Key: "lumisprout_awaken_a", Name: "曦冠灵", FamilyKey: "lumisprout", Stage: "awakened", PreviousFormKey: "lumisprout_evolved"}})
+	db.Create(&models.PetEvolutionRuleConfig{Key: "lumisprout_awaken_a_rule", FromFormKey: "lumisprout_evolved", ToFormKey: "lumisprout_awaken_a", RequiredGrowth: 20, RequiredAffection: 10, BranchLabel: "星耀路线", Enabled: true})
+	db.Create(&[]models.ItemConfig{{Key: "light_stone", Name: "光之石", Status: "active"}, {Key: "stardust", Name: "星尘", Status: "active"}})
+	db.Create(&[]models.PetEvolutionCostConfig{{EvolutionKey: "lumisprout_awaken_a_rule", ItemKey: "light_stone", Quantity: 2}, {EvolutionKey: "lumisprout_awaken_a_rule", ItemKey: "stardust", Quantity: 1}})
 	db.Create(&models.PetProfile{
-		AccountID: "account-1", PetType: "诺诺", Name: "诺诺", CurrentForm: "辉光诺诺",
+		AccountID: "account-1", PetType: "lumisprout", Name: "光芽兽", CurrentForm: "lumisprout_evolved",
 		Role: "探索者", Stance: "探索", Status: "空闲", Mood: "一般", Growth: 20, Affection: 10,
 		Readiness: 100, Health: 100, HealthMax: 100, Hunger: 100, HungerMax: 100,
 	})
@@ -436,7 +440,7 @@ func TestAwakeningFailureDoesNotChangeFormOrPartiallyConsumeItems(t *testing.T) 
 	}
 	var pet models.PetProfile
 	db.First(&pet, "account_id = ?", "account-1")
-	if pet.CurrentForm != "辉光诺诺" {
+	if pet.CurrentForm != "lumisprout_evolved" {
 		t.Fatalf("failed awakening changed form: %#v", pet)
 	}
 	items, _ := inventory.List(context.Background(), "account-1", 10)
@@ -448,7 +452,7 @@ func TestAwakeningFailureDoesNotChangeFormOrPartiallyConsumeItems(t *testing.T) 
 func TestItemEffectUseIsAuditableAndIdempotent(t *testing.T) {
 	db := newGameplayDB(t, ":memory:")
 	if err := db.Create(&models.PetProfile{
-		AccountID: "account-1", PetType: "诺诺", Name: "诺诺", CurrentForm: "诺诺",
+		AccountID: "account-1", PetType: "光芽兽", Name: "光芽兽", CurrentForm: "光芽兽",
 		Role: "探索者", Stance: "探索", Status: "空闲", Mood: "一般",
 		Readiness: 100, Health: 50, HealthMax: 100, Hunger: 100, HungerMax: 100,
 	}).Error; err != nil {
@@ -506,7 +510,7 @@ func TestItemEffectUseIsAuditableAndIdempotent(t *testing.T) {
 func TestShopPurchaseAndSellUseOneWalletInventoryAndStockTransaction(t *testing.T) {
 	db := newGameplayDB(t, ":memory:")
 	if err := db.Create(&models.PetProfile{
-		AccountID: "account-1", PetType: "诺诺", Name: "诺诺", CurrentForm: "诺诺",
+		AccountID: "account-1", PetType: "光芽兽", Name: "光芽兽", CurrentForm: "光芽兽",
 		Role: "探索者", Stance: "探索", Status: "空闲", Mood: "一般",
 		Readiness: 100, Health: 100, HealthMax: 100, Hunger: 100, HungerMax: 100,
 	}).Error; err != nil {
@@ -571,7 +575,7 @@ func TestShopPurchaseAndSellUseOneWalletInventoryAndStockTransaction(t *testing.
 func TestShopPurchaseRollsBackStockWhenWalletIsInsufficient(t *testing.T) {
 	db := newGameplayDB(t, ":memory:")
 	db.Create(&models.PetProfile{
-		AccountID: "account-1", PetType: "诺诺", Name: "诺诺", CurrentForm: "诺诺",
+		AccountID: "account-1", PetType: "光芽兽", Name: "光芽兽", CurrentForm: "光芽兽",
 		Role: "探索者", Stance: "探索", Status: "空闲", Mood: "一般",
 		Readiness: 100, Health: 100, HealthMax: 100, Hunger: 100, HungerMax: 100,
 	})
@@ -596,7 +600,7 @@ func TestShopPurchaseRollsBackStockWhenWalletIsInsufficient(t *testing.T) {
 func TestAffectionShopDebitsPetAffection(t *testing.T) {
 	db := newGameplayDB(t, ":memory:")
 	db.Create(&models.PetProfile{
-		AccountID: "account-1", PetType: "诺诺", Name: "诺诺", CurrentForm: "诺诺",
+		AccountID: "account-1", PetType: "光芽兽", Name: "光芽兽", CurrentForm: "光芽兽",
 		Role: "探索者", Stance: "探索", Status: "空闲", Mood: "一般", Affection: 50,
 		Readiness: 100, Health: 100, HealthMax: 100, Hunger: 100, HungerMax: 100,
 	})
@@ -697,23 +701,23 @@ func TestConcurrentAccountResolutionCreatesOneAccountAndIdentity(t *testing.T) {
 func TestPetServiceAdoptsFromSpeciesStatsAndRejectsSecondPet(t *testing.T) {
 	db := newGameplayDB(t, ":memory:")
 	if err := db.Create(&models.PetSpeciesConfig{
-		Name: "诺诺", Health: 88, HealthMax: 120, Hunger: 70, HungerMax: 110,
+		Name: "光芽兽", Health: 88, HealthMax: 120, Hunger: 70, HungerMax: 110,
 		Wisdom: 14, Strength: 12, Defense: 16,
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
 	service := NewPetService(db)
-	pet, err := service.Adopt(context.Background(), "account-1", "诺诺", "小诺诺")
+	pet, err := service.Adopt(context.Background(), "account-1", "光芽兽", "小光芽兽")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if pet.Health != 88 || pet.HealthMax != 120 || pet.Hunger != 70 || pet.HungerMax != 110 || pet.Wisdom != 14 || pet.Strength != 12 || pet.Defense != 16 {
 		t.Fatalf("species stats were not copied into the unique pet profile: %#v", pet)
 	}
-	if pet.CurrentForm != "诺诺" || pet.Status != "空闲" {
+	if pet.CurrentForm != "光芽兽" || pet.Status != "空闲" {
 		t.Fatalf("pet lifecycle defaults are incomplete: %#v", pet)
 	}
-	if _, err = service.Adopt(context.Background(), "account-1", "呱呱", "小呱呱"); !errors.Is(err, ErrPetAlreadyExists) {
+	if _, err = service.Adopt(context.Background(), "account-1", "苔须灵", "小苔须灵"); !errors.Is(err, ErrPetAlreadyExists) {
 		t.Fatalf("expected one pet per account, got %v", err)
 	}
 }
@@ -721,7 +725,7 @@ func TestPetServiceAdoptsFromSpeciesStatsAndRejectsSecondPet(t *testing.T) {
 func TestDailyServiceUsesConfiguredRewardAtomically(t *testing.T) {
 	db := newGameplayDB(t, ":memory:")
 	if err := db.Create(&models.PetProfile{
-		AccountID: "account-1", PetType: "诺诺", Name: "诺诺", CurrentForm: "诺诺",
+		AccountID: "account-1", PetType: "光芽兽", Name: "光芽兽", CurrentForm: "光芽兽",
 		Role: "探索者", Stance: "探索", Status: "空闲", Mood: "一般", MoodPoints: 50,
 		Readiness: 80, Health: 100, HealthMax: 100, Hunger: 100, HungerMax: 100,
 	}).Error; err != nil {
@@ -780,7 +784,7 @@ func TestDailyServiceUsesConfiguredRewardAtomically(t *testing.T) {
 func TestDailyServiceRollsBackMalformedConfiguredReward(t *testing.T) {
 	db := newGameplayDB(t, ":memory:")
 	db.Create(&models.PetProfile{
-		AccountID: "account-1", PetType: "诺诺", Name: "诺诺", CurrentForm: "诺诺",
+		AccountID: "account-1", PetType: "光芽兽", Name: "光芽兽", CurrentForm: "光芽兽",
 		Role: "探索者", Stance: "探索", Status: "空闲", Mood: "一般",
 		Readiness: 80, Health: 100, HealthMax: 100, Hunger: 100, HungerMax: 100,
 	})
@@ -811,7 +815,7 @@ func TestConcurrentDailyCheckInPaysConfiguredRewardOnce(t *testing.T) {
 	}
 	sqlDB.SetMaxOpenConns(8)
 	if err = db.Create(&models.PetProfile{
-		AccountID: "account-1", PetType: "诺诺", Name: "诺诺", CurrentForm: "诺诺",
+		AccountID: "account-1", PetType: "光芽兽", Name: "光芽兽", CurrentForm: "光芽兽",
 		Role: "探索者", Stance: "探索", Status: "空闲", Mood: "一般", MoodPoints: 50,
 		Readiness: 80, Health: 100, HealthMax: 100, Hunger: 100, HungerMax: 100,
 	}).Error; err != nil {

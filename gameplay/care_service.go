@@ -2,7 +2,6 @@ package gameplay
 
 import (
 	"context"
-	"errors"
 	"strings"
 
 	"gorm.io/gorm"
@@ -36,12 +35,11 @@ func (service *CareService) PutToRest(ctx context.Context, accountID, expectedNa
 	expectedName = strings.TrimSpace(expectedName)
 	var pet models.PetProfile
 	err := WithTransactionRetry(ctx, service.DB, func(tx *gorm.DB) error {
-		if err := tx.First(&pet, "account_id = ?", accountID).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return ErrPetRequired
-			}
+		activePet, err := ActivePetTx(tx, accountID)
+		if err != nil {
 			return err
 		}
+		pet = *activePet
 		if pet.Name != expectedName {
 			return ErrPetNameMismatch
 		}
@@ -70,12 +68,11 @@ func (service *CareService) Resume(ctx context.Context, accountID string) (*mode
 	}
 	var pet models.PetProfile
 	err := WithTransactionRetry(ctx, service.DB, func(tx *gorm.DB) error {
-		if err := tx.First(&pet, "account_id = ?", accountID).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return ErrPetRequired
-			}
+		activePet, err := ActivePetTx(tx, accountID)
+		if err != nil {
 			return err
 		}
+		pet = *activePet
 		if pet.Status != PetStatusResting && pet.Status != "逃跑" {
 			return ErrPetNotAway
 		}
@@ -95,13 +92,11 @@ func (service *CareService) Treat(ctx context.Context, accountID, currencyKey st
 	currencyKey = normalizeCurrencyKey(currencyKey)
 	result := &TreatmentResult{Cost: cost, CurrencyKey: currencyKey}
 	err := WithTransactionRetry(ctx, service.DB, func(tx *gorm.DB) error {
-		var pet models.PetProfile
-		if err := tx.First(&pet, "account_id = ?", accountID).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return ErrPetRequired
-			}
+		activePet, err := ActivePetTx(tx, accountID)
+		if err != nil {
 			return err
 		}
+		pet := *activePet
 		healthMax := pet.HealthMax
 		if healthMax <= 0 {
 			healthMax = 100

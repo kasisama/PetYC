@@ -15,9 +15,11 @@ import (
 var ErrNoActiveEvent = errors.New("当前没有进行中的活动")
 
 type EventReward struct {
-	Milestone int64
-	ItemName  string
-	Quantity  int64
+	Milestone  int64
+	RewardType string
+	RewardKey  string
+	RewardName string
+	Quantity   int64
 }
 
 type EventStatus struct {
@@ -64,7 +66,7 @@ func (service *Service) GetEventStatus(ctx context.Context, accountID string) (*
 		return nil, lookup.Error
 	}
 	var track []models.RewardTrackConfig
-	if err = service.DB.WithContext(ctx).Where("event_key = ?", event.Key).Order("milestone asc, item_name asc").Find(&track).Error; err != nil {
+	if err = service.DB.WithContext(ctx).Where("event_key = ?", event.Key).Order("milestone asc, reward_type asc, reward_key asc").Find(&track).Error; err != nil {
 		return nil, err
 	}
 	return &EventStatus{Event: *event, Progress: progress.Progress, Track: track}, nil
@@ -157,15 +159,15 @@ func (service *Service) ClaimEventRewards(ctx context.Context, accountID string)
 
 func (service *Service) claimEventRewardsTx(tx *gorm.DB, eventKey, accountID string, progress int64, now time.Time) ([]EventReward, error) {
 	var track []models.RewardTrackConfig
-	if err := tx.Where("event_key = ? AND milestone <= ?", eventKey, progress).Order("milestone asc, item_name asc").Find(&track).Error; err != nil {
+	if err := tx.Where("event_key = ? AND milestone <= ?", eventKey, progress).Order("milestone asc, reward_type asc, reward_key asc").Find(&track).Error; err != nil {
 		return nil, err
 	}
 	rewards := make([]EventReward, 0, len(track))
 	for _, configured := range track {
 		claim := models.EventRewardClaim{
 			ID: uuid.NewString(), EventKey: eventKey, AccountID: accountID,
-			Milestone: configured.Milestone, ItemName: configured.ItemName,
-			Quantity: configured.Quantity, ClaimedAt: now,
+			Milestone: configured.Milestone, RewardType: configured.RewardType, RewardKey: configured.RewardKey,
+			RewardName: configured.RewardName, Quantity: configured.Quantity, ClaimedAt: now,
 		}
 		created := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&claim)
 		if created.Error != nil {
@@ -174,10 +176,21 @@ func (service *Service) claimEventRewardsTx(tx *gorm.DB, eventKey, accountID str
 		if created.RowsAffected == 0 {
 			continue
 		}
-		if err := gameplay.NewInventoryService(tx).CreditTx(tx, accountID, configured.ItemName, configured.Quantity); err != nil {
-			return nil, err
+		switch configured.RewardType {
+		case "item":
+			if err := gameplay.NewInventoryService(tx).CreditTx(tx, accountID, configured.RewardKey, configured.Quantity); err != nil {
+				return nil, err
+			}
+		case "currency":
+			wallet := gameplay.NewWalletService(tx)
+			wallet.Now = func() time.Time { return now }
+			if err := wallet.CreditTxWithReason(tx, accountID, configured.RewardKey, configured.Quantity, "event_milestone", eventKey); err != nil {
+				return nil, err
+			}
+		default:
+			return nil, errors.New("活动奖励类型无效")
 		}
-		rewards = append(rewards, EventReward{Milestone: configured.Milestone, ItemName: configured.ItemName, Quantity: configured.Quantity})
+		rewards = append(rewards, EventReward{Milestone: configured.Milestone, RewardType: configured.RewardType, RewardKey: configured.RewardKey, RewardName: configured.RewardName, Quantity: configured.Quantity})
 	}
 	return rewards, nil
 }

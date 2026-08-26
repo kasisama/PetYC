@@ -9,7 +9,7 @@ const steps = [
   { route: 'dashboard', target: 'nav-dashboard', title: '运营总览', body: '先看在线平台、活跃玩家和运营异常，快速掌握今天的整体状态。' },
   { route: 'players', target: 'nav-players', title: '玩家管理', body: '查询宠物、背包和资产；涉及玩家的数据始终与配置方案隔离。' },
   { route: 'gameplay', target: 'nav-gameplay', title: '玩法运营', body: '管理活动、远征、奖励轨道和概率玩法的运行状态。' },
-  { route: 'adventure', target: 'nav-adventure', title: '冒险世界', body: '配置大地图、区域探索、怪物、限时首领、掉落池、装备与合成配方。地图和远征都不是写死的。' },
+  { route: 'adventure', target: 'nav-adventure', title: '冒险世界', body: '配置大地图、区域探索、怪物、限时首领、远征商店、装备与合成配方。' },
   { route: 'communities', target: 'nav-communities', title: '社群运营', body: '查看群组、成员和社区开关，处理不同社群的运营需求。' },
   { route: 'content', target: 'nav-content', title: '内容配置', body: '编辑宠物、道具、商店、指令和图片映射；保存后会标记当前方案有修改。' },
   { route: 'profiles', target: 'nav-profiles', title: '配置方案', body: '创建、切换、导入或导出玩法配置。配置包不会携带玩家或平台密钥。' },

@@ -1,0 +1,872 @@
+{
+  "seed": 20260826,
+  "players": 10000,
+  "days": 70,
+  "config": "config/defaults/config_v0.1.0.json",
+  "cohorts": {
+    "high": {
+      "count": 1500,
+      "daily_income_p50": 341.34285714285716,
+      "daily_spend_p50": 216.17142857142858,
+      "shop_buys_p50": 3.842857142857143,
+      "crafts_p50": 2,
+      "daily_net_p50": 125.17142857142858,
+      "stock_p10": 7932,
+      "stock_p50": 8676,
+      "stock_p90": 9374,
+      "stock_p99": 10008,
+      "journey_badge_produced": 214.43,
+      "journey_badge_spent": 193.03466666666668,
+      "journey_badge_p50": 21,
+      "season_token_produced": 88,
+      "season_token_spent": 81.90133333333333,
+      "season_token_p50": 6,
+      "evolve_day_p50": 7,
+      "evolve_rate": 1,
+      "awaken_day_p50": 34,
+      "awaken_rate": 1,
+      "boss_join_rate": 0.9393333333333334,
+      "boss_clear_rate": 0.9393333333333334
+    },
+    "low": {
+      "count": 3500,
+      "daily_income_p50": 87.14285714285714,
+      "daily_spend_p50": 59.114285714285714,
+      "shop_buys_p50": 1.2857142857142858,
+      "crafts_p50": 0,
+      "daily_net_p50": 28.028571428571425,
+      "stock_p10": 1269,
+      "stock_p50": 1940,
+      "stock_p90": 2664,
+      "stock_p99": 3187,
+      "journey_badge_produced": 89.14542857142857,
+      "journey_badge_spent": 72.77942857142857,
+      "journey_badge_p50": 16,
+      "season_token_produced": 33.255428571428574,
+      "season_token_spent": 29.954857142857144,
+      "season_token_p50": 2,
+      "evolve_day_p50": 20,
+      "evolve_rate": 1,
+      "awaken_day_p50": 70,
+      "awaken_rate": 0.00028571428571428574,
+      "boss_join_rate": 0,
+      "boss_clear_rate": 0
+    },
+    "standard": {
+      "count": 5000,
+      "daily_income_p50": 257.7,
+      "daily_spend_p50": 200.22857142857143,
+      "shop_buys_p50": 3.557142857142857,
+      "crafts_p50": 1,
+      "daily_net_p50": 57.47142857142856,
+      "stock_p10": 3219,
+      "stock_p50": 4016,
+      "stock_p90": 4770,
+      "stock_p99": 5345,
+      "journey_badge_produced": 192.5004,
+      "journey_badge_spent": 171.3536,
+      "journey_badge_p50": 21,
+      "season_token_produced": 75.1928,
+      "season_token_spent": 70.7328,
+      "season_token_p50": 4,
+      "evolve_day_p50": 8,
+      "evolve_rate": 1,
+      "awaken_day_p50": 35,
+      "awaken_rate": 1,
+      "boss_join_rate": 0.5838,
+      "boss_clear_rate": 0.5674
+    }
+  },
+  "families": {
+    "emberpaw": {
+      "count": 2021,
+      "mean_power": 196.2916130628395,
+      "mean_expedition": 133.5062219693222,
+      "mean_survival": 154.60715982186827
+    },
+    "galeear": {
+      "count": 2031,
+      "mean_power": 208.74731659281156,
+      "mean_expedition": 141.85781841457427,
+      "mean_survival": 151.6645199409173
+    },
+    "lumisprout": {
+      "count": 2012,
+      "mean_power": 196.8868787276345,
+      "mean_expedition": 136.90985834990101,
+      "mean_survival": 146.07206759443
+    },
+    "mosswhisk": {
+      "count": 1948,
+      "mean_power": 192.63074948665272,
+      "mean_expedition": 145.99922833675532,
+      "mean_survival": 145.1635318275144
+    },
+    "stoneback": {
+      "count": 1988,
+      "mean_power": 167.19688128772603,
+      "mean_expedition": 123.4136732394365,
+      "mean_survival": 175.87881287726103
+    }
+  },
+  "materials": {
+    "ancient_bark": {
+      "p10": 0,
+      "p50": 2,
+      "p90": 5,
+      "p99": 8
+    },
+    "clear_dew": {
+      "p10": 1,
+      "p50": 3,
+      "p90": 7,
+      "p99": 12
+    },
+    "copper_thread": {
+      "p10": 0,
+      "p50": 1,
+      "p90": 4,
+      "p99": 7
+    },
+    "forest_heart": {
+      "p10": 0,
+      "p50": 0,
+      "p90": 0,
+      "p99": 0
+    },
+    "glow_pollen": {
+      "p10": 41,
+      "p50": 63,
+      "p90": 97,
+      "p99": 132
+    },
+    "meadow_fiber": {
+      "p10": 45,
+      "p50": 67,
+      "p90": 125,
+      "p99": 171
+    },
+    "mist_wood": {
+      "p10": 0,
+      "p50": 105,
+      "p90": 154,
+      "p99": 185
+    },
+    "prairie_horn": {
+      "p10": 0,
+      "p50": 0,
+      "p90": 0,
+      "p99": 0
+    },
+    "ruin_gear": {
+      "p10": 0,
+      "p50": 57,
+      "p90": 85,
+      "p99": 112
+    },
+    "salt_crystal": {
+      "p10": 0,
+      "p50": 0,
+      "p90": 2,
+      "p99": 4
+    },
+    "soft_clay": {
+      "p10": 0,
+      "p50": 6,
+      "p90": 71,
+      "p99": 79
+    },
+    "spore_dust": {
+      "p10": 0,
+      "p50": 73,
+      "p90": 141,
+      "p99": 184
+    },
+    "survey_ink": {
+      "p10": 0,
+      "p50": 53,
+      "p90": 66,
+      "p99": 69
+    },
+    "tide_lens": {
+      "p10": 0,
+      "p50": 0,
+      "p90": 0,
+      "p99": 0
+    },
+    "tide_shell": {
+      "p10": 0,
+      "p50": 53,
+      "p90": 82,
+      "p99": 111
+    }
+  },
+  "level_arrival": {
+    "10": {
+      "players": 7405,
+      "day_p50": 18
+    },
+    "11": {
+      "players": 6597,
+      "day_p50": 22
+    },
+    "12": {
+      "players": 6501,
+      "day_p50": 26
+    },
+    "13": {
+      "players": 6500,
+      "day_p50": 30
+    },
+    "14": {
+      "players": 6500,
+      "day_p50": 34
+    },
+    "15": {
+      "players": 6500,
+      "day_p50": 39
+    },
+    "16": {
+      "players": 6500,
+      "day_p50": 44
+    },
+    "17": {
+      "players": 6500,
+      "day_p50": 49
+    },
+    "18": {
+      "players": 6495,
+      "day_p50": 55
+    },
+    "19": {
+      "players": 6312,
+      "day_p50": 61
+    },
+    "2": {
+      "players": 10000,
+      "day_p50": 1
+    },
+    "20": {
+      "players": 4453,
+      "day_p50": 66
+    },
+    "21": {
+      "players": 1663,
+      "day_p50": 65
+    },
+    "22": {
+      "players": 476,
+      "day_p50": 70
+    },
+    "23": {
+      "players": 0,
+      "day_p50": 0
+    },
+    "24": {
+      "players": 0,
+      "day_p50": 0
+    },
+    "25": {
+      "players": 0,
+      "day_p50": 0
+    },
+    "3": {
+      "players": 10000,
+      "day_p50": 2
+    },
+    "4": {
+      "players": 10000,
+      "day_p50": 4
+    },
+    "5": {
+      "players": 10000,
+      "day_p50": 5
+    },
+    "6": {
+      "players": 10000,
+      "day_p50": 7
+    },
+    "7": {
+      "players": 10000,
+      "day_p50": 10
+    },
+    "8": {
+      "players": 9931,
+      "day_p50": 13
+    },
+    "9": {
+      "players": 9046,
+      "day_p50": 16
+    }
+  },
+  "zone_unlock": {
+    "zone_01": {
+      "unlocked_players": 9999,
+      "unlock_p50": 1
+    },
+    "zone_02": {
+      "unlocked_players": 9802,
+      "unlock_p50": 5
+    },
+    "zone_03": {
+      "unlocked_players": 8591,
+      "unlock_p50": 10
+    },
+    "zone_04": {
+      "unlocked_players": 7123,
+      "unlock_p50": 14
+    },
+    "zone_05": {
+      "unlocked_players": 6582,
+      "unlock_p50": 18
+    },
+    "zone_06": {
+      "unlocked_players": 6502,
+      "unlock_p50": 23
+    },
+    "zone_07": {
+      "unlocked_players": 6500,
+      "unlock_p50": 27
+    },
+    "zone_08": {
+      "unlocked_players": 6500,
+      "unlock_p50": 32
+    },
+    "zone_09": {
+      "unlocked_players": 6500,
+      "unlock_p50": 37
+    },
+    "zone_10": {
+      "unlocked_players": 6500,
+      "unlock_p50": 46
+    },
+    "zone_11": {
+      "unlocked_players": 6450,
+      "unlock_p50": 58
+    },
+    "zone_12": {
+      "unlocked_players": 3356,
+      "unlock_p50": 66
+    }
+  },
+  "equipment_replace_days": {
+    "early_p50": 3,
+    "mid_p50": 7,
+    "late_p50": 13
+  },
+  "boss": {
+    "join_rate": 0.5838,
+    "clear_rate": 0.5674,
+    "contribution_p50": 0,
+    "contribution_p90": 3798.8999999999996
+  },
+  "rare_drops": {
+    "p50": 17,
+    "p90": 25,
+    "p99": 30,
+    "pity_rate": 0.31030956045813607
+  },
+  "power_spread_ratio": 1.0767011855874944,
+  "targets": {
+    "awaken_ok": true,
+    "boss_ok": true,
+    "equip_ok": true,
+    "evolve_ok": true,
+    "income_ok": true,
+    "no_ruler": true,
+    "progress_ok": true,
+    "spend_ok": true
+  },
+  "daily": [
+    {
+      "day": 1,
+      "income": 264.8122,
+      "spend": 183.6886,
+      "net": 81.1236,
+      "balance": 81.1236
+    },
+    {
+      "day": 2,
+      "income": 276.802,
+      "spend": 177.0582,
+      "net": 99.7438,
+      "balance": 180.8674
+    },
+    {
+      "day": 3,
+      "income": 287.142,
+      "spend": 187.3018,
+      "net": 99.8402,
+      "balance": 280.7076
+    },
+    {
+      "day": 4,
+      "income": 298.6926,
+      "spend": 191.2972,
+      "net": 107.3954,
+      "balance": 388.103
+    },
+    {
+      "day": 5,
+      "income": 310.8605,
+      "spend": 186.3026,
+      "net": 124.5579,
+      "balance": 512.6609
+    },
+    {
+      "day": 6,
+      "income": 321.2386,
+      "spend": 190.9816,
+      "net": 130.257,
+      "balance": 642.9179
+    },
+    {
+      "day": 7,
+      "income": 332.5611,
+      "spend": 184.6824,
+      "net": 147.8787,
+      "balance": 790.7966
+    },
+    {
+      "day": 8,
+      "income": 186.4135,
+      "spend": 169.162,
+      "net": 17.2515,
+      "balance": 808.0481
+    },
+    {
+      "day": 9,
+      "income": 191.029,
+      "spend": 155.1156,
+      "net": 35.9134,
+      "balance": 843.9615
+    },
+    {
+      "day": 10,
+      "income": 195.9725,
+      "spend": 152.071,
+      "net": 43.9015,
+      "balance": 887.863
+    },
+    {
+      "day": 11,
+      "income": 200.104,
+      "spend": 151.6474,
+      "net": 48.4566,
+      "balance": 936.3196
+    },
+    {
+      "day": 12,
+      "income": 205.027,
+      "spend": 151.5146,
+      "net": 53.5124,
+      "balance": 989.832
+    },
+    {
+      "day": 13,
+      "income": 208.711,
+      "spend": 152.049,
+      "net": 56.662,
+      "balance": 1046.494
+    },
+    {
+      "day": 14,
+      "income": 213.6955,
+      "spend": 153.675,
+      "net": 60.0205,
+      "balance": 1106.5145
+    },
+    {
+      "day": 15,
+      "income": 187.5965,
+      "spend": 152.4152,
+      "net": 35.1813,
+      "balance": 1141.6958
+    },
+    {
+      "day": 16,
+      "income": 191.318,
+      "spend": 152.8706,
+      "net": 38.4474,
+      "balance": 1180.1432
+    },
+    {
+      "day": 17,
+      "income": 196.2045,
+      "spend": 151.4294,
+      "net": 44.7751,
+      "balance": 1224.9183
+    },
+    {
+      "day": 18,
+      "income": 199.356,
+      "spend": 151.4268,
+      "net": 47.9292,
+      "balance": 1272.8475
+    },
+    {
+      "day": 19,
+      "income": 203.853,
+      "spend": 149.403,
+      "net": 54.45,
+      "balance": 1327.2975
+    },
+    {
+      "day": 20,
+      "income": 209.594,
+      "spend": 148.352,
+      "net": 61.242,
+      "balance": 1388.5395
+    },
+    {
+      "day": 21,
+      "income": 212.6635,
+      "spend": 145.873,
+      "net": 66.7905,
+      "balance": 1455.33
+    },
+    {
+      "day": 22,
+      "income": 186.646,
+      "spend": 145.2026,
+      "net": 41.4434,
+      "balance": 1496.7734
+    },
+    {
+      "day": 23,
+      "income": 191.066,
+      "spend": 143.3648,
+      "net": 47.7012,
+      "balance": 1544.4746
+    },
+    {
+      "day": 24,
+      "income": 196.2735,
+      "spend": 142.9484,
+      "net": 53.3251,
+      "balance": 1597.7997
+    },
+    {
+      "day": 25,
+      "income": 199.813,
+      "spend": 142.6874,
+      "net": 57.1256,
+      "balance": 1654.9253
+    },
+    {
+      "day": 26,
+      "income": 203.7445,
+      "spend": 142.8426,
+      "net": 60.9019,
+      "balance": 1715.8272
+    },
+    {
+      "day": 27,
+      "income": 209.811,
+      "spend": 143.179,
+      "net": 66.632,
+      "balance": 1782.4592
+    },
+    {
+      "day": 28,
+      "income": 213.209,
+      "spend": 143.1068,
+      "net": 70.1022,
+      "balance": 1852.5614
+    },
+    {
+      "day": 29,
+      "income": 186.7185,
+      "spend": 143.5476,
+      "net": 43.1709,
+      "balance": 1895.7323
+    },
+    {
+      "day": 30,
+      "income": 191.342,
+      "spend": 144.3814,
+      "net": 46.9606,
+      "balance": 1942.6929
+    },
+    {
+      "day": 31,
+      "income": 196.085,
+      "spend": 143.5364,
+      "net": 52.5486,
+      "balance": 1995.2415
+    },
+    {
+      "day": 32,
+      "income": 200.656,
+      "spend": 143.4614,
+      "net": 57.1946,
+      "balance": 2052.4361
+    },
+    {
+      "day": 33,
+      "income": 205.171,
+      "spend": 144.2052,
+      "net": 60.9658,
+      "balance": 2113.4019
+    },
+    {
+      "day": 34,
+      "income": 209.694,
+      "spend": 145.1748,
+      "net": 64.5192,
+      "balance": 2177.9211
+    },
+    {
+      "day": 35,
+      "income": 213.1575,
+      "spend": 144.0866,
+      "net": 69.0709,
+      "balance": 2246.992
+    },
+    {
+      "day": 36,
+      "income": 187.016,
+      "spend": 145.0174,
+      "net": 41.9986,
+      "balance": 2288.9906
+    },
+    {
+      "day": 37,
+      "income": 191.148,
+      "spend": 147.0792,
+      "net": 44.0688,
+      "balance": 2333.0594
+    },
+    {
+      "day": 38,
+      "income": 195.3865,
+      "spend": 148.1484,
+      "net": 47.2381,
+      "balance": 2380.2975
+    },
+    {
+      "day": 39,
+      "income": 199.922,
+      "spend": 151.9572,
+      "net": 47.9648,
+      "balance": 2428.2623
+    },
+    {
+      "day": 40,
+      "income": 204.824,
+      "spend": 150.8102,
+      "net": 54.0138,
+      "balance": 2482.2761
+    },
+    {
+      "day": 41,
+      "income": 208.333,
+      "spend": 150.5872,
+      "net": 57.7458,
+      "balance": 2540.0219
+    },
+    {
+      "day": 42,
+      "income": 213.543,
+      "spend": 151.8238,
+      "net": 61.7192,
+      "balance": 2601.7411
+    },
+    {
+      "day": 43,
+      "income": 187.637,
+      "spend": 152.8714,
+      "net": 34.7656,
+      "balance": 2636.5067
+    },
+    {
+      "day": 44,
+      "income": 192.111,
+      "spend": 154.718,
+      "net": 37.393,
+      "balance": 2673.8997
+    },
+    {
+      "day": 45,
+      "income": 195.771,
+      "spend": 154.4712,
+      "net": 41.2998,
+      "balance": 2715.1995
+    },
+    {
+      "day": 46,
+      "income": 199.612,
+      "spend": 155.4124,
+      "net": 44.1996,
+      "balance": 2759.3991
+    },
+    {
+      "day": 47,
+      "income": 206.1795,
+      "spend": 159.1916,
+      "net": 46.9879,
+      "balance": 2806.387
+    },
+    {
+      "day": 48,
+      "income": 208.311,
+      "spend": 160.8604,
+      "net": 47.4506,
+      "balance": 2853.8376
+    },
+    {
+      "day": 49,
+      "income": 213.5595,
+      "spend": 160.5412,
+      "net": 53.0183,
+      "balance": 2906.8559
+    },
+    {
+      "day": 50,
+      "income": 186.5765,
+      "spend": 160.8038,
+      "net": 25.7727,
+      "balance": 2932.6286
+    },
+    {
+      "day": 51,
+      "income": 191.197,
+      "spend": 155.3308,
+      "net": 35.8662,
+      "balance": 2968.4948
+    },
+    {
+      "day": 52,
+      "income": 195.3375,
+      "spend": 154.906,
+      "net": 40.4315,
+      "balance": 3008.9263
+    },
+    {
+      "day": 53,
+      "income": 199.827,
+      "spend": 150.9506,
+      "net": 48.8764,
+      "balance": 3057.8027
+    },
+    {
+      "day": 54,
+      "income": 204.2285,
+      "spend": 151.5938,
+      "net": 52.6347,
+      "balance": 3110.4374
+    },
+    {
+      "day": 55,
+      "income": 209.386,
+      "spend": 149.531,
+      "net": 59.855,
+      "balance": 3170.2924
+    },
+    {
+      "day": 56,
+      "income": 213.4125,
+      "spend": 148.7892,
+      "net": 64.6233,
+      "balance": 3234.9157
+    },
+    {
+      "day": 57,
+      "income": 186.373,
+      "spend": 146.8592,
+      "net": 39.5138,
+      "balance": 3274.4295
+    },
+    {
+      "day": 58,
+      "income": 191.395,
+      "spend": 146.8432,
+      "net": 44.5518,
+      "balance": 3318.9813
+    },
+    {
+      "day": 59,
+      "income": 196.0875,
+      "spend": 147.077,
+      "net": 49.0105,
+      "balance": 3367.9918
+    },
+    {
+      "day": 60,
+      "income": 200.169,
+      "spend": 146.5246,
+      "net": 53.6444,
+      "balance": 3421.6362
+    },
+    {
+      "day": 61,
+      "income": 205.0155,
+      "spend": 146.9742,
+      "net": 58.0413,
+      "balance": 3479.6775
+    },
+    {
+      "day": 62,
+      "income": 208.878,
+      "spend": 146.7266,
+      "net": 62.1514,
+      "balance": 3541.8289
+    },
+    {
+      "day": 63,
+      "income": 214.256,
+      "spend": 146.6464,
+      "net": 67.6096,
+      "balance": 3609.4385
+    },
+    {
+      "day": 64,
+      "income": 187.84,
+      "spend": 146.2942,
+      "net": 41.5458,
+      "balance": 3650.9843
+    },
+    {
+      "day": 65,
+      "income": 192.052,
+      "spend": 147.4392,
+      "net": 44.6128,
+      "balance": 3695.5971
+    },
+    {
+      "day": 66,
+      "income": 196.381,
+      "spend": 147.2246,
+      "net": 49.1564,
+      "balance": 3744.7535
+    },
+    {
+      "day": 67,
+      "income": 199.588,
+      "spend": 147.1334,
+      "net": 52.4546,
+      "balance": 3797.2081
+    },
+    {
+      "day": 68,
+      "income": 204.82,
+      "spend": 147.1702,
+      "net": 57.6498,
+      "balance": 3854.8579
+    },
+    {
+      "day": 69,
+      "income": 209.198,
+      "spend": 147.3432,
+      "net": 61.8548,
+      "balance": 3916.7127
+    },
+    {
+      "day": 70,
+      "income": 213.6835,
+      "spend": 147.1102,
+      "net": 66.5733,
+      "balance": 3983.286
+    }
+  ]
+}

@@ -292,22 +292,16 @@ func (service *Service) StartFishing(ctx context.Context, accountID, sourceKey s
 		if err != nil {
 			return err
 		}
-		var pet models.PetProfile
-		if err = tx.First(&pet, "account_id = ?", accountID).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return ErrPetRequired
+		petRow, petErr := gameplay.ActivePetTx(tx, accountID)
+		if petErr != nil {
+			return petErr
+		}
+		pet := *petRow
+		if err = gameplay.ReservePetRunTx(tx, accountID, pet.ID); err != nil {
+			if errors.Is(err, gameplay.ErrTooManyConcurrentRuns) || errors.Is(err, gameplay.ErrActivityActive) {
+				return ErrFishingActive
 			}
 			return err
-		}
-		if pet.Status != "" && pet.Status != "空闲" {
-			return ErrFishingActive
-		}
-		var active int64
-		if err = tx.Model(&models.FishingRun{}).Where("account_id = ? AND status = ?", accountID, "running").Count(&active).Error; err != nil {
-			return err
-		}
-		if active > 0 {
-			return ErrFishingActive
 		}
 		var pity models.ChancePlayerState
 		attempts, pity, err = service.consumeChanceAttemptTx(tx, accountID, game, service.Now())
@@ -322,7 +316,7 @@ func (service *Service) StartFishing(ctx context.Context, accountID, sourceKey s
 			return err
 		}
 		run = models.FishingRun{
-			ID: uuid.NewString(), AccountID: accountID, Status: "running", ActionKey: actionKey,
+			ID: uuid.NewString(), AccountID: accountID, PetID: pet.ID, Status: "running", ActionKey: actionKey,
 			RewardKey: reward.RewardKey, RewardName: reward.Name, ItemName: reward.ItemName,
 			Quantity: reward.Quantity, Currency: reward.Currency, Roll: roll, TotalWeight: total, Pity: forced,
 			StartedAt: service.Now(), ReadyAt: service.Now().Add(time.Duration(game.DurationSecond) * time.Second),
@@ -375,7 +369,7 @@ func (service *Service) ClaimFishing(ctx context.Context, accountID string) (*mo
 		if err := grantChanceRewardTx(tx, accountID, outcome, "fishing_reward"); err != nil {
 			return err
 		}
-		return tx.Model(&models.PetProfile{}).Where("account_id = ?", accountID).Updates(map[string]interface{}{"status": "空闲", "updated_at": now}).Error
+		return tx.Model(&models.PetProfile{}).Where("id = ?", run.PetID).Updates(map[string]interface{}{"status": "空闲", "updated_at": now}).Error
 	})
 	return &run, err
 }

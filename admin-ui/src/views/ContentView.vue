@@ -67,6 +67,7 @@ import {
   type PetSpeciesConfigRow,
   type ShopItemConfigRow,
 } from '../api/config'
+import { getAdventureCatalog, type AdventureMap, type AdventureZone } from '../api/adventure'
 import UiDrawer from '../components/ui/UiDrawer.vue'
 import UiState from '../components/ui/UiState.vue'
 import UiModal from '../components/ui/UiModal.vue'
@@ -80,12 +81,24 @@ type MainTab = 'events' | 'assets' | 'text' | 'game'
 type AssetTab = 'pets' | 'items' | 'shop' | 'images'
 type TextTab = 'commands' | 'menus' | 'messages'
 type EditorKind = 'event' | 'pet' | 'item' | 'shop' | 'image' | 'command' | 'menu'
-type RewardItemDraft = { item_name: string; quantity: number }
+type RewardItemDraft = { reward_type: 'item' | 'currency'; reward_key: string; reward_name: string; quantity: number }
+const currencyOptions = [
+  { key: 'primary_coin', name: '星砂' },
+  { key: 'journey_badge', name: '调查徽章' },
+  { key: 'season_token', name: '遗迹季印' },
+]
+function defaultRewardItem(): RewardItemDraft {
+  const first = items.value[0]
+  return { reward_type: 'item', reward_key: first?.Key || first?.Name || '', reward_name: first?.Name || '', quantity: 1 }
+}
+function rewardLabel(item: RewardItemDraft) {
+  return item.reward_name || item.reward_key
+}
 type RewardGroupDraft = { milestone: number; description: string; items: RewardItemDraft[] }
 type ChoiceDraft = Omit<ContentEventChoiceRow, 'event_key'|'sort_order'>
 type EventDraft = Omit<ContentEventRow, 'story_choices'> & {
   choices: ChoiceDraft[]
-  sourceZones: string
+  sourceZones: string[]
   rewardGroups: RewardGroupDraft[]
 }
 
@@ -122,6 +135,8 @@ const messagePlatform = ref('onebot')
 const messagePreview = ref<PlayerMessagePreview | null>(null)
 const previewingMessage = ref(false)
 const gameSettings = ref<GameSettingRow[]>([])
+const adventureMaps = ref<AdventureMap[]>([])
+const adventureZones = ref<AdventureZone[]>([])
 const snapshot = ref('')
 const editorSnapshot = ref('')
 const selectedItems = ref<string[]>([])
@@ -134,6 +149,7 @@ const editor = reactive<{ kind: EditorKind | null; index: number; draft: any }>(
   draft: null,
 })
 const confirmation = reactive<{ open: boolean; title: string; description: string; action: null | (() => void | Promise<void>) }>({ open: false, title: '', description: '', action: null })
+const adventureZoneGroups = computed(() => adventureMaps.value.map(map => ({ map, zones: adventureZones.value.filter(zone => zone.map_key === map.key) })).filter(group => group.zones.length))
 
 function askConfirmation(title: string, description: string, action: () => void | Promise<void>) {
   Object.assign(confirmation, { open: true, title, description, action })
@@ -149,6 +165,11 @@ const editorTitle = computed(() => {
   if (editor.kind === 'event') return editor.index < 0 ? '新建活动' : '编辑活动'
   const labels: Record<string, string> = { pet: '宠物种类', item: '物品', shop: '商品', image: '图片资产', command: '命令', menu: '菜单场景' }
   return `${editor.index < 0 ? '新增' : '编辑'}${labels[String(editor.kind)] ?? '内容'}`
+})
+const editorDescription = computed(() => {
+  if (editor.kind === 'event') return '活动和奖励将在一次请求中保存。'
+  if (editor.kind === 'menu') return '文本和图片保存后即时生效；新增、删除或重命名菜单场景后需点击「重载生效」。'
+  return '修改后返回列表检查并保存当前配置。'
 })
 
 const editableState = computed(() => ({
@@ -179,8 +200,6 @@ const visibleShops = computed(() => shops.value.filter((row) => {
   return `${row.Name} ${shopTypeLabel(row.ShopType)} ${row.Description}`.toLowerCase().includes(query.value)
 }))
 const visibleImages = computed(() => images.value.filter((row) => `${row.Name} ${row.Path}`.toLowerCase().includes(query.value)))
-const itemActiveCount = computed(() => items.value.filter((row) => row.Status === 'active').length)
-const petsMissingFood = computed(() => visiblePets.value.filter((row) => !String(row.FavoriteFood || '').trim()).length)
 const canSave = computed(() => dirty.value && tab.value !== 'events' && !(tab.value === 'text' && textTab.value === 'messages'))
 const commandGroups = computed(() => {
   const groups = new Map<string, CommandConfigRow[]>()
@@ -195,7 +214,7 @@ const commandGroups = computed(() => {
     })
   return [...groups.entries()].map(([category, rows]) => ({ category, rows }))
 })
-const visibleMenus = computed(() => menus.value.filter((row) => `${menuScene(row.Name)} ${row.Reply}`.toLowerCase().includes(query.value)))
+const visibleMenus = computed(() => menus.value.filter((row) => `${menuScene(row.Name)} ${row.Reply} ${row.Image}`.toLowerCase().includes(query.value)))
 const visiblePlayerMessages = computed(() => playerMessages.value.filter((row) => `${row.key} ${row.description} ${row.template}`.toLowerCase().includes(query.value)))
 const selectedPlayerMessage = computed(() => playerMessages.value.find((row) => row.key === selectedMessageKey.value) ?? null)
 const currentSchema = computed<ConfigSchema>(() => {
@@ -265,18 +284,19 @@ function editorImagePath() {
   if (!editor.draft) return ''
   if (editor.kind === 'image') return String(editor.draft.Path || '')
   if (editor.kind === 'shop') return String(editor.draft.Image || items.value.find((item) => item.Name === editor.draft.Name)?.Image || '')
-  if (editor.kind === 'pet' || editor.kind === 'item') return String(editor.draft.Image || '')
+  if (editor.kind === 'pet' || editor.kind === 'item' || editor.kind === 'menu') return String(editor.draft.Image || '')
   return ''
 }
 
 function editorImageLabel() {
+  if (editor.kind === 'menu') return menuScene(String(editor.draft?.Name || ''))
   return String(editor.draft?.Name || (editor.kind === 'pet' ? '新宠物' : editor.kind === 'shop' ? '新商品' : editor.kind === 'item' ? '新物品' : '新图片'))
 }
 
 function clearEditorImage() {
   if (!editor.draft) return
   if (editor.kind === 'image') editor.draft.Path = ''
-  if (editor.kind === 'pet' || editor.kind === 'item' || editor.kind === 'shop') editor.draft.Image = ''
+  if (editor.kind === 'pet' || editor.kind === 'item' || editor.kind === 'shop' || editor.kind === 'menu') editor.draft.Image = ''
 }
 
 function menuScene(name: string) {
@@ -315,10 +335,6 @@ function eventStatus(row: ContentEventRow) {
   return '进行中'
 }
 
-function eventRewardCount(key: string) {
-  return new Set(rewards.value.filter((row) => row.event_key === key).map((row) => row.milestone)).size
-}
-
 function parseChoices(value: string) {
   try {
     const parsed = JSON.parse(value)
@@ -340,7 +356,12 @@ function rewardGroupsFor(key: string): RewardGroupDraft[] {
         description: row.description,
         items: [],
       }
-      group.items.push({ item_name: row.item_name, quantity: row.quantity })
+      group.items.push({
+        reward_type: row.reward_type === 'currency' ? 'currency' : 'item',
+        reward_key: row.reward_key,
+        reward_name: row.reward_name,
+        quantity: row.quantity,
+      })
       groups.set(row.milestone, group)
     })
   return [...groups.values()]
@@ -358,11 +379,11 @@ function blankEvent(): EventDraft {
       { choice_key: 'support', label: '呼叫支援', effect_type: 'community_material_gain_percent', effect_value: 10 },
     ],
     progress_source_mode: 'all_expeditions',
-    sourceZones: '',
+    sourceZones: [],
     starts_at: start.toISOString().slice(0, 16),
     ends_at: end.toISOString().slice(0, 16),
     active: true,
-    rewardGroups: [{ milestone: 100, description: '首个调查节点', items: [{ item_name: items.value[0]?.Name ?? '', quantity: 1 }] }],
+    rewardGroups: [{ milestone: 100, description: '首个调查节点', items: [defaultRewardItem()] }],
   }
 }
 
@@ -377,7 +398,7 @@ async function openEvent(row?: ContentEventRow) {
         ...cloneConfigValue(sourceRow),
         choices: bundle?.choices?.length ? bundle.choices.map(choice=>({choice_key:choice.choice_key,label:choice.label,effect_type:choice.effect_type,effect_value:choice.effect_value})) : parseChoices(sourceRow.story_choices).map((label,index)=>({choice_key:`choice-${index+1}`,label,effect_type:'adventure_xp_gain_percent',effect_value:0})),
         progress_source_mode: sourceRow.progress_source_mode || 'all_expeditions',
-        sourceZones: bundle?.sources?.map(source=>source.zone_key).join(', ') || '',
+        sourceZones: bundle?.sources?.map(source=>source.zone_key) || [],
         starts_at: String(sourceRow.starts_at).slice(0, 16),
         ends_at: String(sourceRow.ends_at).slice(0, 16),
         rewardGroups: bundle?.rewards?.length ? rewardGroupsFromRows(bundle.rewards) : rewardGroupsFor(sourceRow.key),
@@ -391,7 +412,7 @@ async function openEvent(row?: ContentEventRow) {
 
 function rewardGroupsFromRows(rows: ContentRewardRow[]) {
   const groups = new Map<number, RewardGroupDraft>()
-  rows.slice().sort((left,right)=>left.milestone-right.milestone).forEach(row=>{const group=groups.get(row.milestone)??{milestone:row.milestone,description:row.description,items:[]};group.items.push({item_name:row.item_name,quantity:row.quantity});groups.set(row.milestone,group)})
+  rows.slice().sort((left,right)=>left.milestone-right.milestone).forEach(row=>{const group=groups.get(row.milestone)??{milestone:row.milestone,description:row.description,items:[]};group.items.push({reward_type:row.reward_type==='currency'?'currency':'item',reward_key:row.reward_key,reward_name:row.reward_name,quantity:row.quantity});groups.set(row.milestone,group)})
   return [...groups.values()]
 }
 
@@ -443,13 +464,13 @@ function fillEventSample() {
       { choice_key: 'rangers', label: '呼叫巡护员', effect_type: 'boss_damage_gain_percent', effect_value: 15 },
     ],
     progress_source_mode: 'all_expeditions',
-    sourceZones: '',
+    sourceZones: [],
     starts_at: start.toISOString().slice(0, 16),
     ends_at: end.toISOString().slice(0, 16),
     active: true,
     rewardGroups: [
-      { milestone: 100, description: '完成初步调查', items: [{ item_name: items.value[0]?.Name ?? '木材', quantity: 2 }, { item_name: items.value[1]?.Name ?? '绷带', quantity: 1 }] },
-      { milestone: 300, description: '完成区域调查', items: [{ item_name: items.value[0]?.Name ?? '木材', quantity: 5 }] },
+      { milestone: 100, description: '完成初步调查', items: [{ ...defaultRewardItem(), quantity: 2 }, { reward_type: 'item', reward_key: items.value[1]?.Key || 'bandage', reward_name: items.value[1]?.Name || '软藤绷带', quantity: 1 }] },
+      { milestone: 300, description: '完成区域调查', items: [{ ...defaultRewardItem(), quantity: 5 }] },
     ],
   }
 }
@@ -457,11 +478,11 @@ function fillEventSample() {
 function addRewardGroup() {
   const groups = editor.draft.rewardGroups as RewardGroupDraft[]
   const last = groups.at(-1)?.milestone ?? 0
-  groups.push({ milestone: last + 100, description: '', items: [{ item_name: items.value[0]?.Name ?? '', quantity: 1 }] })
+  groups.push({ milestone: last + 100, description: '', items: [defaultRewardItem()] })
 }
 
 function addRewardItem(group: RewardGroupDraft) {
-  group.items.push({ item_name: items.value[0]?.Name ?? '', quantity: 1 })
+  group.items.push(defaultRewardItem())
 }
 
 function removeRewardGroup(index: string | number) {
@@ -472,7 +493,7 @@ function cumulativeRewards(index: string | number) {
   const totals = new Map<string, number>()
   const groups = [...editor.draft.rewardGroups].sort((left: RewardGroupDraft, right: RewardGroupDraft) => left.milestone - right.milestone)
   groups.slice(0, Number(index) + 1).forEach((group: RewardGroupDraft) => {
-    group.items.forEach((item) => totals.set(item.item_name, (totals.get(item.item_name) ?? 0) + Number(item.quantity || 0)))
+    group.items.forEach((item) => totals.set(rewardLabel(item), (totals.get(rewardLabel(item)) ?? 0) + Number(item.quantity || 0)))
   })
   return [...totals.entries()].filter(([name]) => name).map(([name, quantity]) => `${name} × ${quantity}`)
 }
@@ -483,8 +504,8 @@ async function saveCurrentEvent() {
   if (!draft.key.trim() || !draft.name.trim()) return toast.error('请填写活动键和活动名称')
   if (draft.choices.length < 2 || draft.choices.length > 5 || draft.choices.some((choice) => !choice.choice_key.trim() || !choice.label.trim())) return toast.error('请填写 2 到 5 个完整的故事选项')
   if (new Date(draft.ends_at).getTime() <= new Date(draft.starts_at).getTime()) return toast.error('结束时间必须晚于开始时间')
-  if (draft.rewardGroups.some((group) => group.milestone <= 0 || group.items.length === 0 || group.items.some((item) => !item.item_name || item.quantity <= 0))) {
-    return toast.error('里程碑、奖励物品和数量必须填写完整')
+  if (draft.rewardGroups.some((group) => group.milestone <= 0 || group.items.length === 0 || group.items.some((item) => !item.reward_type || !item.reward_key || item.quantity <= 0))) {
+    return toast.error('里程碑、奖励类型、稳定键和数量必须填写完整')
   }
   const event: ContentEventRow = {
     ...(draft.id ? { id: draft.id } : {}),
@@ -500,14 +521,17 @@ async function saveCurrentEvent() {
   const eventRewards = draft.rewardGroups.flatMap((group) => group.items.map((item) => ({
     event_key: event.key,
     milestone: Number(group.milestone),
-    item_name: item.item_name,
+    reward_type: item.reward_type,
+    reward_key: item.reward_key,
+    reward_name: item.reward_name || item.reward_key,
     quantity: Number(item.quantity),
     description: group.description,
   })))
   saving.value = true
   try {
     const eventChoices = draft.choices.map((choice,index)=>({event_key:event.key,choice_key:choice.choice_key.trim(),label:choice.label.trim(),effect_type:choice.effect_type,effect_value:Number(choice.effect_value),sort_order:(index+1)*10}))
-    const eventSources = draft.progress_source_mode === 'selected' ? draft.sourceZones.split(/[，,\n]/).map(value=>value.trim()).filter(Boolean).map(zone_key=>({event_key:event.key,zone_key})) : []
+    if (draft.progress_source_mode === 'selected' && draft.sourceZones.length === 0) return toast.error('请至少选择一个计入活动进度的区域')
+    const eventSources = draft.progress_source_mode === 'selected' ? draft.sourceZones.map(zone_key=>({event_key:event.key,zone_key})) : []
     const saved = await saveEventBundle(event.key, event, eventRewards, eventChoices, eventSources)
     const savedEvent = saved.event ?? event
     const savedRewards = saved.rewards ?? eventRewards
@@ -556,10 +580,30 @@ function commitEditor() {
           : editor.kind === 'command' ? commands.value
             : menus.value
   if (editor.kind === 'command' && !editor.draft.DisplayName) editor.draft.DisplayName = editor.draft.Command
+  if (editor.kind === 'menu') {
+    editor.draft.Name = String(editor.draft.Name || '').trim()
+    editor.draft.Reply = String(editor.draft.Reply || '').trim()
+    const candidates = menus.value.map((row, index) => index === editor.index ? editor.draft : row)
+    if (editor.index < 0) candidates.push(editor.draft)
+    const validationError = validateMenuRows(candidates)
+    if (validationError) return toast.error(validationError)
+  }
   if (editor.index < 0) collection.push(cloneConfigValue(editor.draft))
   else collection.splice(editor.index, 1, cloneConfigValue(editor.draft))
   editor.kind = null
   editorSnapshot.value = ''
+}
+
+function validateMenuRows(rows: MenuConfigRow[]) {
+  const names = new Set<string>()
+  for (const [index, row] of rows.entries()) {
+    const name = String(row.Name || '').trim()
+    if (!name) return `第 ${index + 1} 个菜单场景缺少名称`
+    if (!String(row.Reply || '').trim()) return `菜单场景“${name}”缺少机器人回复`
+    if (names.has(name)) return `菜单场景名称重复：${name}`
+    names.add(name)
+  }
+  return ''
 }
 
 async function deleteCurrentConfig(confirmed = false) {
@@ -669,7 +713,7 @@ async function uploadFile(file: File, intoEditor = false, editorField = 'Image')
       if (editor.kind === 'image') {
         editor.draft.Path = result.path
         if (!editor.draft.Name) editor.draft.Name = file.name.replace(/\.[^.]+$/, '')
-      } else if (editor.kind === 'pet' || editor.kind === 'item' || editor.kind === 'shop') {
+      } else if (editor.kind === 'pet' || editor.kind === 'item' || editor.kind === 'shop' || editor.kind === 'menu') {
         editor.draft[editorField] = result.path
       }
     } else {
@@ -713,6 +757,10 @@ async function copyImagePath(path: string) {
 }
 
 async function saveText() {
+  if (textTab.value === 'menus') {
+    const validationError = validateMenuRows(menus.value)
+    if (validationError) return toast.error(validationError)
+  }
   saving.value = true
   try {
     if (textTab.value === 'commands') await saveConfig('commands', commands.value)
@@ -822,7 +870,7 @@ function syncSnapshot() {
 async function load() {
   loading.value = true
   try {
-    const [eventRows, rewardRows, petRows, itemRows, shopRows, imageRows, commandRows, menuRows, messages, settings, currentStatus] = await Promise.all([
+    const [eventRows, rewardRows, petRows, itemRows, shopRows, imageRows, commandRows, menuRows, messages, settings, currentStatus, adventure] = await Promise.all([
       fetchConfig('live_events'),
       fetchConfig('reward_tracks'),
       fetchConfig('pet_species'),
@@ -834,6 +882,7 @@ async function load() {
       fetchPlayerMessages(),
       fetchGameSettings(),
       fetchConfigStatus(),
+      getAdventureCatalog(),
     ])
     events.value = eventRows as ContentEventRow[]
     rewards.value = rewardRows as ContentRewardRow[]
@@ -846,6 +895,8 @@ async function load() {
     playerMessages.value = messages
     gameSettings.value = settings
     status.value = currentStatus
+    adventureMaps.value = adventure.catalog.maps
+    adventureZones.value = adventure.catalog.zones
     await loadCurrentMeta()
     selectedItems.value = []
     selectedShops.value = []
@@ -900,7 +951,6 @@ onMounted(load)
     <template v-else-if="tab === 'events'">
       <div class="toolbar">
         <label class="searchbox"><IconSearch :size="17" /><input v-model="search" placeholder="搜索活动名称或区域" /></label>
-        <span class="toolbar-count">{{ visibleEvents.length }} 场活动 · {{ rewards.length }} 条奖励</span>
         <button class="btn btn-primary" @click="openEvent()"><IconPlus :size="17" />新建活动</button>
       </div>
       <UiState v-if="visibleEvents.length === 0" class="compact-state" title="还没有活动" description="新建后可在同一抽屉里配置故事分支、里程碑和奖励。" action-label="新建活动" @action="openEvent()" />
@@ -908,7 +958,6 @@ onMounted(load)
         <article v-for="row in visibleEvents" :key="row.key" class="event-card">
           <div class="event-date"><strong>{{ new Date(row.starts_at).getDate() }}</strong><span>{{ new Date(row.starts_at).toLocaleDateString('zh-CN', { month: 'short' }) }}</span></div>
           <div class="event-copy"><div class="title-line"><h3>{{ row.name }}</h3><span class="status-mark" :data-status="eventStatus(row)">{{ eventStatus(row) }}</span></div><p>{{ row.region }}区域 · {{ formatDate(row.starts_at) }} 至 {{ formatDate(row.ends_at) }}</p></div>
-          <div class="event-metric"><span>奖励节点</span><strong>{{ eventRewardCount(row.key) }}</strong></div>
           <button class="btn btn-ghost" @click="openEvent(row)">编辑活动<IconChevronRight :size="16" /></button>
         </article>
       </div>
@@ -936,12 +985,6 @@ onMounted(load)
           <option value="shop_normal">普通商店</option>
           <option value="shop_affection">羁绊商店</option>
         </select>
-        <span class="toolbar-count">
-          <template v-if="assetTab === 'pets'">{{ visiblePets.length }} 只{{ petsMissingFood ? ` · ${petsMissingFood} 只缺食物` : '' }}</template>
-          <template v-else-if="assetTab === 'items'">{{ visibleItems.length }} 件 · 上架 {{ itemActiveCount }}</template>
-          <template v-else-if="assetTab === 'shop'">{{ visibleShops.length }} 件商品</template>
-          <template v-else>{{ visibleImages.length }} 张图片</template>
-        </span>
         <div class="toolbar-actions">
           <label v-if="assetTab === 'images'" class="btn btn-ghost upload-button"><IconPhoto :size="16" />上传图片<input type="file" accept="image/png,image/jpeg,image/gif,image/webp" @change="uploadAsset($event)" /></label>
           <button class="btn btn-ghost" @click="openEditor(assetTab === 'pets' ? 'pet' : assetTab === 'items' ? 'item' : assetTab === 'shop' ? 'shop' : 'image')"><IconPlus :size="16" />新增</button>
@@ -1115,7 +1158,7 @@ onMounted(load)
       <div v-else-if="textTab === 'menus'" class="menu-grid">
         <article v-for="row in visibleMenus" :key="row.Name" class="menu-card">
           <header><div><span>QQ 菜单场景</span><h3>{{ menuScene(row.Name) }}</h3></div><button class="btn btn-ghost btn-small" @click="openEditor('menu', row)">编辑</button></header>
-          <div class="qq-preview"><div class="qq-avatar"><IconPaw :size="19" /></div><div class="qq-message">{{ row.Reply || '这里会显示机器人发送给玩家的菜单回复。' }}</div></div>
+          <div class="qq-preview"><div class="qq-avatar"><IconPaw :size="19" /></div><div class="qq-thread"><div v-if="row.Image" class="qq-image-block"><AssetThumbnail :path="row.Image" :label="menuScene(row.Name)" kind="image" size="tile" /></div><div class="qq-message">{{ row.Reply || '这里会显示机器人发送给玩家的菜单回复。' }}</div></div></div>
         </article>
       </div>
       <div v-else class="message-studio">
@@ -1159,24 +1202,18 @@ onMounted(load)
       </div>
     </template>
 
-    <UiDrawer :open="editor.kind !== null" :title="editorTitle" :description="editor.kind === 'event' ? '活动和奖励将在一次请求中保存。' : '修改后返回列表检查并保存当前配置。'" :busy="saving" @close="closeEditor">
+    <UiDrawer :open="editor.kind !== null" :title="editorTitle" :description="editorDescription" :busy="saving" @close="closeEditor">
       <template v-if="editor.kind === 'event' && editor.draft">
-        <div class="drawer-help"><IconSparkles :size="19" /><div><strong>使用说明 · 配置流程</strong><p>① 基本时间决定活动何时可参与；② 进度来源决定哪些区域远征会累计进度；③ 故事投票给同一群的玩家提供动态加成；④ 里程碑决定累计进度达到数值后发什么奖励。活动不会自动创建地图或图鉴。</p></div><button class="btn btn-ghost btn-small" @click="fillEventSample">填充测试示例</button></div>
-        <div class="form-grid two">
-          <label><span>活动键</span><input v-model="editor.draft.key" :disabled="editor.index >= 0" placeholder="例如 forest-week" /></label>
-          <label><span>活动名称</span><input v-model="editor.draft.name" /></label>
-          <label><span>活动区域</span><input v-model="editor.draft.region" /></label>
-          <label class="switch-field"><span>运营状态</span><input v-model="editor.draft.active" type="checkbox" /><b>{{ editor.draft.active ? '启用活动' : '暂不启用' }}</b></label>
-          <label><span>开始时间</span><input v-model="editor.draft.starts_at" type="datetime-local" /></label>
-          <label><span>结束时间</span><input v-model="editor.draft.ends_at" type="datetime-local" /></label>
-        </div>
-        <section class="drawer-section"><header><div><span>步骤 2 · 进度来源</span><h3>哪些远征计入活动</h3></div></header><div class="form-grid two"><label><span>来源范围</span><select v-model="editor.draft.progress_source_mode"><option value="all_expeditions">全部已解锁区域远征</option><option value="selected">仅指定区域</option></select><small>这里只关联远征进度，不会改变地图掉落、探索度或图鉴。</small></label><label v-if="editor.draft.progress_source_mode==='selected'"><span>区域键</span><textarea v-model="editor.draft.sourceZones" rows="3" placeholder="forest-edge, ancient-ruins"/><small>填写冒险世界中的区域键，逗号或换行分隔。</small></label></div></section>
-        <section class="drawer-section"><header><div><span>步骤 3 · 群内投票</span><h3>故事选项与实际效果</h3></div><button class="text-button" :disabled="editor.draft.choices.length>=5" @click="editor.draft.choices.push({choice_key:'choice-'+(editor.draft.choices.length+1),label:'',effect_type:'adventure_xp_gain_percent',effect_value:10})"><IconPlus :size="15" />添加选项</button></header><p class="section-help">活动期间，同一群票数唯一领先的选项会生效；平票时不应用加成。稳定标识保存后用于追踪玩家选择，名称可调整。</p><div class="choice-list detailed"><label v-for="(choice, index) in editor.draft.choices" :key="index"><b>{{ Number(index) + 1 }}</b><input v-model="choice.label" placeholder="玩家看到的选项"/><input v-model="choice.choice_key" placeholder="稳定标识"/><select v-model="choice.effect_type"><option value="adventure_xp_gain_percent">冒险经验增加</option><option value="expedition_reward_gain_percent">远征奖励增加</option><option value="community_material_gain_percent">社区共建材料增加</option><option value="facility_upgrade_cost_reduction_percent">设施升级消耗降低</option><option value="boss_damage_gain_percent">首领伤害增加</option></select><input v-model.number="choice.effect_value" type="number" min="0" max="500" aria-label="效果百分比"/><button v-if="editor.draft.choices.length > 2" aria-label="删除故事选项" @click="editor.draft.choices.splice(Number(index), 1)"><IconTrash :size="15" /></button></label></div></section>
-        <section class="drawer-section rewards-editor"><header><div><span>步骤 4 · 事务保存</span><h3>里程碑奖励</h3></div><button class="text-button" @click="addRewardGroup"><IconPlus :size="15" />添加里程碑</button></header>
+        <div class="event-editor-actions"><p>每个步骤只配置一类效果，保存前会一次校验活动、区域和奖励。</p><button class="btn btn-ghost btn-small" @click="fillEventSample"><IconSparkles :size="16"/>填充测试示例</button></div>
+        <section class="drawer-section"><header><div><span>步骤 1 · 基本资料</span><h3>活动名称与运营状态</h3></div></header><div class="form-grid two"><label><span>活动键</span><input v-model="editor.draft.key" :disabled="editor.index >= 0" placeholder="例如 forest-week" /><small>创建后锁定，用于保存玩家活动进度。</small></label><label><span>活动名称</span><input v-model="editor.draft.name" /><small>显示在玩家活动列表和进度消息中。</small></label><label><span>活动主题区域</span><input v-model="editor.draft.region" /><small>仅用于展示，不会创建或绑定地图。</small></label><label class="switch-field"><span>运营状态</span><input v-model="editor.draft.active" type="checkbox" /><b>{{ editor.draft.active ? '启用活动' : '暂不启用' }}</b></label></div></section>
+        <section class="drawer-section"><header><div><span>步骤 2 · 生效时间</span><h3>玩家可参与的时间窗口</h3></div></header><div class="form-grid two"><label><span>开始时间</span><input v-model="editor.draft.starts_at" type="datetime-local" /><small>开始前不会累计任何活动进度。</small></label><label><span>结束时间</span><input v-model="editor.draft.ends_at" type="datetime-local" /><small>结束后停止累计，已达成奖励仍按现有规则结算。</small></label></div></section>
+        <section class="drawer-section"><header><div><span>步骤 3 · 进度来源</span><h3>哪些远征计入活动</h3></div></header><div class="form-grid"><label><span>来源范围</span><select v-model="editor.draft.progress_source_mode"><option value="all_expeditions">全部已解锁区域远征</option><option value="selected">仅指定区域</option></select><small>活动只统计所选区域的远征进度，不会创建地图、修改探索度或生成图鉴。</small></label></div><div v-if="editor.draft.progress_source_mode==='selected'" class="zone-picker"><section v-for="group in adventureZoneGroups" :key="group.map.key"><header><b>{{group.map.name}}</b><small>{{group.map.region}}</small></header><label v-for="zone in group.zones" :key="zone.key"><input v-model="editor.draft.sourceZones" type="checkbox" :value="zone.key"/><span><b>{{zone.name}}</b><small>推荐等级 {{zone.recommended_level}}</small></span></label></section><p v-if="!adventureZoneGroups.length">尚未配置可选区域，请先到“冒险世界 > 地图管理”创建地图和区域。</p></div></section>
+        <section class="drawer-section"><header><div><span>步骤 4 · 故事投票</span><h3>故事选项与实际效果</h3></div><button class="text-button" :disabled="editor.draft.choices.length>=5" @click="editor.draft.choices.push({choice_key:'choice-'+(editor.draft.choices.length+1),label:'',effect_type:'adventure_xp_gain_percent',effect_value:10})"><IconPlus :size="15" />添加选项</button></header><p class="section-help">活动期间，同一群票数唯一领先的选项会生效；平票时不应用加成。每个选项都明确展示它会改变的玩法数值。</p><div class="choice-list detailed"><label v-for="(choice, index) in editor.draft.choices" :key="index"><b>{{ Number(index) + 1 }}</b><input v-model="choice.label" placeholder="玩家看到的选项"/><input v-model="choice.choice_key" placeholder="稳定标识"/><select v-model="choice.effect_type"><option value="adventure_xp_gain_percent">冒险经验增加</option><option value="expedition_reward_gain_percent">远征奖励增加</option><option value="community_material_gain_percent">社区共建材料增加</option><option value="facility_upgrade_cost_reduction_percent">设施升级消耗降低</option><option value="boss_damage_gain_percent">首领伤害增加</option></select><input v-model.number="choice.effect_value" type="number" min="0" max="500" aria-label="效果百分比"/><button v-if="editor.draft.choices.length > 2" aria-label="删除故事选项" @click="editor.draft.choices.splice(Number(index), 1)"><IconTrash :size="15" /></button></label></div></section>
+        <section class="drawer-section rewards-editor"><header><div><span>步骤 5 · 里程碑奖励与预览</span><h3>累计进度达到多少时发什么</h3></div><button class="text-button" @click="addRewardGroup"><IconPlus :size="15" />添加里程碑</button></header>
           <article v-for="(group, groupIndex) in editor.draft.rewardGroups" :key="groupIndex" class="reward-group">
             <header><strong>里程碑 {{ group.milestone }}</strong><button aria-label="删除里程碑" @click="removeRewardGroup(groupIndex)"><IconTrash :size="16" /></button></header>
             <div class="reward-meta"><label><span>达成数值</span><input v-model.number="group.milestone" type="number" min="1" /></label><label><span>节点说明</span><input v-model="group.description" /></label></div>
-            <div class="reward-items"><div v-for="(item, itemIndex) in group.items" :key="itemIndex"><select v-model="item.item_name"><option value="">选择物品</option><option v-for="option in items" :key="option.Name" :value="option.Name">{{ option.Name }}</option></select><input v-model.number="item.quantity" type="number" min="1" aria-label="奖励数量" /><button v-if="group.items.length > 1" aria-label="删除奖励物品" @click="group.items.splice(itemIndex, 1)"><IconTrash :size="15" /></button></div><button class="text-button" @click="addRewardItem(group)"><IconPlus :size="14" />同里程碑添加物品</button></div>
+            <div class="reward-items"><div v-for="(item, itemIndex) in group.items" :key="itemIndex"><select v-model="item.reward_type" aria-label="奖励类型"><option value="item">物品</option><option value="currency">货币</option></select><select v-if="item.reward_type==='item'" v-model="item.reward_key" @change="item.reward_name = items.find(row => row.Key===item.reward_key || row.Name===item.reward_key)?.Name || item.reward_key"><option value="">选择物品</option><option v-for="option in items" :key="option.Key||option.Name" :value="option.Key||option.Name">{{ option.Name }}</option></select><select v-else v-model="item.reward_key" @change="item.reward_name = currencyOptions.find(row => row.key===item.reward_key)?.name || item.reward_key"><option value="">选择货币</option><option v-for="option in currencyOptions" :key="option.key" :value="option.key">{{ option.name }}</option></select><input v-model.number="item.quantity" type="number" min="1" aria-label="奖励数量" /><button v-if="group.items.length > 1" aria-label="删除奖励" @click="group.items.splice(itemIndex, 1)"><IconTrash :size="15" /></button></div><button class="text-button" @click="addRewardItem(group)"><IconPlus :size="14" />同里程碑添加奖励</button></div>
             <div class="cumulative-preview"><span>累计奖励预览</span><div><b v-for="preview in cumulativeRewards(groupIndex)" :key="preview">{{ preview }}</b></div></div>
           </article>
         </section>
@@ -1187,7 +1224,14 @@ onMounted(load)
           <header><div><span>步骤 1</span><h3>基础资料</h3></div><b>名称、介绍与偏好</b></header>
           <ImageDropzone :path="editor.draft.Image" :label="editorImageLabel()" kind="pet" size="medium" :busy="uploading" @file="uploadPetAsset($event, 'Image')" @clear="clearPetAsset('Image')" />
           <div class="form-grid two">
-            <label><span>宠物名称</span><input v-model="editor.draft.Name" :disabled="editor.index >= 0" /></label>
+            <label><span>稳定键</span><input v-model="editor.draft.Key" :disabled="editor.index >= 0" placeholder="lumisprout_base" /></label>
+            <label><span>宠物名称</span><input v-model="editor.draft.Name" /></label>
+            <label><span>谱系键</span><input v-model="editor.draft.FamilyKey" placeholder="lumisprout" /></label>
+            <label><span>阶段</span><select v-model="editor.draft.Stage"><option value="base">基础</option><option value="evolved">标准进化</option><option value="awakened">觉醒</option></select></label>
+            <label><span>前置形态键</span><input v-model="editor.draft.PreviousFormKey" placeholder="空表示基础形态" /></label>
+            <label><span>成长定位</span><input v-model="editor.draft.Archetype" placeholder="balanced / support / attacker" /></label>
+            <label><span>可领养</span><select v-model="editor.draft.Adoptable"><option :value="true">是</option><option :value="false">否</option></select></label>
+            <label><span>图鉴条目</span><input v-model="editor.draft.CodexEntryKey" /></label>
             <label><span>默认形象路径</span><input v-model="editor.draft.Image" placeholder="上传后自动填写，也可输入相对路径" /></label>
             <label><span>偏爱食物</span><input v-model="editor.draft.FavoriteFood" placeholder="与物品名称一致" /></label>
             <label><span>偏爱礼物</span><input v-model="editor.draft.FavoriteGift" placeholder="与物品名称一致" /></label>
@@ -1245,7 +1289,7 @@ onMounted(load)
       </div>
       <div v-else-if="editor.kind === 'item' && editor.draft" class="form-grid">
         <ImageDropzone class="editor-image" :path="editorImagePath()" :label="editorImageLabel()" kind="item" :busy="uploading" @file="uploadEditorAsset" @clear="clearEditorImage" />
-        <label><span>物品名称</span><input v-model="editor.draft.Name" :disabled="editor.index >= 0" /></label><label><span>运营状态</span><select v-model="editor.draft.Status"><option v-for="option in itemStatusOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select></label><label><span>物品类型</span><input v-model="editor.draft.Type" /></label><label><span>回收价格</span><input v-model.number="editor.draft.SellPrice" type="number" min="0" /></label><label><span>图片路径</span><input v-model="editor.draft.Image" placeholder="上传后自动填写，也可输入相对路径" /></label><label><span>物品说明</span><textarea v-model="editor.draft.Description" rows="4" /></label>
+        <label><span>稳定键</span><input v-model="editor.draft.Key" :disabled="editor.index >= 0" /></label><label><span>物品名称</span><input v-model="editor.draft.Name" /></label><label><span>分类</span><input v-model="editor.draft.Category" placeholder="consumable/gift/material" /></label><label><span>稀有度</span><input v-model="editor.draft.Rarity" /></label><label><span>堆叠上限</span><input v-model.number="editor.draft.MaxStack" type="number" min="1" /></label><label><span>用途</span><input v-model="editor.draft.Usage" /></label><label><span>运营状态</span><select v-model="editor.draft.Status"><option v-for="option in itemStatusOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select></label><label><span>物品类型</span><input v-model="editor.draft.Type" /></label><label><span>回收价格</span><input v-model.number="editor.draft.SellPrice" type="number" min="0" /></label><label><span>图片路径</span><input v-model="editor.draft.Image" placeholder="上传后自动填写，也可输入相对路径" /></label><label><span>物品说明</span><textarea v-model="editor.draft.Description" rows="4" /></label>
       </div>
       <div v-else-if="editor.kind === 'shop' && editor.draft" class="form-grid">
         <ImageDropzone class="editor-image" :path="editorImagePath()" :label="editorImageLabel()" kind="shop" :busy="uploading" @file="uploadEditorAsset" @clear="clearEditorImage" />
@@ -1259,7 +1303,10 @@ onMounted(load)
         <label><span>显示名称</span><input v-model="editor.draft.DisplayName" /></label><label><span>中文分类</span><input v-model="editor.draft.Category" /></label><label><span>玩家触发词</span><input v-model="editor.draft.Command" /></label><label><span>排序</span><input v-model.number="editor.draft.SortOrder" type="number" /></label><label class="switch-field"><span>命令状态</span><input v-model="editor.draft.Enabled" type="checkbox" /><b>{{ editor.draft.Enabled ? '启用命令' : '停用命令' }}</b></label><label><span>使用说明</span><textarea v-model="editor.draft.Description" rows="4" /></label><details class="technical-field"><summary>高级设置</summary><label><span>稳定功能标识</span><input v-model="editor.draft.FuncName" :disabled="editor.index >= 0" /></label></details>
       </div>
       <div v-else-if="editor.kind === 'menu' && editor.draft" class="form-grid">
-        <label><span>场景标识</span><input v-model="editor.draft.Name" :disabled="editor.index >= 0" /></label><label><span>机器人回复</span><textarea v-model="editor.draft.Reply" rows="10" /></label><div class="qq-preview large"><div class="qq-avatar"><IconPaw :size="19" /></div><div class="qq-message">{{ editor.draft.Reply || '输入文案后在这里检查 QQ 消息效果。' }}</div></div>
+        <ImageDropzone class="editor-image" :path="editorImagePath()" :label="editorImageLabel()" kind="image" :busy="uploading" @file="uploadEditorAsset" @clear="clearEditorImage" />
+        <label><span>场景标识</span><input v-model="editor.draft.Name" :disabled="editor.index >= 0" /></label><label><span>菜单配图</span><input v-model="editor.draft.Image" placeholder="上传后自动填写，也可输入图片相对路径或 HTTPS 地址" /></label><label><span>机器人回复</span><textarea v-model="editor.draft.Reply" rows="10" /></label>
+        <p class="section-help">配图可上传到「图片/上传/」、填写相对路径或 HTTPS 地址；空图时只发送文字。保存当前配置后，文本和图片立即对玩家生效；新增、删除或重命名场景后仍需点「重载生效」。</p>
+        <div class="qq-preview large"><div class="qq-avatar"><IconPaw :size="19" /></div><div class="qq-thread"><div v-if="editor.draft.Image" class="qq-image-block"><AssetThumbnail :path="editor.draft.Image" :label="editorImageLabel()" kind="image" size="tile" /></div><div class="qq-message">{{ editor.draft.Reply || '输入文案后在这里检查 QQ 消息效果。' }}</div></div></div>
       </div>
 
       <template #footer>
@@ -1290,10 +1337,9 @@ onMounted(load)
 .revision-chip.pending{color:var(--warning-strong)}
 .compact-state{min-height:120px!important;padding:22px!important}
 .toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;border:1px solid var(--border-color);border-radius:var(--radius-card);background:var(--bg-surface)}
-.toolbar-count{color:var(--text-muted);font-size:12px;white-space:nowrap}
 .toolbar select{min-height:38px;padding:0 10px;border:1px solid var(--border-color);border-radius:var(--radius-input);background:var(--bg-base);color:var(--text-main);font:inherit}
 .searchbox{display:flex;align-items:center;gap:8px;flex:1;min-width:min(220px,100%);padding:0 11px;border:1px solid var(--border-color);border-radius:var(--radius-input);background:var(--bg-base);color:var(--text-muted)}
-.searchbox input{width:100%;min-height:38px;border:0;outline:0;background:transparent;color:var(--text-main);font:inherit}.event-list{display:grid;gap:10px}.event-card{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;align-items:center;gap:18px;padding:16px;border:1px solid var(--border-color);border-radius:var(--radius-card);background:var(--bg-surface);box-shadow:var(--shadow-card);transition:transform .2s var(--ease-out),border-color .2s ease}.event-card:hover{transform:translateY(-1px);border-color:var(--border-strong)}.event-date{display:grid;place-items:center;width:58px;height:64px;border-radius:12px;background:var(--accent-soft);color:var(--accent)}.event-date strong{font-size:24px;line-height:1}.event-date span{font-size:11px}.title-line{display:flex;align-items:center;gap:9px}.title-line h3,.pet-card h3,.menu-card h3,.command-group h3,.game-group h3{margin:0}.event-copy p{margin:4px 0 0;color:var(--text-muted);font-size:12px}.event-metric{display:grid;text-align:center}.event-metric span{color:var(--text-muted);font-size:11px}.event-metric strong{font-size:22px;font-variant-numeric:tabular-nums}.status-mark{display:inline-flex;width:max-content;align-items:center;padding:3px 8px;border-radius:6px;background:var(--bg-elevated);color:var(--text-muted);font-size:11px;font-weight:700}.status-mark[data-status='进行中'],.status-mark[data-status='active']{background:var(--success-soft);color:var(--success-strong)}.status-mark[data-status='待开始'],.status-mark[data-status='limited']{background:var(--warning-soft);color:var(--warning-strong)}.status-mark[data-status='hidden']{background:var(--accent-soft);color:var(--accent)}.status-mark[data-status='disabled'],.status-mark[data-status='已停用']{background:var(--danger-soft);color:var(--danger)}.sub-tabs{display:flex;gap:6px}.sub-tabs button{display:inline-flex;align-items:center;gap:6px;padding:8px 13px;border:1px solid transparent;border-radius:var(--radius-btn);background:transparent;color:var(--text-muted);font:inherit;cursor:pointer}.sub-tabs button.active{border-color:var(--border-color);background:var(--bg-surface);color:var(--text-main);box-shadow:var(--shadow-card)}
+.searchbox input{width:100%;min-height:38px;border:0;outline:0;background:transparent;color:var(--text-main);font:inherit}.event-list{display:grid;gap:10px}.event-card{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:18px;padding:16px;border:1px solid var(--border-color);border-radius:var(--radius-card);background:var(--bg-surface);box-shadow:var(--shadow-card);transition:transform .2s var(--ease-out),border-color .2s ease}.event-card:hover{transform:translateY(-1px);border-color:var(--border-strong)}.event-date{display:grid;place-items:center;width:58px;height:64px;border-radius:12px;background:var(--accent-soft);color:var(--accent)}.event-date strong{font-size:24px;line-height:1}.event-date span{font-size:11px}.title-line{display:flex;align-items:center;gap:9px}.title-line h3,.pet-card h3,.menu-card h3,.command-group h3,.game-group h3{margin:0}.event-copy p{margin:4px 0 0;color:var(--text-muted);font-size:12px}.status-mark{display:inline-flex;width:max-content;align-items:center;padding:3px 8px;border-radius:6px;background:var(--bg-elevated);color:var(--text-muted);font-size:11px;font-weight:700}.status-mark[data-status='进行中'],.status-mark[data-status='active']{background:var(--success-soft);color:var(--success-strong)}.status-mark[data-status='待开始'],.status-mark[data-status='limited']{background:var(--warning-soft);color:var(--warning-strong)}.status-mark[data-status='hidden']{background:var(--accent-soft);color:var(--accent)}.status-mark[data-status='disabled'],.status-mark[data-status='已停用']{background:var(--danger-soft);color:var(--danger)}.sub-tabs{display:flex;gap:6px}.sub-tabs button{display:inline-flex;align-items:center;gap:6px;padding:8px 13px;border:1px solid transparent;border-radius:var(--radius-btn);background:transparent;color:var(--text-muted);font:inherit;cursor:pointer}.sub-tabs button.active{border-color:var(--border-color);background:var(--bg-surface);color:var(--text-main);box-shadow:var(--shadow-card)}
 .pet-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
 .menu-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 .pet-card{display:grid;overflow:hidden;padding:0;border:1px solid var(--border-color);border-radius:var(--radius-card);background:var(--bg-surface);color:inherit;text-align:left;cursor:pointer;transition:border-color .2s ease,transform .2s var(--ease-out)}
@@ -1327,11 +1373,11 @@ onMounted(load)
 .image-caption small{overflow:hidden;color:var(--text-muted);text-overflow:ellipsis;white-space:nowrap;font-size:11px}
 .image-actions{display:flex;gap:6px;opacity:0;transition:opacity .15s ease}
 .image-tile:hover .image-actions,.image-tile:focus-within .image-actions{opacity:1}
-.command-groups,.game-groups{display:grid;gap:16px}.command-group,.game-group{overflow:hidden;border:1px solid var(--border-color);border-radius:var(--radius-card);background:var(--bg-surface)}.command-group>header,.game-group>header{padding:14px 16px;background:var(--bg-elevated)}.command-group header span,.game-group header span{color:var(--text-muted);font-size:11px}.command-row{display:grid;width:100%;grid-template-columns:auto minmax(0,1fr) auto auto auto;align-items:center;gap:14px;padding:13px 16px;border:0;border-top:1px solid var(--border-color);background:transparent;color:inherit;text-align:left;cursor:pointer}.command-row:hover{background:var(--bg-hover)}.command-icon{display:grid;place-items:center;width:34px;height:34px;border-radius:9px;background:var(--accent-soft);color:var(--accent)}.command-copy{display:grid}.command-copy small{color:var(--text-muted)}.command-trigger{padding:5px 8px;border-radius:7px;background:var(--bg-base);color:var(--text-muted);font-size:12px}.menu-card{overflow:hidden;border:1px solid var(--border-color);border-radius:var(--radius-card);background:var(--bg-surface)}.menu-card>header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border-bottom:1px solid var(--border-color)}.menu-card header span{color:var(--text-muted);font-size:10px}.qq-preview{display:flex;align-items:flex-start;gap:10px;min-height:150px;padding:18px;background:color-mix(in srgb,var(--bg-base) 84%,#95afc7)}.qq-preview.large{min-height:190px;border-radius:12px}.qq-avatar{display:grid;flex:0 0 auto;place-items:center;width:38px;height:38px;border-radius:11px;background:var(--accent);color:var(--accent-ink)}.qq-message{position:relative;max-width:78%;padding:10px 12px;border-radius:3px 12px 12px;background:var(--bg-surface);box-shadow:var(--shadow-soft);white-space:pre-wrap}.setting-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;background:var(--border-color)}.setting-card{display:grid;align-content:space-between;gap:16px;min-height:150px;padding:17px;background:var(--bg-surface)}.setting-copy p{margin:4px 0 0;color:var(--text-muted);font-size:12px}.switch-control{display:flex;align-items:center;gap:9px;cursor:pointer}.switch-control>input{position:absolute;opacity:0}.switch-track{position:relative;width:42px;height:24px;border-radius:12px;background:var(--border-strong);transition:background .2s}.switch-track i{position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:var(--bg-surface);box-shadow:0 2px 6px rgba(0,0,0,.18);transition:transform .2s}.switch-control input:checked+.switch-track{background:var(--accent)}.switch-control input:checked+.switch-track i{transform:translateX(18px)}.switch-control input:focus-visible+.switch-track{outline:2px solid var(--accent);outline-offset:2px}.switch-control b{font-size:12px}.number-control{display:flex;align-items:center;width:min(220px,100%);border:1px solid var(--border-color);border-radius:var(--radius-input);background:var(--bg-base)}.number-control input{width:100%;min-width:0;padding:8px 10px;border:0;outline:0;background:transparent;color:var(--text-main);font:inherit;font-variant-numeric:tabular-nums}.number-control span{padding-right:10px;color:var(--text-muted);font-size:12px}.list-control{display:grid;gap:9px}.tag-list{display:flex;gap:6px;flex-wrap:wrap}.tag-list span{padding:3px 8px;border-radius:6px;background:var(--accent-soft);color:var(--accent);font-size:11px;font-weight:600}.list-control input,.text-control{width:100%;min-height:38px;padding:7px 9px;border:1px solid var(--border-color);border-radius:var(--radius-input);background:var(--bg-base);color:var(--text-main);font:inherit}.drawer-help{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:start;gap:11px;padding:14px;border-radius:12px;background:var(--accent-soft);color:var(--accent)}.drawer-help p{margin:3px 0 0;color:var(--text-muted);font-size:12px}.form-grid{display:grid;gap:14px;margin-top:16px}.form-grid.two{grid-template-columns:repeat(2,minmax(0,1fr))}.form-grid label,.reward-meta label{display:grid;gap:5px}.form-grid label>span,.reward-meta label>span{color:var(--text-muted);font-size:11px}.form-grid input,.form-grid select,.form-grid textarea,.reward-meta input,.reward-items input,.reward-items select{width:100%;min-height:40px;padding:8px 10px;border:1px solid var(--border-color);border-radius:var(--radius-input);background:var(--bg-base);color:var(--text-main);font:inherit}.form-grid textarea{resize:vertical}.switch-field{grid-template-columns:auto 1fr;align-items:center}.switch-field>span{grid-column:1/-1}.switch-field input{width:auto;min-height:auto}.switch-field b{font-size:12px}.drawer-section{display:grid;gap:11px;margin-top:22px}.drawer-section>header{display:flex;align-items:end;justify-content:space-between;gap:12px;padding-bottom:8px;border-bottom:1px solid var(--border-color)}.drawer-section h3{margin:0}.drawer-section header span{color:var(--text-muted);font-size:10px}.text-button{display:inline-flex;align-items:center;gap:5px;padding:5px;border:0;background:transparent;color:var(--accent);font:inherit;font-size:12px;font-weight:600;cursor:pointer}.choice-list{display:grid;gap:7px}.choice-list label{display:grid;grid-template-columns:28px 1fr auto;align-items:center;gap:7px}.choice-list label b{display:grid;place-items:center;width:28px;height:28px;border-radius:8px;background:var(--accent-soft);color:var(--accent)}.choice-list input{min-height:38px;padding:7px 9px;border:1px solid var(--border-color);border-radius:var(--radius-input);background:var(--bg-base);color:var(--text-main)}.choice-list button,.reward-group button,.reward-items button{border:0;background:transparent;color:var(--text-muted);cursor:pointer}.reward-group{display:grid;gap:10px;padding:13px;border:1px solid var(--border-color);border-radius:12px}.reward-group>header{display:flex;align-items:center;justify-content:space-between}.reward-meta{display:grid;grid-template-columns:130px 1fr;gap:9px}.reward-items{display:grid;gap:7px}.reward-items>div{display:grid;grid-template-columns:1fr 90px auto;gap:7px}.cumulative-preview{display:grid;gap:6px;padding:10px;border-radius:9px;background:var(--bg-elevated)}.cumulative-preview>span{color:var(--text-muted);font-size:10px}.cumulative-preview>div{display:flex;gap:6px;flex-wrap:wrap}.cumulative-preview b{padding:3px 7px;border-radius:6px;background:var(--bg-surface);font-size:11px}.technical-field{padding:11px;border:1px dashed var(--border-color);border-radius:10px}.technical-field summary{cursor:pointer;color:var(--text-muted)}.technical-field label{margin-top:10px}.drawer-actions{display:flex;align-items:center;gap:8px}.drawer-actions>span{flex:1}.btn-small{min-height:32px!important;padding:5px 9px!important;font-size:12px!important}
+.command-groups,.game-groups{display:grid;gap:16px}.command-group,.game-group{overflow:hidden;border:1px solid var(--border-color);border-radius:var(--radius-card);background:var(--bg-surface)}.command-group>header,.game-group>header{padding:14px 16px;background:var(--bg-elevated)}.command-group header span,.game-group header span{color:var(--text-muted);font-size:11px}.command-row{display:grid;width:100%;grid-template-columns:auto minmax(0,1fr) auto auto auto;align-items:center;gap:14px;padding:13px 16px;border:0;border-top:1px solid var(--border-color);background:transparent;color:inherit;text-align:left;cursor:pointer}.command-row:hover{background:var(--bg-hover)}.command-icon{display:grid;place-items:center;width:34px;height:34px;border-radius:9px;background:var(--accent-soft);color:var(--accent)}.command-copy{display:grid}.command-copy small{color:var(--text-muted)}.command-trigger{padding:5px 8px;border-radius:7px;background:var(--bg-base);color:var(--text-muted);font-size:12px}.menu-card{overflow:hidden;border:1px solid var(--border-color);border-radius:var(--radius-card);background:var(--bg-surface)}.menu-card>header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border-bottom:1px solid var(--border-color)}.menu-card header span{color:var(--text-muted);font-size:10px}.qq-preview{display:flex;align-items:flex-start;gap:10px;min-height:150px;padding:18px;background:color-mix(in srgb,var(--bg-base) 84%,#95afc7)}.qq-preview.large{min-height:190px;border-radius:12px}.qq-avatar{display:grid;flex:0 0 auto;place-items:center;width:38px;height:38px;border-radius:11px;background:var(--accent);color:var(--accent-ink)}.qq-thread{display:grid;gap:8px;min-width:0;max-width:78%}.qq-image-block{width:min(220px,100%);height:148px;border-radius:10px;overflow:hidden;background:var(--bg-surface);box-shadow:var(--shadow-soft)}.qq-image-block :deep(img){width:100%;height:100%;max-width:none;max-height:none;object-fit:cover}.qq-message{position:relative;max-width:78%;padding:10px 12px;border-radius:3px 12px 12px;background:var(--bg-surface);box-shadow:var(--shadow-soft);white-space:pre-wrap}.qq-thread .qq-message{max-width:100%}.setting-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;background:var(--border-color)}.setting-card{display:grid;align-content:space-between;gap:16px;min-height:150px;padding:17px;background:var(--bg-surface)}.setting-copy p{margin:4px 0 0;color:var(--text-muted);font-size:12px}.switch-control{display:flex;align-items:center;gap:9px;cursor:pointer}.switch-control>input{position:absolute;opacity:0}.switch-track{position:relative;width:42px;height:24px;border-radius:12px;background:var(--border-strong);transition:background .2s}.switch-track i{position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:var(--bg-surface);box-shadow:0 2px 6px rgba(0,0,0,.18);transition:transform .2s}.switch-control input:checked+.switch-track{background:var(--accent)}.switch-control input:checked+.switch-track i{transform:translateX(18px)}.switch-control input:focus-visible+.switch-track{outline:2px solid var(--accent);outline-offset:2px}.switch-control b{font-size:12px}.number-control{display:flex;align-items:center;width:min(220px,100%);border:1px solid var(--border-color);border-radius:var(--radius-input);background:var(--bg-base)}.number-control input{width:100%;min-width:0;padding:8px 10px;border:0;outline:0;background:transparent;color:var(--text-main);font:inherit;font-variant-numeric:tabular-nums}.number-control span{padding-right:10px;color:var(--text-muted);font-size:12px}.list-control{display:grid;gap:9px}.tag-list{display:flex;gap:6px;flex-wrap:wrap}.tag-list span{padding:3px 8px;border-radius:6px;background:var(--accent-soft);color:var(--accent);font-size:11px;font-weight:600}.list-control input,.text-control{width:100%;min-height:38px;padding:7px 9px;border:1px solid var(--border-color);border-radius:var(--radius-input);background:var(--bg-base);color:var(--text-main);font:inherit}.drawer-help{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:start;gap:11px;padding:14px;border-radius:12px;background:var(--accent-soft);color:var(--accent)}.drawer-help p{margin:3px 0 0;color:var(--text-muted);font-size:12px}.form-grid{display:grid;gap:14px;margin-top:16px}.form-grid.two{grid-template-columns:repeat(2,minmax(0,1fr))}.form-grid label,.reward-meta label{display:grid;gap:5px}.form-grid label>span,.reward-meta label>span{color:var(--text-muted);font-size:11px}.form-grid input,.form-grid select,.form-grid textarea,.reward-meta input,.reward-items input,.reward-items select{width:100%;min-height:40px;padding:8px 10px;border:1px solid var(--border-color);border-radius:var(--radius-input);background:var(--bg-base);color:var(--text-main);font:inherit}.form-grid textarea{resize:vertical}.switch-field{grid-template-columns:auto 1fr;align-items:center}.switch-field>span{grid-column:1/-1}.switch-field input{width:auto;min-height:auto}.switch-field b{font-size:12px}.drawer-section{display:grid;gap:11px;margin-top:22px}.drawer-section>header{display:flex;align-items:end;justify-content:space-between;gap:12px;padding-bottom:8px;border-bottom:1px solid var(--border-color)}.drawer-section h3{margin:0}.drawer-section header span{color:var(--text-muted);font-size:10px}.text-button{display:inline-flex;align-items:center;gap:5px;padding:5px;border:0;background:transparent;color:var(--accent);font:inherit;font-size:12px;font-weight:600;cursor:pointer}.choice-list{display:grid;gap:7px}.choice-list label{display:grid;grid-template-columns:28px 1fr auto;align-items:center;gap:7px}.choice-list label b{display:grid;place-items:center;width:28px;height:28px;border-radius:8px;background:var(--accent-soft);color:var(--accent)}.choice-list input{min-height:38px;padding:7px 9px;border:1px solid var(--border-color);border-radius:var(--radius-input);background:var(--bg-base);color:var(--text-main)}.choice-list button,.reward-group button,.reward-items button{border:0;background:transparent;color:var(--text-muted);cursor:pointer}.reward-group{display:grid;gap:10px;padding:13px;border:1px solid var(--border-color);border-radius:12px}.reward-group>header{display:flex;align-items:center;justify-content:space-between}.reward-meta{display:grid;grid-template-columns:130px 1fr;gap:9px}.reward-items{display:grid;gap:7px}.reward-items>div{display:grid;grid-template-columns:1fr 90px auto;gap:7px}.cumulative-preview{display:grid;gap:6px;padding:10px;border-radius:9px;background:var(--bg-elevated)}.cumulative-preview>span{color:var(--text-muted);font-size:10px}.cumulative-preview>div{display:flex;gap:6px;flex-wrap:wrap}.cumulative-preview b{padding:3px 7px;border-radius:6px;background:var(--bg-surface);font-size:11px}.technical-field{padding:11px;border:1px dashed var(--border-color);border-radius:10px}.technical-field summary{cursor:pointer;color:var(--text-muted)}.technical-field label{margin-top:10px}.drawer-actions{display:flex;align-items:center;gap:8px}.drawer-actions>span{flex:1}.btn-small{min-height:32px!important;padding:5px 9px!important;font-size:12px!important}
 .toolbar-actions{display:flex;gap:8px}.upload-button{position:relative;overflow:hidden}.upload-button input{position:absolute;inset:0;opacity:0;cursor:pointer}.image-preview{display:grid;place-items:center;min-height:76px;overflow:hidden;border-radius:11px;background:var(--bg-elevated);color:var(--text-muted)}.image-preview img{width:100%;height:100%;object-fit:cover}.image-preview.large{min-height:240px}.upload-field input{padding:10px}
 @media(max-width:1100px){.pet-grid,.image-gallery{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:900px){.menu-grid{grid-template-columns:1fr}}
-@media(max-width:700px){.content-page{gap:12px}.workspace-bar,.toolbar{align-items:stretch;flex-direction:column}.searchbox{min-width:0;width:100%}.event-card{grid-template-columns:auto minmax(0,1fr)}.event-metric{display:none}.event-card>.btn{grid-column:1/-1;width:100%}.bulk-bar{align-items:stretch}.bulk-bar>*{width:100%}.pet-grid,.image-gallery{grid-template-columns:1fr}.command-row{grid-template-columns:auto minmax(0,1fr) auto}.command-trigger{grid-column:2}.command-row>.status-mark{grid-column:2}.setting-grid{grid-template-columns:1fr}.form-grid.two,.reward-meta{grid-template-columns:1fr}.drawer-help{grid-template-columns:auto 1fr}.drawer-help>.btn{grid-column:1/-1}.reward-items>div{grid-template-columns:minmax(0,1fr) 72px auto}.drawer-actions{flex-wrap:wrap}.drawer-actions>span{display:none}.drawer-actions .btn{flex:1 1 auto}.image-actions{opacity:1}}
+@media(max-width:700px){.content-page{gap:12px}.workspace-bar,.toolbar{align-items:stretch;flex-direction:column}.searchbox{min-width:0;width:100%}.event-card{grid-template-columns:auto minmax(0,1fr)}.event-card>.btn{grid-column:1/-1;width:100%}.bulk-bar{align-items:stretch}.bulk-bar>*{width:100%}.pet-grid,.image-gallery{grid-template-columns:1fr}.command-row{grid-template-columns:auto minmax(0,1fr) auto}.command-trigger{grid-column:2}.command-row>.status-mark{grid-column:2}.setting-grid{grid-template-columns:1fr}.form-grid.two,.reward-meta{grid-template-columns:1fr}.drawer-help{grid-template-columns:auto 1fr}.drawer-help>.btn{grid-column:1/-1}.reward-items>div{grid-template-columns:minmax(0,1fr) 72px auto}.drawer-actions{flex-wrap:wrap}.drawer-actions>span{display:none}.drawer-actions .btn{flex:1 1 auto}.image-actions{opacity:1}}
 @media(max-width:600px){.toolbar-actions{width:100%}.toolbar-actions>*{flex:1}}
 .editor-image{margin-bottom:4px}
 .message-studio{display:grid;grid-template-columns:minmax(260px,360px) minmax(0,1fr);gap:14px}.message-catalog{display:grid;align-content:start;gap:7px;max-height:680px;overflow:auto}.message-catalog button{display:grid;gap:4px;padding:12px;border:1px solid var(--border-color);border-radius:11px;background:var(--bg-surface);color:inherit;text-align:left;cursor:pointer}.message-catalog button.active{border-color:var(--accent);background:var(--accent-soft)}.message-catalog small,.message-catalog span{color:var(--text-muted);font-size:11px}.message-catalog span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.message-preview-panel{display:grid;align-content:start;gap:14px;padding:17px;border:1px solid var(--border-color);border-radius:var(--radius-card);background:var(--bg-surface)}.message-preview-panel>header{display:flex;align-items:start;justify-content:space-between;gap:12px}.message-preview-panel h3{margin:2px 0 5px}.message-preview-panel header span,.template-note>span,.message-variable-grid span{color:var(--text-muted);font-size:10px}.message-preview-panel header label{display:grid;gap:4px}.message-preview-panel select,.message-variable-grid input{min-height:36px;padding:6px 9px;border:1px solid var(--border-color);border-radius:var(--radius-input);background:var(--bg-base);color:var(--text-main)}.message-variable-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.message-variable-grid label{display:grid;gap:4px}.template-note{display:grid;gap:5px;padding:10px;border-radius:9px;background:var(--bg-elevated)}.template-note code{white-space:pre-wrap}
@@ -1341,4 +1387,6 @@ onMounted(load)
 @media(max-width:700px){.attribute-grid,.pet-image-grid{grid-template-columns:1fr}.pet-step>header{align-items:start;flex-direction:column}.wide-field{grid-column:auto}}
 .section-help{margin:0;color:var(--text-muted);font-size:12px}.choice-list.detailed label{grid-template-columns:28px minmax(120px,1fr) minmax(100px,.7fr) minmax(150px,1fr) 78px auto}.choice-list select{min-height:38px;padding:7px 9px;border:1px solid var(--border-color);border-radius:var(--radius-input);background:var(--bg-base);color:var(--text-main)}
 @media(max-width:900px){.choice-list.detailed label{grid-template-columns:28px 1fr auto}.choice-list.detailed label input:nth-of-type(2),.choice-list.detailed label select,.choice-list.detailed label input:nth-of-type(3){grid-column:2}}
+.event-editor-actions{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border:1px solid var(--border-color);border-radius:11px;background:var(--bg-elevated)}.event-editor-actions p{margin:0;color:var(--text-muted);font-size:12px}.zone-picker{display:grid;gap:10px;margin-top:12px}.zone-picker>section{overflow:hidden;border:1px solid var(--border-color);border-radius:11px}.zone-picker>section>header{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;background:var(--bg-elevated)}.zone-picker>section>header small{color:var(--text-muted)}.zone-picker label{display:flex;align-items:center;gap:10px;padding:10px 12px;border-top:1px solid var(--border-color);cursor:pointer}.zone-picker label:hover{background:var(--bg-hover)}.zone-picker input{width:16px;height:16px;accent-color:var(--accent)}.zone-picker label span{display:grid;gap:2px}.zone-picker label small,.zone-picker>p{color:var(--text-muted);font-size:11px}.zone-picker>p{margin:0;padding:14px;border:1px dashed var(--border-color);border-radius:11px}
+@media(max-width:700px){.event-editor-actions{align-items:stretch;flex-direction:column}}
 </style>

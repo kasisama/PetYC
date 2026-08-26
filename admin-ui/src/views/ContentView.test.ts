@@ -30,8 +30,8 @@ function installApiMock() {
       },
     ],
     reward_tracks: [
-      { id: 1, event_key: 'forest-week', milestone: 100, item_name: '木材', quantity: 2, description: '基础补给' },
-      { id: 2, event_key: 'forest-week', milestone: 100, item_name: '绷带', quantity: 1, description: '基础补给' },
+      { id: 1, event_key: 'forest-week', milestone: 100, reward_type: 'item', reward_key: 'wood', reward_name: '木材', quantity: 2, description: '基础补给' },
+      { id: 2, event_key: 'forest-week', milestone: 100, reward_type: 'item', reward_key: 'bandage', reward_name: '绷带', quantity: 1, description: '基础补给' },
     ],
 	pet_species: [{ Name: '团子', Image: '宠物图片\\团子.png', Description: '活泼的初始宠物' }],
 	items: [
@@ -53,7 +53,7 @@ function installApiMock() {
         sort_order: 1,
       },
     ],
-    menus: [{ Name: 'main', Reply: '欢迎回来，请选择要进行的操作。' }],
+    menus: [{ Name: 'main', Reply: '欢迎回来，请选择要进行的操作。', Image: '上传/main.webp' }],
   }
   const gameSettings = [
     {
@@ -90,6 +90,11 @@ function installApiMock() {
     }
 	if (path === '/api/admin/settings/game') return json(gameSettings)
 	if (path === '/api/admin/upload') return json({ message: '图片上传成功', path: '上传/new-pet.png', url: '/images/上传/new-pet.png' })
+    if (path === '/api/admin/adventure/catalog') return json({ revision: 1, catalog: { maps: [], zones: [] } })
+    if (path === '/api/admin/content/messages') return json([])
+    if (path.startsWith('/api/admin/config/') && path.endsWith('/meta')) {
+      return json({ schema: path.split('/').at(-2), consumers: ['统一领域服务'], effective_revision: 2, db_revision: 2, pending_reload: false })
+    }
     if (path.startsWith('/api/admin/config/')) {
       return json(schemas[path.replace('/api/admin/config/', '')] ?? [])
     }
@@ -118,8 +123,22 @@ async function clickByText(wrapper: VueWrapper, text: string) {
 }
 
 async function clickDocumentButton(text: string) {
-  const button = [...document.body.querySelectorAll('button')].find((item) => item.textContent?.trim() === text)
+  const button = [...document.body.querySelectorAll('button')].find((item) => item.textContent?.includes(text))
   expect(button, `未找到按钮：${text}`).toBeTruthy()
+  button!.click()
+  await flushPromises()
+}
+
+async function clickDrawerPrimary(text: string) {
+  const button = document.body.querySelector('.drawer-actions .btn-primary') as HTMLButtonElement | null
+  expect(button?.textContent, `未找到抽屉主按钮：${text}`).toContain(text)
+  button!.click()
+  await flushPromises()
+}
+
+async function clickSaveCurrentConfig() {
+  const button = [...document.body.querySelectorAll('button')].find((item) => item.textContent?.includes('保存当前配置') && !(item as HTMLButtonElement).disabled)
+  expect(button, `未找到保存当前配置，现有按钮：${[...document.body.querySelectorAll('button')].map((item) => item.textContent?.replace(/\s+/g, ' ').trim()).join(' | ')}`).toBeTruthy()
   button!.click()
   await flushPromises()
 }
@@ -141,12 +160,14 @@ describe('ContentView 内容工作台', () => {
     wrapper.unmount()
   })
 
-  it('活动抽屉集中编辑说明、示例、故事选项和多物品奖励', async () => {
+  it('活动抽屉按步骤解释时间、进度来源、故事选项和多物品奖励', async () => {
     const wrapper = await mountView()
     await clickByText(wrapper, '编辑活动')
     const drawerText = document.body.textContent ?? ''
 
-    expect(drawerText).toContain('使用说明')
+    expect(drawerText).toContain('基本资料')
+    expect(drawerText).toContain('生效时间')
+    expect(drawerText).toContain('活动只统计所选区域的远征进度')
     expect(drawerText).toContain('填充测试示例')
     expect(drawerText).toContain('故事选项')
     expect(drawerText).toContain('里程碑 100')
@@ -202,6 +223,82 @@ describe('ContentView 内容工作台', () => {
     expect(wrapper.text()).toContain('查看宠物状态')
     expect(wrapper.text()).toContain('查看当前宠物的详细状态')
     expect(wrapper.text()).not.toContain('pet_status')
+
+    wrapper.unmount()
+  })
+
+  it('菜单场景可预览、上传和清除配图', async () => {
+    const wrapper = await mountView()
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>
+    await clickByText(wrapper, '文本与命令')
+    await clickByText(wrapper, '菜单场景')
+
+    expect(wrapper.get('.menu-card img[alt="主菜单图片"]').attributes('src')).toBe('/images/上传/main.webp')
+    await clickByText(wrapper, '编辑')
+    expect(document.body.textContent).toContain('菜单配图')
+    expect(document.body.textContent).toContain('文本和图片保存后即时生效')
+    const pathInput = document.body.querySelector('input[placeholder*="上传后自动填写"]') as HTMLInputElement
+    expect(pathInput.value).toBe('上传/main.webp')
+    const dropzoneRoot = document.body.querySelector('[aria-label="图片上传与预览"]') as HTMLElement
+    const qqPreview = document.body.querySelector('.qq-preview.large') as HTMLElement
+    expect(dropzoneRoot.querySelector('img[alt="主菜单图片"]')?.getAttribute('src')).toBe('/images/上传/main.webp')
+    expect(qqPreview.querySelector('img[alt="主菜单图片"]')?.getAttribute('src')).toBe('/images/上传/main.webp')
+    expect(qqPreview.textContent).toContain('欢迎回来，请选择要进行的操作。')
+
+    const dropzone = document.body.querySelector('.image-dropzone') as HTMLElement
+    const file = new File([new Uint8Array([137, 80, 78, 71])], 'new-menu.png', { type: 'image/png' })
+    const drop = new Event('drop', { bubbles: true, cancelable: true })
+    Object.defineProperty(drop, 'dataTransfer', { value: { files: [file] } })
+    dropzone.dispatchEvent(drop)
+    await flushPromises()
+
+    expect(pathInput.value).toBe('上传/new-pet.png')
+    expect(dropzoneRoot.querySelector('img[alt="主菜单图片"]')?.getAttribute('src')).toBe('/images/上传/new-pet.png')
+    expect(qqPreview.querySelector('img[alt="主菜单图片"]')?.getAttribute('src')).toBe('/images/上传/new-pet.png')
+
+    await clickDrawerPrimary('应用到列表')
+    expect(wrapper.get('.menu-card img[alt="主菜单图片"]').attributes('src')).toBe('/images/上传/new-pet.png')
+    await clickSaveCurrentConfig()
+    const uploaded = fetchMock.mock.calls.find(([url, init]) => String(url).includes('/api/admin/config/menus') && (init as RequestInit)?.method === 'PUT')
+    expect(JSON.parse(String((uploaded?.[1] as RequestInit).body))[0].Image).toBe('上传/new-pet.png')
+
+    await clickByText(wrapper, '编辑')
+    await clickDocumentButton('移除当前图片')
+    const clearedInput = document.body.querySelector('input[placeholder*="上传后自动填写"]') as HTMLInputElement
+    expect(clearedInput.value).toBe('')
+    const clearedDropzone = document.body.querySelector('[aria-label="图片上传与预览"]') as HTMLElement
+    const clearedPreview = document.body.querySelector('.qq-preview.large') as HTMLElement
+    expect(clearedDropzone.querySelector('img')).toBeNull()
+    expect(clearedDropzone.querySelector('[aria-label="主菜单暂无可用图片"]')).toBeTruthy()
+    expect(clearedPreview.querySelector('img')).toBeNull()
+    expect(clearedPreview.textContent).toContain('欢迎回来，请选择要进行的操作。')
+
+    await clickDrawerPrimary('应用到列表')
+    expect(wrapper.find('.menu-card img[alt="主菜单图片"]').exists()).toBe(false)
+    await clickSaveCurrentConfig()
+    const puts = fetchMock.mock.calls.filter(([url, init]) => String(url).includes('/api/admin/config/menus') && (init as RequestInit)?.method === 'PUT')
+    expect(JSON.parse(String((puts.at(-1)?.[1] as RequestInit).body))[0].Image).toBe('')
+
+    wrapper.unmount()
+  })
+
+  it('菜单场景缺少回复时阻止应用并直接提示', async () => {
+    const wrapper = await mountView()
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>
+    await clickByText(wrapper, '文本与命令')
+    await clickByText(wrapper, '菜单场景')
+    await clickByText(wrapper, '编辑')
+
+    const reply = document.body.querySelector('textarea') as HTMLTextAreaElement
+    reply.value = '   '
+    reply.dispatchEvent(new Event('input', { bubbles: true }))
+    await clickDrawerPrimary('应用到列表')
+
+    expect(document.body.textContent).toContain('编辑菜单场景')
+    const { useToast } = await import('../composables/useToast')
+    expect(useToast().toasts.value.at(-1)?.message).toContain('缺少机器人回复')
+    const menuPuts = fetchMock.mock.calls.filter(([url, init]) => String(url).includes('/api/admin/config/menus') && (init as RequestInit)?.method === 'PUT')
+    expect(menuPuts).toHaveLength(0)
 
     wrapper.unmount()
   })

@@ -32,17 +32,17 @@ test('真实 Gin、SQLite 与 Vue 完成登录、读取和运营写入闭环', a
 
   await page.goto(`${realAdminURL}players`)
   await expect(page.getByRole('heading', { name: '玩家管理', exact: true })).toBeVisible()
-  await expect(page.getByText('诺诺', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText('光芽兽', { exact: true }).first()).toBeVisible()
   await page.getByRole('button', { name: '查看详情' }).click()
   const playerDrawer = page.getByRole('dialog', { name: '玩家全局存档' })
-  await expect(playerDrawer.getByText('诺诺族', { exact: true })).toBeVisible()
+  await expect(playerDrawer.getByText('光芽兽', { exact: true }).first()).toBeVisible()
 
   await page.getByRole('button', { name: '补发固定物品' }).click()
   await page.getByPlaceholder('必填，将写入审计日志').fill('真实集成测试补发')
   await page.getByRole('button', { name: '确认执行' }).click()
   await expect(page.getByText('操作已完成并写入审计日志')).toBeVisible()
 
-  await page.getByRole('button', { name: '背包', exact: true }).click()
-  await expect(page.getByText('调查记录', { exact: true })).toBeVisible()
-  await expect(page.getByText('× 12', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '普通背包', exact: true }).click()
+  await expect(playerDrawer.getByText('调查记录', { exact: true }).last()).toBeVisible()
+  await expect(playerDrawer.getByText('× 12', { exact: true })).toBeVisible()
 })

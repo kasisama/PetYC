@@ -41,6 +41,37 @@ func TestProfileArchiveContainsOnlyManifestAndWhitelistConfig(t *testing.T) {
 	}
 }
 
+func TestProfileAssetsIncludeAndRewriteMenuImages(t *testing.T) {
+	snapshot := archiveTestSnapshot()
+	snapshot.Menus = []models.MenuConfig{{Name: "主菜单", Reply: "欢迎", Image: "上传/menu.webp"}}
+	paths := snapshotAssetPaths(snapshot)
+	if len(paths) != 1 || paths[0] != "上传/menu.webp" {
+		t.Fatalf("菜单图片未进入配置包资产清单: %#v", paths)
+	}
+	rewriteSnapshotAssets(&snapshot, map[string][]byte{"上传/menu.webp": {1}}, "导入/profile")
+	if snapshot.Menus[0].Image != "导入/profile/上传/menu.webp" {
+		t.Fatalf("菜单图片导入路径未重写: %q", snapshot.Menus[0].Image)
+	}
+}
+
+func TestProfileAssetsKeepRemoteAndEmptyMenuImages(t *testing.T) {
+	snapshot := archiveTestSnapshot()
+	snapshot.Menus = []models.MenuConfig{
+		{Name: "主菜单", Reply: "欢迎", Image: "https://cdn.example.com/menu.webp"},
+		{Name: "帮助", Reply: "帮助", Image: ""},
+	}
+	if paths := snapshotAssetPaths(snapshot); len(paths) != 0 {
+		t.Fatalf("远程或空菜单图片不应进入资产清单: %#v", paths)
+	}
+	rewriteSnapshotAssets(&snapshot, map[string][]byte{"上传/menu.webp": {1}}, "导入/profile")
+	if snapshot.Menus[0].Image != "https://cdn.example.com/menu.webp" {
+		t.Fatalf("HTTPS 菜单图片被改写: %q", snapshot.Menus[0].Image)
+	}
+	if snapshot.Menus[1].Image != "" {
+		t.Fatalf("空菜单图片被改写: %q", snapshot.Menus[1].Image)
+	}
+}
+
 func makeArchive(t *testing.T, files map[string][]byte, declared map[string][]byte) []byte {
 	t.Helper()
 	hashes := map[string]string{}

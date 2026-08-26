@@ -91,28 +91,13 @@ func (service *ActivityService) Start(ctx context.Context, accountID string, req
 	result := &ActivityResult{CurrencyKey: DefaultCurrencyKey}
 	err := WithTransactionRetry(ctx, service.DB, func(tx *gorm.DB) error {
 		*result = ActivityResult{CurrencyKey: DefaultCurrencyKey}
-		var pet models.PetProfile
-		if err := tx.First(&pet, "account_id = ?", accountID).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return ErrPetRequired
-			}
+		activePet, err := ActivePetTx(tx, accountID)
+		if err != nil {
 			return err
 		}
-		if pet.Status != "" && pet.Status != "空闲" {
-			return ErrActivityActive
-		}
-		var active int64
-		if err := tx.Model(&models.ActivityRun{}).Where("account_id = ? AND status = ?", accountID, ActivityStatusRunning).Count(&active).Error; err != nil {
+		pet := *activePet
+		if err := ReservePetRunTx(tx, accountID, pet.ID); err != nil {
 			return err
-		}
-		if active > 0 {
-			return ErrActivityActive
-		}
-		if err := tx.Model(&models.ExpeditionRun{}).Where("account_id = ? AND status = ?", accountID, "running").Count(&active).Error; err != nil {
-			return err
-		}
-		if active > 0 {
-			return ErrActivityActive
 		}
 		if request.DailyLimit > 0 {
 			dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
@@ -157,7 +142,7 @@ func (service *ActivityService) Start(ctx context.Context, accountID string, req
 			duration = time.Minute
 		}
 		var species models.PetSpeciesConfig
-		if find := tx.Limit(1).Find(&species, "name = ?", pet.PetType); find.Error != nil {
+		if find := tx.Limit(1).Find(&species, "key = ? OR name = ?", pet.CurrentForm, pet.CurrentForm); find.Error != nil {
 			return find.Error
 		}
 		if request.RewardAttribute != "" && attributeAtMax(pet, species, request.RewardAttribute) {
@@ -175,7 +160,7 @@ func (service *ActivityService) Start(ctx context.Context, accountID string, req
 		}
 		startImage, endImage = activityImages(species, request.Kind, startImage, endImage)
 		run := models.ActivityRun{
-			ID: uuid.NewString(), AccountID: accountID, Kind: request.Kind, ConfigKey: strings.TrimSpace(request.ConfigKey), InputItem: inputItem,
+			ID: uuid.NewString(), AccountID: accountID, PetID: pet.ID, Kind: request.Kind, ConfigKey: strings.TrimSpace(request.ConfigKey), InputItem: inputItem,
 			Status: ActivityStatusRunning, HungerCost: request.HungerCost, RewardAttribute: request.RewardAttribute,
 			RewardAmount: rewardAmount, RewardGrowth: request.RewardGrowth, RewardCurrency: request.RewardCurrency,
 			RewardItems: request.RewardItems, StartImage: startImage, EndImage: endImage,
@@ -222,12 +207,13 @@ func (service *ActivityService) Complete(ctx context.Context, accountID, kind, c
 		if now.Before(run.EndsAt) {
 			return &ActivityNotReadyError{Remaining: run.EndsAt.Sub(now)}
 		}
-		var pet models.PetProfile
-		if err := tx.First(&pet, "account_id = ?", accountID).Error; err != nil {
+		petRow, err := PetByIDTx(tx, accountID, run.PetID)
+		if err != nil {
 			return err
 		}
+		pet := *petRow
 		var species models.PetSpeciesConfig
-		if find := tx.Limit(1).Find(&species, "name = ?", pet.PetType); find.Error != nil {
+		if find := tx.Limit(1).Find(&species, "key = ? OR name = ?", pet.CurrentForm, pet.CurrentForm); find.Error != nil {
 			return find.Error
 		}
 		result.PetName = pet.Name

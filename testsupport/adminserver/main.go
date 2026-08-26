@@ -75,10 +75,10 @@ func seed(db *gorm.DB) error {
 	records := []interface{}{
 		&models.PlayerAccount{ID: accountID, CreatedAt: now, UpdatedAt: now},
 		&models.PlayerIdentity{AccountID: accountID, Platform: "onebot", AppID: "integration-app", SceneType: "group", ScopeID: "integration-group", SubjectID: "integration-player", CreatedAt: now},
-		&models.PetSpeciesConfig{Name: "诺诺族", FavoriteFood: "小鱼干", FavoriteGift: "铃铛", Health: 100, HealthMax: 100, Hunger: 100, HungerMax: 100, Description: "真实集成测试中的伙伴"},
-		&models.PetProfile{AccountID: accountID, PetType: "诺诺族", Name: "诺诺", CurrentForm: "诺诺族", Role: "探索者", Stance: "探索", Status: "空闲", Mood: "愉快", MoodPoints: 80, Readiness: 100, Health: 100, HealthMax: 100, Hunger: 100, HungerMax: 100, Wisdom: 20, Strength: 18, Defense: 16, BondLevel: 2, Growth: 42, CreatedAt: now, UpdatedAt: now},
-		&models.ItemConfig{Name: "调查记录", Status: "active", Type: "材料", Description: "记录远征线索"},
-		&models.GlobalInventoryItem{AccountID: accountID, ItemName: "调查记录", Quantity: 2, UpdatedAt: now},
+		&models.PetSpeciesConfig{Key: "lumisprout_base", Name: "光芽兽", FamilyKey: "lumisprout", Stage: "base", Adoptable: true, Archetype: "balanced", FavoriteFood: "调查便当", FavoriteGift: "晴野明信片", Health: 100, HealthMax: 100, Hunger: 100, HungerMax: 100, Description: "真实集成测试中的原创调查伙伴"},
+		&models.PetProfile{AccountID: accountID, PetType: "lumisprout_base", Name: "光芽兽", CurrentForm: "lumisprout_base", Role: "探索者", Stance: "探索", Status: "空闲", Mood: "愉快", MoodPoints: 80, Readiness: 100, Health: 100, HealthMax: 100, Hunger: 100, HungerMax: 100, Wisdom: 20, Strength: 18, Defense: 16, BondLevel: 2, Growth: 42, CreatedAt: now, UpdatedAt: now},
+		&models.ItemConfig{Key: "survey_record", Name: "调查记录", Category: "material", Rarity: "common", Stackable: true, MaxStack: 999999, Status: "active", Type: "材料", Description: "记录远征线索"},
+		&models.GlobalInventoryItem{AccountID: accountID, ItemKey: "survey_record", ItemName: "调查记录", Quantity: 2, UpdatedAt: now},
 		&models.AdminConfigState{DBRevision: 1, LoadedRevision: 1, SavedAt: &now, LoadedAt: &now},
 	}
 	for _, record := range records {

@@ -191,10 +191,11 @@ func (service *ShopService) Purchase(ctx context.Context, accountID, itemName st
 			result.RemainingStock = listing.Stock - quantity
 		}
 		if listing.ShopType == ShopTypeAffection {
-			var pet models.PetProfile
-			if err = tx.First(&pet, "account_id = ?", accountID).Error; err != nil {
-				return err
+			activePet, petErr := ActivePetTx(tx, accountID)
+			if petErr != nil {
+				return petErr
 			}
+			pet := *activePet
 			result.RemainingBalance = pet.Affection
 		} else {
 			var wallet models.PlayerWallet

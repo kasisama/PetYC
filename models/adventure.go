@@ -107,6 +107,19 @@ type AdventureEncounterConfig struct {
 	SortOrder     int    `gorm:"not null;default:0" json:"sort_order"`
 }
 
+// AdventureEncounterEffectConfig turns landmarks and safe encounters into
+// auditable gameplay effects instead of display-only text.
+type AdventureEncounterEffectConfig struct {
+	ID           uint   `gorm:"primaryKey" json:"id"`
+	EncounterKey string `gorm:"size:64;not null;uniqueIndex:idx_adventure_encounter_effect" json:"encounter_key"`
+	EffectType   string `gorm:"size:32;not null;uniqueIndex:idx_adventure_encounter_effect" json:"effect_type"`
+	TargetKey    string `gorm:"size:64;uniqueIndex:idx_adventure_encounter_effect" json:"target_key"`
+	MinValue     int64  `gorm:"not null;default:0" json:"min_value"`
+	MaxValue     int64  `gorm:"not null;default:0" json:"max_value"`
+	Weight       int    `gorm:"not null;default:1" json:"weight"`
+	Enabled      bool   `gorm:"not null;default:true;index" json:"enabled"`
+}
+
 type AdventureLootPoolConfig struct {
 	Key             string `gorm:"primaryKey;size:64" json:"key"`
 	Name            string `gorm:"size:96;not null" json:"name"`
@@ -115,6 +128,7 @@ type AdventureLootPoolConfig struct {
 }
 
 // RewardType supports item, currency, equipment and blueprint_fragment.
+// Items and currencies use the account-wide inventory and wallet domains.
 type AdventureLootEntryConfig struct {
 	ID             uint   `gorm:"primaryKey" json:"id"`
 	PoolKey        string `gorm:"size:64;not null;index" json:"pool_key"`
@@ -126,6 +140,35 @@ type AdventureLootEntryConfig struct {
 	Guaranteed     bool   `gorm:"not null;default:false" json:"guaranteed"`
 	FirstClearOnly bool   `gorm:"not null;default:false" json:"first_clear_only"`
 	SortOrder      int    `gorm:"not null;default:0" json:"sort_order"`
+}
+
+// CurrencyConfig is the stable catalog for every account-wide currency.
+type CurrencyConfig struct {
+	Key         string `gorm:"primaryKey;size:64" json:"key"`
+	Name        string `gorm:"size:64;not null" json:"name"`
+	Description string `gorm:"type:text" json:"description"`
+	Image       string `gorm:"size:255" json:"image"`
+	Builtin     bool   `gorm:"not null;default:false" json:"builtin"`
+	Enabled     bool   `gorm:"not null;default:true;index" json:"enabled"`
+	SortOrder   int    `gorm:"not null;default:0;index" json:"sort_order"`
+}
+
+// AdventureShopItemConfig is a fixed listing bought with a configured account currency.
+// LimitType supports none, daily, weekly, season and lifetime.
+type AdventureShopItemConfig struct {
+	Key           string `gorm:"primaryKey;size:64" json:"key"`
+	Name          string `gorm:"size:96;not null" json:"name"`
+	Description   string `gorm:"type:text" json:"description"`
+	Image         string `gorm:"size:255" json:"image"`
+	ProductType   string `gorm:"size:32;not null;index" json:"product_type"`
+	ProductKey    string `gorm:"size:64;not null;index" json:"product_key"`
+	Quantity      int64  `gorm:"not null;default:1" json:"quantity"`
+	Price         int64  `gorm:"not null" json:"price"`
+	CurrencyKey   string `gorm:"size:64;not null;default:'journey_badge';index" json:"currency_key"`
+	LimitType     string `gorm:"size:16;not null;default:'none'" json:"limit_type"`
+	LimitQuantity int64  `gorm:"not null;default:0" json:"limit_quantity"`
+	Enabled       bool   `gorm:"not null;default:true;index" json:"enabled"`
+	SortOrder     int    `gorm:"not null;default:0;index" json:"sort_order"`
 }
 
 type AdventureExpeditionConfig struct {
@@ -211,7 +254,9 @@ type EquipmentAffixConfig struct {
 }
 
 type EquipmentRecipeConfig struct {
-	EquipmentKey          string `gorm:"primaryKey;size:64" json:"equipment_key"`
+	EquipmentKey string `gorm:"primaryKey;size:64" json:"equipment_key"`
+	// BlueprintFragmentItem is kept for backwards-compatible decoding of
+	// v0.0.1 profiles. New rewards identify blueprints by EquipmentKey.
 	BlueprintFragmentItem string `gorm:"size:64;not null" json:"blueprint_fragment_item"`
 	BlueprintFragments    int64  `gorm:"not null" json:"blueprint_fragments"`
 	CurrencyCost          int64  `gorm:"not null;default:0" json:"currency_cost"`
@@ -272,6 +317,7 @@ type PlayerObjectiveProgress struct {
 type AdventureExplorationSession struct {
 	ID           string `gorm:"primaryKey;size:36"`
 	AccountID    string `gorm:"size:36;not null;index:idx_adventure_exploration_account_status"`
+	PetID        string `gorm:"size:36;not null;index"`
 	CommunityID  string `gorm:"size:320;index"`
 	MapKey       string `gorm:"size:64;not null"`
 	ZoneKey      string `gorm:"size:64;not null"`
@@ -284,6 +330,7 @@ type AdventureExplorationSession struct {
 type AdventureCombatSession struct {
 	ID              string    `gorm:"primaryKey;size:36"`
 	AccountID       string    `gorm:"size:36;not null;index:idx_adventure_combat_account_status"`
+	PetID           string    `gorm:"size:36;not null;index"`
 	CommunityID     string    `gorm:"size:320;index"`
 	ExplorationID   string    `gorm:"size:36;index"`
 	BossInstanceID  string    `gorm:"size:128;index"`
@@ -314,16 +361,17 @@ type AdventureCombatTurn struct {
 }
 
 type PlayerEquipment struct {
-	ID           string `gorm:"primaryKey;size:36" json:"id"`
-	AccountID    string `gorm:"size:36;not null;index" json:"account_id"`
-	TemplateKey  string `gorm:"size:64;not null;index" json:"template_key"`
-	Rarity       string `gorm:"size:24;not null" json:"rarity"`
-	AffixesJSON  string `gorm:"type:text;not null;default:'[]'" json:"affixes_json"`
-	EquippedSlot string `gorm:"size:24;index" json:"equipped_slot"`
-	Locked       bool   `gorm:"not null;default:false" json:"locked"`
-	Source       string `gorm:"size:128" json:"source"`
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID            string `gorm:"primaryKey;size:36" json:"id"`
+	AccountID     string `gorm:"size:36;not null;index" json:"account_id"`
+	TemplateKey   string `gorm:"size:64;not null;index" json:"template_key"`
+	Rarity        string `gorm:"size:24;not null" json:"rarity"`
+	AffixesJSON   string `gorm:"type:text;not null;default:'[]'" json:"affixes_json"`
+	EquippedSlot  string `gorm:"size:24;index" json:"equipped_slot"`
+	EquippedPetID string `gorm:"size:36;index" json:"equipped_pet_id"`
+	Locked        bool   `gorm:"not null;default:false" json:"locked"`
+	Source        string `gorm:"size:128" json:"source"`
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 type PlayerBlueprintProgress struct {
@@ -336,9 +384,23 @@ type PlayerBlueprintProgress struct {
 	UpdatedAt    time.Time
 }
 
+type AdventureShopPurchase struct {
+	ID              string    `gorm:"primaryKey;size:36" json:"id"`
+	AccountID       string    `gorm:"size:36;not null;index;uniqueIndex:idx_adventure_shop_idempotency" json:"account_id"`
+	ShopItemKey     string    `gorm:"size:64;not null;index" json:"shop_item_key"`
+	PurchaseUnits   int64     `gorm:"not null" json:"purchase_units"`
+	GrantedQuantity int64     `gorm:"not null" json:"granted_quantity"`
+	Cost            int64     `gorm:"not null" json:"cost"`
+	CurrencyKey     string    `gorm:"size:64;not null" json:"currency_key"`
+	PeriodKey       string    `gorm:"size:32;not null;index" json:"period_key"`
+	IdempotencyKey  string    `gorm:"size:128;not null;uniqueIndex:idx_adventure_shop_idempotency" json:"idempotency_key"`
+	CreatedAt       time.Time `gorm:"not null;index" json:"created_at"`
+}
+
 type AdventureExpeditionRun struct {
 	ID                  string `gorm:"primaryKey;size:36"`
 	AccountID           string `gorm:"size:36;not null;index:idx_adventure_expedition_account_status"`
+	PetID               string `gorm:"size:36;not null;index"`
 	CommunityID         string `gorm:"size:320;index"`
 	MapKey              string `gorm:"size:64;not null"`
 	ZoneKey             string `gorm:"size:64;not null"`

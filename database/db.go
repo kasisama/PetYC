@@ -40,28 +40,50 @@ func MigrateSchema(db *gorm.DB) error {
 	if err := db.AutoMigrate(migrationModels()...); err != nil {
 		return err
 	}
+	if err := dropLegacyColumn(db, "reward_track_configs", "item_name"); err != nil {
+		return err
+	}
+	if err := dropLegacyColumn(db, "event_reward_claims", "item_name"); err != nil {
+		return err
+	}
 	return ensureGameConstraints(db)
+}
+
+func dropLegacyColumn(db *gorm.DB, table, column string) error {
+	var count int64
+	if err := db.Raw("SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?", table, column).Scan(&count).Error; err != nil {
+		return err
+	}
+	if count == 0 {
+		return nil
+	}
+	return db.Exec("ALTER TABLE " + table + " DROP COLUMN " + column).Error
 }
 
 func ensureGameConstraints(db *gorm.DB) error {
 	// Keep historical claimed runs while making the active slot unique. A plain
 	// unique(account_id,status) index would incorrectly allow only one claimed
 	// expedition in a player's lifetime.
+	for _, index := range []string{"idx_expedition_one_running", "idx_activity_one_running", "idx_fishing_one_running", "idx_adventure_exploration_one_active", "idx_adventure_combat_one_active", "idx_adventure_expedition_one_running", "idx_player_equipment_one_slot"} {
+		if err := db.Exec("DROP INDEX IF EXISTS " + index).Error; err != nil {
+			return err
+		}
+	}
 	statements := []string{
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_expedition_one_running
-			ON expedition_runs(account_id) WHERE status = 'running'`,
+			ON expedition_runs(account_id, pet_id) WHERE status = 'running'`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_activity_one_running
-			ON activity_runs(account_id) WHERE status = 'running'`,
+			ON activity_runs(account_id, pet_id) WHERE status = 'running'`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_fishing_one_running
-			ON fishing_runs(account_id) WHERE status = 'running'`,
+			ON fishing_runs(account_id, pet_id) WHERE status = 'running'`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_adventure_exploration_one_active
-			ON adventure_exploration_sessions(account_id) WHERE status = 'active'`,
+			ON adventure_exploration_sessions(account_id, pet_id) WHERE status = 'active'`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_adventure_combat_one_active
-			ON adventure_combat_sessions(account_id) WHERE status = 'active'`,
+			ON adventure_combat_sessions(account_id, pet_id) WHERE status = 'active'`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_adventure_expedition_one_running
-			ON adventure_expedition_runs(account_id) WHERE status = 'running'`,
+			ON adventure_expedition_runs(account_id, pet_id) WHERE status = 'running'`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_player_equipment_one_slot
-			ON player_equipments(account_id, equipped_slot) WHERE equipped_slot <> ''`,
+			ON player_equipments(equipped_pet_id, equipped_slot) WHERE equipped_pet_id <> '' AND equipped_slot <> ''`,
 	}
 	for _, statement := range statements {
 		if err := db.Exec(statement).Error; err != nil {
@@ -76,6 +98,10 @@ func migrationModels() []interface{} {
 		&models.SystemConfig{},
 		&models.CommandConfig{},
 		&models.PetSpeciesConfig{},
+		&models.PetEvolutionRuleConfig{},
+		&models.PetEvolutionCostConfig{},
+		&models.PetSkillUnlockConfig{},
+		&models.AdventureLevelConfig{},
 		&models.ItemConfig{},
 		&models.ShopItemConfig{},
 		&models.CheckinRewardConfig{},
@@ -143,8 +169,11 @@ func migrationModels() []interface{} {
 		&models.AdventureSkillConfig{},
 		&models.AdventureMonsterSkillConfig{},
 		&models.AdventureEncounterConfig{},
+		&models.AdventureEncounterEffectConfig{},
 		&models.AdventureLootPoolConfig{},
 		&models.AdventureLootEntryConfig{},
+		&models.CurrencyConfig{},
+		&models.AdventureShopItemConfig{},
 		&models.AdventureExpeditionConfig{},
 		&models.AdventureBossConfig{},
 		&models.AdventureBossRewardTierConfig{},
@@ -162,6 +191,7 @@ func migrationModels() []interface{} {
 		&models.AdventureCombatTurn{},
 		&models.PlayerEquipment{},
 		&models.PlayerBlueprintProgress{},
+		&models.AdventureShopPurchase{},
 		&models.AdventureExpeditionRun{},
 		&models.AdventureBossInstance{},
 		&models.AdventureBossContribution{},

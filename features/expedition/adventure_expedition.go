@@ -14,15 +14,19 @@ import (
 )
 
 type AdventureExpeditionSnapshot struct {
-	Config                  models.AdventureExpeditionConfig `json:"config"`
-	Map                     models.AdventureMapConfig        `json:"map"`
-	Zone                    models.AdventureZoneConfig       `json:"zone"`
-	Power                   int64                            `json:"power"`
-	Grade                   string                           `json:"grade"`
-	BonusRandomRolls        int                              `json:"bonus_random_rolls"`
-	InjuryPermille          int                              `json:"injury_permille"`
-	AdventureXPBonusPercent int                              `json:"adventure_xp_bonus_percent"`
-	RewardBonusPercent      int                              `json:"reward_bonus_percent"`
+	Config                  models.AdventureExpeditionConfig  `json:"config"`
+	Map                     models.AdventureMapConfig         `json:"map"`
+	Zone                    models.AdventureZoneConfig        `json:"zone"`
+	FixedLootPool           models.AdventureLootPoolConfig    `json:"fixed_loot_pool"`
+	FixedLootEntries        []models.AdventureLootEntryConfig `json:"fixed_loot_entries"`
+	RandomLootPool          models.AdventureLootPoolConfig    `json:"random_loot_pool"`
+	RandomLootEntries       []models.AdventureLootEntryConfig `json:"random_loot_entries"`
+	Power                   int64                             `json:"power"`
+	Grade                   string                            `json:"grade"`
+	BonusRandomRolls        int                               `json:"bonus_random_rolls"`
+	InjuryPermille          int                               `json:"injury_permille"`
+	AdventureXPBonusPercent int                               `json:"adventure_xp_bonus_percent"`
+	RewardBonusPercent      int                               `json:"reward_bonus_percent"`
 }
 
 type AdventureExpeditionResult struct {
@@ -79,28 +83,19 @@ func (service *Service) StartAdventureExpeditionInCommunity(ctx context.Context,
 		if err := tx.First(&zoneProgress, "account_id = ? AND zone_key = ? AND expedition_unlocked = ?", accountID, zoneKey, true).Error; err != nil {
 			return ErrZoneLocked
 		}
-		var pet models.PetProfile
-		if err := tx.First(&pet, "account_id = ?", accountID).Error; err != nil {
-			return ErrPetRequired
+		petRow, err := gameplay.ActivePetTx(tx, accountID)
+		if err != nil {
+			return err
 		}
+		pet := *petRow
 		if pet.Status == "受伤" {
 			return ErrAdventureInjured
 		}
-		if pet.Status != "" && pet.Status != "空闲" {
-			return ErrAdventureBusy
-		}
-		var active int64
-		if err := tx.Model(&models.AdventureExpeditionRun{}).Where("account_id = ? AND status = ?", accountID, "running").Count(&active).Error; err != nil {
+		if err := gameplay.ReservePetRunTx(tx, accountID, pet.ID); err != nil {
+			if errors.Is(err, gameplay.ErrTooManyConcurrentRuns) || errors.Is(err, gameplay.ErrActivityActive) {
+				return ErrAdventureBusy
+			}
 			return err
-		}
-		if active > 0 {
-			return ErrAdventureBusy
-		}
-		if err := tx.Model(&models.ExpeditionRun{}).Where("account_id = ? AND status = ?", accountID, "running").Count(&active).Error; err != nil {
-			return err
-		}
-		if active > 0 {
-			return ErrAdventureBusy
 		}
 		if config.HungerCost > 0 && pet.Hunger-config.HungerCost <= 10 {
 			return gameplay.ErrPetTooHungry
@@ -109,7 +104,7 @@ func (service *Service) StartAdventureExpeditionInCommunity(ctx context.Context,
 			return ErrInsufficientReadiness
 		}
 		if config.RequiredItem != "" && config.RequiredQuantity > 0 {
-			if err := gameplay.NewInventoryService(tx).DebitTx(tx, accountID, config.RequiredItem, config.RequiredQuantity); err != nil {
+			if err := debitAdventureItemTx(tx, accountID, config.RequiredItem, config.RequiredQuantity, service.Now()); err != nil {
 				return err
 			}
 		}
@@ -123,9 +118,21 @@ func (service *Service) StartAdventureExpeditionInCommunity(ctx context.Context,
 		}
 		power := adventurePower(pet, progress, stats)
 		grade, bonusRolls, injury := expeditionGrade(power, config.RecommendedPower)
-		snapshot := AdventureExpeditionSnapshot{Config: config, Map: adventureMap, Zone: zone, Power: power, Grade: grade, BonusRandomRolls: bonusRolls, InjuryPermille: injury}
+		fixedPool, fixedEntries, err := loadLootPoolSnapshotTx(tx, config.FixedLootPoolKey)
+		if err != nil {
+			return err
+		}
+		randomPool, randomEntries, err := loadLootPoolSnapshotTx(tx, config.RandomLootPoolKey)
+		if err != nil {
+			return err
+		}
+		snapshot := AdventureExpeditionSnapshot{
+			Config: config, Map: adventureMap, Zone: zone, FixedLootPool: fixedPool, FixedLootEntries: fixedEntries,
+			RandomLootPool: randomPool, RandomLootEntries: randomEntries, Power: power, Grade: grade,
+			BonusRandomRolls: bonusRolls, InjuryPermille: injury,
+		}
 		now := service.Now()
-		run = models.AdventureExpeditionRun{ID: uuid.NewString(), AccountID: accountID, CommunityID: communityID, MapKey: adventureMap.Key, ZoneKey: zone.Key, Status: "running", StartedAt: now, EndsAt: now.Add(time.Duration(config.DurationMinutes) * time.Minute)}
+		run = models.AdventureExpeditionRun{ID: uuid.NewString(), AccountID: accountID, PetID: pet.ID, CommunityID: communityID, MapKey: adventureMap.Key, ZoneKey: zone.Key, Status: "running", StartedAt: now, EndsAt: now.Add(time.Duration(config.DurationMinutes) * time.Minute)}
 		if event, eventErr := currentLiveEventTx(tx, now); eventErr != nil {
 			return eventErr
 		} else if event != nil && !run.EndsAt.After(event.EndsAt) {
@@ -202,17 +209,17 @@ func (service *Service) ClaimAdventureExpedition(ctx context.Context, accountID 
 		if err := json.Unmarshal([]byte(run.SnapshotJSON), &snapshot); err != nil {
 			return fmt.Errorf("远征快照损坏: %w", err)
 		}
-		fixed, err := service.grantLootPoolTx(tx, accountID, snapshot.Config.FixedLootPoolKey, "expedition:"+run.ID, false)
+		fixed, err := service.grantExpeditionSnapshotLootTx(tx, accountID, snapshot.FixedLootPool, snapshot.FixedLootEntries, snapshot.Config.FixedLootPoolKey, "expedition:"+run.ID, -1)
 		if err != nil {
 			return err
 		}
-		random, err := service.grantLootPoolTx(tx, accountID, snapshot.Config.RandomLootPoolKey, "expedition:"+run.ID, false)
+		random, err := service.grantExpeditionSnapshotLootTx(tx, accountID, snapshot.RandomLootPool, snapshot.RandomLootEntries, snapshot.Config.RandomLootPoolKey, "expedition:"+run.ID, -1)
 		if err != nil {
 			return err
 		}
 		rewards := append(fixed, random...)
 		if snapshot.BonusRandomRolls > 0 {
-			bonus, err := service.grantLootPoolWithRollsTx(tx, accountID, snapshot.Config.RandomLootPoolKey, "expedition:"+run.ID+":bonus", false, snapshot.BonusRandomRolls)
+			bonus, err := service.grantExpeditionSnapshotLootTx(tx, accountID, snapshot.RandomLootPool, snapshot.RandomLootEntries, snapshot.Config.RandomLootPoolKey, "expedition:"+run.ID+":bonus", snapshot.BonusRandomRolls)
 			if err != nil {
 				return err
 			}
@@ -224,7 +231,7 @@ func (service *Service) ClaimAdventureExpedition(ctx context.Context, accountID 
 				return rollErr
 			}
 			if roll < snapshot.RewardBonusPercent {
-				bonus, bonusErr := service.grantLootPoolWithRollsTx(tx, accountID, snapshot.Config.RandomLootPoolKey, "expedition:"+run.ID+":event-bonus", false, 1)
+				bonus, bonusErr := service.grantExpeditionSnapshotLootTx(tx, accountID, snapshot.RandomLootPool, snapshot.RandomLootEntries, snapshot.Config.RandomLootPoolKey, "expedition:"+run.ID+":event-bonus", 1)
 				if bonusErr != nil {
 					return bonusErr
 				}
@@ -244,10 +251,11 @@ func (service *Service) ClaimAdventureExpedition(ctx context.Context, accountID 
 			}
 			injured = roll < snapshot.InjuryPermille
 		}
-		var pet models.PetProfile
-		if err := tx.First(&pet, "account_id = ?", accountID).Error; err != nil {
+		petRow, err := gameplay.PetByIDTx(tx, accountID, run.PetID)
+		if err != nil {
 			return err
 		}
+		pet := *petRow
 		if injured {
 			pet.Health, pet.Status = 1, "受伤"
 		} else {

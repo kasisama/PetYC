@@ -149,8 +149,8 @@ func TestMigrateSchemaAllowsMultipleRewardsAtSameMilestone(t *testing.T) {
 		t.Fatal(err)
 	}
 	rows := []models.RewardTrackConfig{
-		{EventKey: "forest-week", Milestone: 100, ItemName: "木材", Quantity: 2},
-		{EventKey: "forest-week", Milestone: 100, ItemName: "调查记录", Quantity: 5},
+		{EventKey: "forest-week", Milestone: 100, RewardType: "item", RewardKey: "wood", RewardName: "木材", Quantity: 2},
+		{EventKey: "forest-week", Milestone: 100, RewardType: "item", RewardKey: "survey_log", RewardName: "调查记录", Quantity: 5},
 	}
 	if err = db.Create(&rows).Error; err != nil {
 		t.Fatalf("same milestone should accept multiple reward items: %v", err)

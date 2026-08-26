@@ -25,7 +25,7 @@ func enqueueTimedNotification(
 		Platform: string(event.Platform), SceneType: string(event.SceneType), AppID: event.AppID,
 		SpaceID: event.SpaceID, RoomID: event.RoomID, ActorID: event.ActorID, ActorName: event.ActorName,
 		MessageKey: "notification." + kind,
-		Message: message, DueAt: dueAt,
+		Message:    message, DueAt: dueAt,
 	})
 	if err != nil {
 		// 通知是附加体验，写入失败不能回滚已成功的玩家操作。

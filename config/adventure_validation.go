@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-func validateAdventureSnapshot(snapshot ConfigSnapshot, items, events map[string]bool) error {
+func validateAdventureSnapshot(snapshot ConfigSnapshot, items map[string]bool, events map[string]bool) error {
 	if len(snapshot.AdventureMaps)+len(snapshot.AdventureZones)+len(snapshot.AdventureMonsters) == 0 {
 		return nil
 	}
@@ -17,6 +17,7 @@ func validateAdventureSnapshot(snapshot ConfigSnapshot, items, events map[string
 	pools := map[string]bool{}
 	equipment := map[string]bool{}
 	bosses := map[string]bool{}
+	currencies := map[string]bool{}
 
 	for _, row := range snapshot.AdventureMaps {
 		key := strings.TrimSpace(row.Key)
@@ -106,6 +107,24 @@ func validateAdventureSnapshot(snapshot ConfigSnapshot, items, events map[string
 			return fmt.Errorf("遭遇 %s 引用了不存在的怪物 %s", row.EncounterKey, row.TargetKey)
 		}
 	}
+	validEncounterEffects := map[string]bool{"currency": true, "item": true, "heal": true, "readiness": true, "codex": true}
+	encounters := map[string]bool{}
+	for _, row := range snapshot.AdventureEncounters {
+		encounters[row.EncounterKey] = true
+	}
+	for _, row := range snapshot.AdventureEncounterEffects {
+		if !encounters[row.EncounterKey] || !validEncounterEffects[row.EffectType] || row.Weight <= 0 || row.MaxValue < row.MinValue {
+			return fmt.Errorf("遭遇效果配置无效: %s/%s", row.EncounterKey, row.EffectType)
+		}
+		if row.EffectType == "item" && !items[row.TargetKey] {
+			return fmt.Errorf("遭遇效果 %s 引用了不存在的统一物品 %s", row.EncounterKey, row.TargetKey)
+		}
+	}
+	for _, row := range snapshot.PetSkillUnlocks {
+		if !skills[row.SkillKey] {
+			return fmt.Errorf("宠物技能解锁引用了不存在的战斗技能: %s", row.SkillKey)
+		}
+	}
 
 	for _, row := range snapshot.AdventureLootPools {
 		if row.Key == "" || pools[row.Key] || row.Name == "" || row.Rolls < 0 {
@@ -113,8 +132,20 @@ func validateAdventureSnapshot(snapshot ConfigSnapshot, items, events map[string
 		}
 		pools[row.Key] = true
 	}
-	validSlots := map[string]bool{"weapon": true, "armor": true, "treasure": true}
 	validRarities := map[string]bool{"common": true, "fine": true, "rare": true, "epic": true, "legendary": true}
+	for _, row := range snapshot.Currencies {
+		key := strings.TrimSpace(row.Key)
+		if key == "" || currencies[key] || strings.TrimSpace(row.Name) == "" {
+			return fmt.Errorf("货币配置无效或重复: %s", key)
+		}
+		currencies[key] = true
+	}
+	for _, required := range []string{"primary_coin", "journey_badge", "season_token"} {
+		if !currencies[required] {
+			return fmt.Errorf("配置缺少内置货币 %s", required)
+		}
+	}
+	validSlots := map[string]bool{"weapon": true, "armor": true, "treasure": true}
 	for _, row := range snapshot.EquipmentTemplates {
 		if row.Key == "" || equipment[row.Key] || row.Name == "" || !validSlots[row.Slot] || !validRarities[row.Rarity] || row.RequiredLevel < 1 || row.MinAffixes < 0 || row.MaxAffixes < row.MinAffixes || row.SalvageQuantity < 0 {
 			return fmt.Errorf("装备模板配置无效或重复: %s", row.Key)
@@ -131,7 +162,7 @@ func validateAdventureSnapshot(snapshot ConfigSnapshot, items, events map[string
 		}
 	}
 	for _, row := range snapshot.EquipmentRecipes {
-		if !equipment[row.EquipmentKey] || !items[row.BlueprintFragmentItem] || row.BlueprintFragments <= 0 || row.CurrencyCost < 0 {
+		if !equipment[row.EquipmentKey] || row.BlueprintFragments <= 0 || row.CurrencyCost < 0 {
 			return fmt.Errorf("装备配方配置无效: %s", row.EquipmentKey)
 		}
 	}
@@ -146,15 +177,46 @@ func validateAdventureSnapshot(snapshot ConfigSnapshot, items, events map[string
 			return fmt.Errorf("奖励池条目配置无效: %s/%s", row.PoolKey, row.RewardKey)
 		}
 		switch row.RewardType {
-		case "item", "blueprint_fragment":
+		case "item":
 			if !items[row.RewardKey] {
-				return fmt.Errorf("奖励池 %s 引用了不存在的物品 %s", row.PoolKey, row.RewardKey)
+				return fmt.Errorf("奖励池 %s 引用了不存在的统一物品 %s", row.PoolKey, row.RewardKey)
+			}
+		case "currency":
+			if !currencies[row.RewardKey] {
+				return fmt.Errorf("奖励池 %s 引用了不存在的货币 %s", row.PoolKey, row.RewardKey)
 			}
 		case "equipment":
 			if !equipment[row.RewardKey] {
 				return fmt.Errorf("奖励池 %s 引用了不存在的装备 %s", row.PoolKey, row.RewardKey)
 			}
+		case "blueprint_fragment":
+			if !equipment[row.RewardKey] {
+				return fmt.Errorf("奖励池 %s 引用了不存在的装备蓝图 %s", row.PoolKey, row.RewardKey)
+			}
 		}
+	}
+	validProducts := map[string]bool{"item": true, "equipment": true, "blueprint_fragment": true}
+	validLimits := map[string]bool{"none": true, "daily": true, "weekly": true, "season": true, "lifetime": true}
+	seenShopItems := map[string]bool{}
+	for _, row := range snapshot.AdventureShopItems {
+		key := strings.TrimSpace(row.Key)
+		if key == "" || seenShopItems[key] || strings.TrimSpace(row.Name) == "" || !validProducts[row.ProductType] || !validLimits[row.LimitType] || row.Quantity <= 0 || row.Price < 0 || row.LimitQuantity < 0 || (row.LimitType != "none" && row.LimitQuantity <= 0) {
+			return fmt.Errorf("远征商店商品配置无效或重复: %s", key)
+		}
+		if row.ProductType == "item" && !items[row.ProductKey] {
+			return fmt.Errorf("远征商店商品 %s 引用了不存在的统一物品 %s", key, row.ProductKey)
+		}
+		if row.ProductType != "item" && !equipment[row.ProductKey] {
+			return fmt.Errorf("远征商店商品 %s 引用了不存在的装备或蓝图 %s", key, row.ProductKey)
+		}
+		currencyKey := strings.TrimSpace(row.CurrencyKey)
+		if currencyKey == "" {
+			currencyKey = "journey_badge"
+		}
+		if !currencies[currencyKey] {
+			return fmt.Errorf("远征商店商品 %s 引用了不存在的货币 %s", key, currencyKey)
+		}
+		seenShopItems[key] = true
 	}
 	checkPool := func(owner, key string) error {
 		if key != "" && !pools[key] {
@@ -175,7 +237,7 @@ func validateAdventureSnapshot(snapshot ConfigSnapshot, items, events map[string
 			return fmt.Errorf("区域远征配置无效: %s", row.ZoneKey)
 		}
 		if row.RequiredItem != "" && !items[row.RequiredItem] {
-			return fmt.Errorf("区域远征 %s 引用了不存在的物品 %s", row.ZoneKey, row.RequiredItem)
+			return fmt.Errorf("区域远征 %s 引用了不存在的统一物品 %s", row.ZoneKey, row.RequiredItem)
 		}
 		if err := checkPool("区域远征 "+row.ZoneKey, row.FixedLootPoolKey); err != nil {
 			return err

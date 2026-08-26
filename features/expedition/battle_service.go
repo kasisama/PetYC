@@ -37,13 +37,11 @@ func (service *Service) PlayRockPaperScissors(ctx context.Context, accountID, so
 	}
 	var result BattleResult
 	err := gameplay.WithTransactionRetry(ctx, service.DB, func(tx *gorm.DB) error {
-		var pet models.PetProfile
-		if err := tx.First(&pet, "account_id = ?", accountID).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return ErrPetRequired
-			}
+		petRow, err := gameplay.ActivePetTx(tx, accountID)
+		if err != nil {
 			return err
 		}
+		pet := *petRow
 		attempts, err := consumeBattleAttemptTx(tx, accountID, service.Now(), 20)
 		if err != nil {
 			return err
@@ -62,7 +60,7 @@ func (service *Service) PlayRockPaperScissors(ctx context.Context, accountID, so
 			reward = 1
 		}
 		record := models.BattleRecord{
-			ID: uuid.NewString(), AccountID: accountID, ActionKey: actionKey, Mode: "猜拳",
+			ID: uuid.NewString(), AccountID: accountID, PetID: pet.ID, ActionKey: actionKey, Mode: "猜拳",
 			PlayerChoice: choice, OpponentChoice: opponent, Result: battleResult,
 			RewardCurrency: reward, Roll: roll, CreatedAt: service.Now(),
 		}

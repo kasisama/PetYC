@@ -2,7 +2,6 @@ package gameplay
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -52,19 +51,17 @@ func (service *DailyService) CheckIn(ctx context.Context, accountID string) (*Da
 	now := service.now()
 	err := WithTransactionRetry(ctx, service.DB, func(tx *gorm.DB) error {
 		*result = DailyCheckinResult{CurrencyKey: DefaultCurrencyKey}
-		var pet models.PetProfile
-		if err := tx.First(&pet, "account_id = ?", accountID).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return ErrPetRequired
-			}
+		activePet, err := ActivePetTx(tx, accountID)
+		if err != nil {
 			return err
 		}
+		pet := *activePet
 
 		var previousCount int64
-		if err := tx.Model(&models.CompanionJournal{}).Where("account_id = ?", accountID).Count(&previousCount).Error; err != nil {
+		if err := tx.Model(&models.CompanionJournal{}).Where("account_id = ? AND pet_id = ?", accountID, pet.ID).Count(&previousCount).Error; err != nil {
 			return err
 		}
-		entry := models.CompanionJournal{AccountID: accountID, Day: now.Format("2006-01-02"), Action: "签到", CreatedAt: now}
+		entry := models.CompanionJournal{AccountID: accountID, PetID: pet.ID, Day: now.Format("2006-01-02"), Action: "签到", CreatedAt: now}
 		created := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&entry)
 		if created.Error != nil {
 			return created.Error
@@ -108,7 +105,7 @@ func (service *DailyService) CheckIn(ctx context.Context, accountID string) (*Da
 			}
 		}
 		return tx.Model(&models.CompanionJournal{}).
-			Where("account_id = ? AND day >= ? AND day <= ?", accountID, now.AddDate(0, 0, -6).Format("2006-01-02"), now.Format("2006-01-02")).
+			Where("account_id = ? AND pet_id = ? AND day >= ? AND day <= ?", accountID, pet.ID, now.AddDate(0, 0, -6).Format("2006-01-02"), now.Format("2006-01-02")).
 			Count(&result.RecentDays).Error
 	})
 	return result, err
@@ -174,16 +171,20 @@ func parseRewardItems(value string) ([]DailyRewardItem, error) {
 }
 
 func recordCareTx(tx *gorm.DB, accountID string, now time.Time) error {
-	profile := models.PetBehaviorProfile{AccountID: accountID, Care: 1, UpdatedAt: now}
+	pet, err := ActivePetTx(tx, accountID)
+	if err != nil {
+		return err
+	}
+	profile := models.PetBehaviorProfile{PetID: pet.ID, AccountID: accountID, Care: 1, UpdatedAt: now}
 	if err := tx.Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "account_id"}},
+		Columns: []clause.Column{{Name: "pet_id"}},
 		DoUpdates: clause.Assignments(map[string]interface{}{
 			"care": gorm.Expr("care + 1"), "updated_at": now,
 		}),
 	}).Create(&profile).Error; err != nil {
 		return err
 	}
-	if err := tx.First(&profile, "account_id = ?", accountID).Error; err != nil {
+	if err := tx.First(&profile, "pet_id = ?", pet.ID).Error; err != nil {
 		return err
 	}
 	trait := gameplayrules.ResolveTrait(tx, profile)
@@ -193,7 +194,7 @@ func recordCareTx(tx *gorm.DB, accountID string, now time.Time) error {
 	if err := tx.Model(&profile).Update("trait", trait).Error; err != nil {
 		return err
 	}
-	return tx.Model(&models.PetProfile{}).Where("account_id = ?", accountID).Update("traits", trait).Error
+	return tx.Model(&models.PetProfile{}).Where("id = ?", pet.ID).Update("traits", trait).Error
 }
 
 func (service *DailyService) inventory() *InventoryService {

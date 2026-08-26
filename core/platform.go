@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"sort"
 	"strconv"
 	"strings"
@@ -275,6 +276,7 @@ func RebuildUnifiedRouter(db *gorm.DB) error {
 		configs[row.FuncName] = row
 	}
 	next := NewCommandRouter()
+	triggerOwners := make(map[string]string)
 	unifiedFeatureMu.RLock()
 	defer unifiedFeatureMu.RUnlock()
 	for name, feature := range unifiedFeatures {
@@ -288,8 +290,50 @@ func RebuildUnifiedRouter(db *gorm.DB) error {
 		if !enabled || command == "" {
 			continue
 		}
-		if err := next.RegisterAll(featureTriggers(command, feature.Aliases), feature.handler); err != nil {
+		triggers := featureTriggers(command, feature.Aliases)
+		for _, trigger := range triggers {
+			trigger = strings.TrimSpace(trigger)
+			if owner, exists := triggerOwners[trigger]; exists && owner != name {
+				return fmt.Errorf("指令 %q 同时属于功能 %s 和 %s", trigger, owner, name)
+			}
+			triggerOwners[trigger] = name
+		}
+		if err := next.RegisterAll(triggers, feature.handler); err != nil {
 			return err
+		}
+	}
+	if db.Migrator().HasTable(&models.MenuConfig{}) {
+		menus := make([]models.MenuConfig, 0)
+		if err := db.Order("name asc").Find(&menus).Error; err != nil {
+			return err
+		}
+		for _, row := range menus {
+			trigger := strings.TrimSpace(row.Name)
+			if trigger == "" || strings.TrimSpace(row.Reply) == "" {
+				continue
+			}
+			if owner, owned := triggerOwners[trigger]; owned {
+				log.Printf("[菜单场景] 名称 %q 与已有指令 %s 冲突，已跳过运行时注册", trigger, owner)
+				continue
+			}
+			menuName := trigger
+			if err := next.Register(menuName, func(ctx context.Context, _ InboundEvent) (OutboundMessage, error) {
+				var current models.MenuConfig
+				if err := db.WithContext(ctx).Where("name = ?", menuName).First(&current).Error; err != nil {
+					return OutboundMessage{}, err
+				}
+				reply := strings.TrimSpace(current.Reply)
+				return OutboundMessage{
+					MessageKey: "menu." + menuName,
+					Text:       reply,
+					Image:      ExistingImageSource(current.Image),
+					Markdown:   &MarkdownPayload{Content: reply},
+					ReplyTo:    "source",
+				}, nil
+			}); err != nil {
+				return err
+			}
+			triggerOwners[menuName] = "menu:" + menuName
 		}
 	}
 	unifiedRouterMu.Lock()
@@ -302,8 +346,8 @@ func SyncUnifiedCommandConfigs(db *gorm.DB) error {
 	if db == nil {
 		return errors.New("command database is nil")
 	}
-	const catalogVersion = "5"
-	return db.Transaction(func(tx *gorm.DB) error {
+	const catalogVersion = "6"
+	if err := db.Transaction(func(tx *gorm.DB) error {
 		var state models.SystemConfig
 		if err := tx.Limit(1).Find(&state, "key = ?", "Internal.CommandCatalogVersion").Error; err != nil {
 			return err
@@ -331,6 +375,13 @@ func SyncUnifiedCommandConfigs(db *gorm.DB) error {
 					}
 					continue
 				}
+				legacyDefaults := map[string]string{"equipment": "装备", "blueprints": "蓝图"}
+				if legacy, exists := legacyDefaults[feature.FuncName]; exists && row.Command == legacy {
+					row.Command = feature.DefaultCommand
+					if err := tx.Model(&row).Update("command", row.Command).Error; err != nil {
+						return err
+					}
+				}
 				if err := tx.Model(&row).Updates(map[string]interface{}{
 					"display_name": feature.DisplayName, "category": feature.Category,
 					"description": feature.Description, "sort_order": feature.SortOrder,
@@ -342,8 +393,12 @@ func SyncUnifiedCommandConfigs(db *gorm.DB) error {
 				return err
 			}
 		}
-		return RebuildUnifiedRouter(tx)
-	})
+		return nil
+	}); err != nil {
+		return err
+	}
+	// 路由处理器的生命周期长于上面的事务，必须捕获根 DB，不能持有已提交的 tx。
+	return RebuildUnifiedRouter(db)
 }
 
 func RouteInbound(ctx context.Context, event InboundEvent) (OutboundMessage, bool, error) {

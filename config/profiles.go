@@ -15,8 +15,8 @@ import (
 )
 
 const (
-	ProfileSchemaVersion = 1
-	ApplicationVersion   = "0.0.2"
+	ProfileSchemaVersion = 2
+	ApplicationVersion   = "0.1.0"
 	OfficialProfileID    = "00000000-0000-0000-0000-000000000001"
 )
 
@@ -29,43 +29,50 @@ var LocalSystemKeys = map[string]struct{}{
 // ConfigSnapshot is the only configuration contract accepted by profiles and
 // package import/export. Operational and player tables are intentionally absent.
 type ConfigSnapshot struct {
-	System                   []models.SystemConfig                    `json:"system"`
-	Commands                 []models.CommandConfig                   `json:"commands"`
-	PetSpecies               []models.PetSpeciesConfig                `json:"pet_species"`
-	Items                    []models.ItemConfig                      `json:"items"`
-	ShopItems                []models.ShopItemConfig                  `json:"shop_items"`
-	CheckinRewards           []models.CheckinRewardConfig             `json:"checkin_rewards"`
-	WorkSettings             []models.WorkSettingConfig               `json:"work_settings"`
-	Menus                    []models.MenuConfig                      `json:"menus"`
-	Images                   []models.ImageConfig                     `json:"images"`
-	LiveEvents               []models.LiveEventConfig                 `json:"live_events"`
-	RewardTracks             []models.RewardTrackConfig               `json:"reward_tracks"`
-	GrowthRoles              []models.GrowthRoleConfig                `json:"growth_roles"`
-	GrowthStances            []models.GrowthStanceConfig              `json:"growth_stances"`
-	PersonalityRules         []models.PersonalityRuleConfig           `json:"personality_rules"`
-	CodexCatalog             []models.CodexCatalogConfig              `json:"codex_catalog"`
-	ExpeditionTemplates      []models.ExpeditionTemplateConfig        `json:"expedition_templates"`
-	ChanceGames              []models.ChanceGameConfig                `json:"chance_games"`
-	ChanceRewards            []models.ChanceRewardConfig              `json:"chance_rewards"`
-	AdventureMaps            []models.AdventureMapConfig              `json:"adventure_maps"`
-	AdventureZones           []models.AdventureZoneConfig             `json:"adventure_zones"`
-	AdventurePrereqs         []models.AdventureZonePrerequisiteConfig `json:"adventure_zone_prerequisites"`
-	AdventureObjectives      []models.AdventureObjectiveConfig        `json:"adventure_objectives"`
-	AdventureMonsters        []models.AdventureMonsterConfig          `json:"adventure_monsters"`
-	AdventureSkills          []models.AdventureSkillConfig            `json:"adventure_skills"`
-	AdventureMonsterSkills   []models.AdventureMonsterSkillConfig     `json:"adventure_monster_skills"`
-	AdventureEncounters      []models.AdventureEncounterConfig        `json:"adventure_encounters"`
-	AdventureLootPools       []models.AdventureLootPoolConfig         `json:"adventure_loot_pools"`
-	AdventureLootEntries     []models.AdventureLootEntryConfig        `json:"adventure_loot_entries"`
-	AdventureExpeditions     []models.AdventureExpeditionConfig       `json:"adventure_expeditions"`
-	AdventureBosses          []models.AdventureBossConfig             `json:"adventure_bosses"`
-	AdventureBossRewardTiers []models.AdventureBossRewardTierConfig   `json:"adventure_boss_reward_tiers"`
-	EquipmentTemplates       []models.EquipmentTemplateConfig         `json:"equipment_templates"`
-	EquipmentAffixes         []models.EquipmentAffixConfig            `json:"equipment_affixes"`
-	EquipmentRecipes         []models.EquipmentRecipeConfig           `json:"equipment_recipes"`
-	EquipmentRecipeMaterials []models.EquipmentRecipeMaterialConfig   `json:"equipment_recipe_materials"`
-	LiveEventChoices         []models.LiveEventChoiceConfig           `json:"live_event_choices"`
-	LiveEventSources         []models.LiveEventExpeditionSourceConfig `json:"live_event_sources"`
+	System                    []models.SystemConfig                    `json:"system"`
+	Commands                  []models.CommandConfig                   `json:"commands"`
+	PetSpecies                []models.PetSpeciesConfig                `json:"pet_species"`
+	PetEvolutionRules         []models.PetEvolutionRuleConfig          `json:"pet_evolution_rules"`
+	PetEvolutionCosts         []models.PetEvolutionCostConfig          `json:"pet_evolution_costs"`
+	PetSkillUnlocks           []models.PetSkillUnlockConfig            `json:"pet_skill_unlocks"`
+	Items                     []models.ItemConfig                      `json:"items"`
+	AdventureLevels           []models.AdventureLevelConfig            `json:"adventure_levels"`
+	ShopItems                 []models.ShopItemConfig                  `json:"shop_items"`
+	CheckinRewards            []models.CheckinRewardConfig             `json:"checkin_rewards"`
+	WorkSettings              []models.WorkSettingConfig               `json:"work_settings"`
+	Menus                     []models.MenuConfig                      `json:"menus"`
+	Images                    []models.ImageConfig                     `json:"images"`
+	LiveEvents                []models.LiveEventConfig                 `json:"live_events"`
+	RewardTracks              []models.RewardTrackConfig               `json:"reward_tracks"`
+	GrowthRoles               []models.GrowthRoleConfig                `json:"growth_roles"`
+	GrowthStances             []models.GrowthStanceConfig              `json:"growth_stances"`
+	PersonalityRules          []models.PersonalityRuleConfig           `json:"personality_rules"`
+	CodexCatalog              []models.CodexCatalogConfig              `json:"codex_catalog"`
+	ExpeditionTemplates       []models.ExpeditionTemplateConfig        `json:"expedition_templates"`
+	ChanceGames               []models.ChanceGameConfig                `json:"chance_games"`
+	ChanceRewards             []models.ChanceRewardConfig              `json:"chance_rewards"`
+	AdventureMaps             []models.AdventureMapConfig              `json:"adventure_maps"`
+	AdventureZones            []models.AdventureZoneConfig             `json:"adventure_zones"`
+	AdventurePrereqs          []models.AdventureZonePrerequisiteConfig `json:"adventure_zone_prerequisites"`
+	AdventureObjectives       []models.AdventureObjectiveConfig        `json:"adventure_objectives"`
+	AdventureMonsters         []models.AdventureMonsterConfig          `json:"adventure_monsters"`
+	AdventureSkills           []models.AdventureSkillConfig            `json:"adventure_skills"`
+	AdventureMonsterSkills    []models.AdventureMonsterSkillConfig     `json:"adventure_monster_skills"`
+	AdventureEncounters       []models.AdventureEncounterConfig        `json:"adventure_encounters"`
+	AdventureEncounterEffects []models.AdventureEncounterEffectConfig  `json:"adventure_encounter_effects"`
+	AdventureLootPools        []models.AdventureLootPoolConfig         `json:"adventure_loot_pools"`
+	AdventureLootEntries      []models.AdventureLootEntryConfig        `json:"adventure_loot_entries"`
+	Currencies                []models.CurrencyConfig                  `json:"currencies"`
+	AdventureShopItems        []models.AdventureShopItemConfig         `json:"adventure_shop_items"`
+	AdventureExpeditions      []models.AdventureExpeditionConfig       `json:"adventure_expeditions"`
+	AdventureBosses           []models.AdventureBossConfig             `json:"adventure_bosses"`
+	AdventureBossRewardTiers  []models.AdventureBossRewardTierConfig   `json:"adventure_boss_reward_tiers"`
+	EquipmentTemplates        []models.EquipmentTemplateConfig         `json:"equipment_templates"`
+	EquipmentAffixes          []models.EquipmentAffixConfig            `json:"equipment_affixes"`
+	EquipmentRecipes          []models.EquipmentRecipeConfig           `json:"equipment_recipes"`
+	EquipmentRecipeMaterials  []models.EquipmentRecipeMaterialConfig   `json:"equipment_recipe_materials"`
+	LiveEventChoices          []models.LiveEventChoiceConfig           `json:"live_event_choices"`
+	LiveEventSources          []models.LiveEventExpeditionSourceConfig `json:"live_event_sources"`
 }
 
 type SnapshotSummary struct {
@@ -80,7 +87,7 @@ type CompatibilityConflict struct {
 }
 
 func (snapshot ConfigSnapshot) Summary() SnapshotSummary {
-	counts := []int{len(snapshot.System), len(snapshot.Commands), len(snapshot.PetSpecies), len(snapshot.Items), len(snapshot.ShopItems), len(snapshot.CheckinRewards), len(snapshot.WorkSettings), len(snapshot.Menus), len(snapshot.Images), len(snapshot.LiveEvents), len(snapshot.RewardTracks), len(snapshot.GrowthRoles), len(snapshot.GrowthStances), len(snapshot.PersonalityRules), len(snapshot.CodexCatalog), len(snapshot.ExpeditionTemplates), len(snapshot.ChanceGames), len(snapshot.ChanceRewards), len(snapshot.AdventureMaps), len(snapshot.AdventureZones), len(snapshot.AdventurePrereqs), len(snapshot.AdventureObjectives), len(snapshot.AdventureMonsters), len(snapshot.AdventureSkills), len(snapshot.AdventureMonsterSkills), len(snapshot.AdventureEncounters), len(snapshot.AdventureLootPools), len(snapshot.AdventureLootEntries), len(snapshot.AdventureExpeditions), len(snapshot.AdventureBosses), len(snapshot.AdventureBossRewardTiers), len(snapshot.EquipmentTemplates), len(snapshot.EquipmentAffixes), len(snapshot.EquipmentRecipes), len(snapshot.EquipmentRecipeMaterials), len(snapshot.LiveEventChoices), len(snapshot.LiveEventSources)}
+	counts := []int{len(snapshot.System), len(snapshot.Commands), len(snapshot.PetSpecies), len(snapshot.PetEvolutionRules), len(snapshot.PetEvolutionCosts), len(snapshot.PetSkillUnlocks), len(snapshot.Items), len(snapshot.AdventureLevels), len(snapshot.ShopItems), len(snapshot.CheckinRewards), len(snapshot.WorkSettings), len(snapshot.Menus), len(snapshot.Images), len(snapshot.LiveEvents), len(snapshot.RewardTracks), len(snapshot.GrowthRoles), len(snapshot.GrowthStances), len(snapshot.PersonalityRules), len(snapshot.CodexCatalog), len(snapshot.ExpeditionTemplates), len(snapshot.ChanceGames), len(snapshot.ChanceRewards), len(snapshot.AdventureMaps), len(snapshot.AdventureZones), len(snapshot.AdventurePrereqs), len(snapshot.AdventureObjectives), len(snapshot.AdventureMonsters), len(snapshot.AdventureSkills), len(snapshot.AdventureMonsterSkills), len(snapshot.AdventureEncounters), len(snapshot.AdventureEncounterEffects), len(snapshot.AdventureLootPools), len(snapshot.AdventureLootEntries), len(snapshot.Currencies), len(snapshot.AdventureShopItems), len(snapshot.AdventureExpeditions), len(snapshot.AdventureBosses), len(snapshot.AdventureBossRewardTiers), len(snapshot.EquipmentTemplates), len(snapshot.EquipmentAffixes), len(snapshot.EquipmentRecipes), len(snapshot.EquipmentRecipeMaterials), len(snapshot.LiveEventChoices), len(snapshot.LiveEventSources)}
 	rows, schemas := 0, 0
 	for _, count := range counts {
 		if count > 0 {
@@ -97,11 +104,13 @@ func CaptureSnapshot(db *gorm.DB) (ConfigSnapshot, error) {
 		target any
 		order  string
 	}{
-		{&snapshot.Commands, "sort_order asc, func_name asc"}, {&snapshot.PetSpecies, "name asc"},
-		{&snapshot.Items, "name asc"}, {&snapshot.ShopItems, "id asc"},
+		{&snapshot.Commands, "sort_order asc, func_name asc"}, {&snapshot.PetSpecies, "family_key asc, stage asc, key asc"},
+		{&snapshot.PetEvolutionRules, "sort_order asc, key asc"}, {&snapshot.PetEvolutionCosts, "evolution_key asc, item_key asc"},
+		{&snapshot.PetSkillUnlocks, "form_key asc, unlock_level asc, sort_order asc"}, {&snapshot.Items, "category asc, key asc"},
+		{&snapshot.AdventureLevels, "level asc"}, {&snapshot.ShopItems, "id asc"},
 		{&snapshot.CheckinRewards, "type asc, day asc, id asc"}, {&snapshot.WorkSettings, "name asc"},
 		{&snapshot.Menus, "name asc"}, {&snapshot.Images, "name asc"},
-		{&snapshot.LiveEvents, "starts_at asc, key asc"}, {&snapshot.RewardTracks, "event_key asc, milestone asc, item_name asc"},
+		{&snapshot.LiveEvents, "starts_at asc, key asc"}, {&snapshot.RewardTracks, "event_key asc, milestone asc, reward_type asc, reward_key asc"},
 		{&snapshot.GrowthRoles, "sort_order asc, name asc"}, {&snapshot.GrowthStances, "sort_order asc, name asc"},
 		{&snapshot.PersonalityRules, "sort_order asc, name asc"}, {&snapshot.CodexCatalog, "sort_order asc, category asc, entry_key asc"},
 		{&snapshot.ExpeditionTemplates, "tier asc"}, {&snapshot.ChanceGames, "game_key asc"},
@@ -110,7 +119,10 @@ func CaptureSnapshot(db *gorm.DB) (ConfigSnapshot, error) {
 		{&snapshot.AdventurePrereqs, "zone_key asc, prerequisite_zone_key asc"}, {&snapshot.AdventureObjectives, "zone_key asc, sort_order asc, key asc"},
 		{&snapshot.AdventureMonsters, "key asc"}, {&snapshot.AdventureSkills, "key asc"},
 		{&snapshot.AdventureMonsterSkills, "monster_key asc, sort_order asc, skill_key asc"}, {&snapshot.AdventureEncounters, "zone_key asc, sort_order asc, encounter_key asc"},
+		{&snapshot.AdventureEncounterEffects, "encounter_key asc, effect_type asc, target_key asc"},
 		{&snapshot.AdventureLootPools, "key asc"}, {&snapshot.AdventureLootEntries, "pool_key asc, sort_order asc, id asc"},
+		{&snapshot.Currencies, "sort_order asc, key asc"},
+		{&snapshot.AdventureShopItems, "sort_order asc, key asc"},
 		{&snapshot.AdventureExpeditions, "zone_key asc"}, {&snapshot.AdventureBosses, "map_key asc, zone_key asc, key asc"},
 		{&snapshot.AdventureBossRewardTiers, "boss_key asc, threshold asc"}, {&snapshot.EquipmentTemplates, "slot asc, rarity asc, key asc"},
 		{&snapshot.EquipmentAffixes, "pool_key asc, key asc"}, {&snapshot.EquipmentRecipes, "equipment_key asc"},
@@ -157,7 +169,7 @@ func ValidateSnapshot(snapshot ConfigSnapshot) error {
 	if len(snapshot.System) == 0 || len(snapshot.Commands) == 0 || len(snapshot.PetSpecies) == 0 || len(snapshot.Items) == 0 {
 		return errors.New("配置方案缺少系统、指令、宠物或物品基础配置")
 	}
-	items, pets, events, games, rewards := map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}
+	items, pets, events, games, rewards, currencies := map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}
 	for _, row := range snapshot.System {
 		if strings.TrimSpace(row.Key) == "" {
 			return errors.New("系统配置键不能为空")
@@ -167,20 +179,57 @@ func ValidateSnapshot(snapshot ConfigSnapshot) error {
 		}
 	}
 	for _, row := range snapshot.Items {
-		key := strings.TrimSpace(row.Name)
+		key := strings.TrimSpace(row.Key)
+		if key == "" {
+			key = strings.TrimSpace(row.Name)
+		}
 		if key == "" || items[key] {
-			return fmt.Errorf("物品名称为空或重复: %s", key)
+			return fmt.Errorf("物品稳定键为空或重复: %s", key)
 		}
 		items[key] = true
+		items[strings.TrimSpace(row.Name)] = true
+	}
+	for _, row := range snapshot.Currencies {
+		if key := strings.TrimSpace(row.Key); key != "" {
+			currencies[key] = true
+		}
 	}
 	for _, row := range snapshot.PetSpecies {
-		key := strings.TrimSpace(row.Name)
+		key := strings.TrimSpace(row.Key)
+		if key == "" {
+			key = strings.TrimSpace(row.Name)
+		}
 		if key == "" || pets[key] {
-			return fmt.Errorf("宠物名称为空或重复: %s", key)
+			return fmt.Errorf("宠物形态稳定键为空或重复: %s", key)
 		}
 		pets[key] = true
+		pets[strings.TrimSpace(row.Name)] = true
 		if err := validateItemList(row.AwakenItems, items, "宠物觉醒 "+key); err != nil {
 			return err
+		}
+	}
+	evolutions := map[string]bool{}
+	for _, row := range snapshot.PetEvolutionRules {
+		if row.Key == "" || evolutions[row.Key] || !pets[row.FromFormKey] || !pets[row.ToFormKey] || row.FromFormKey == row.ToFormKey || row.RequiredGrowth < 0 || row.RequiredAffection < 0 {
+			return fmt.Errorf("宠物进化规则无效: %s", row.Key)
+		}
+		evolutions[row.Key] = true
+	}
+	for _, row := range snapshot.PetEvolutionCosts {
+		if !evolutions[row.EvolutionKey] || !items[row.ItemKey] || row.Quantity <= 0 {
+			return fmt.Errorf("宠物进化消耗无效: %s/%s", row.EvolutionKey, row.ItemKey)
+		}
+	}
+	for _, row := range snapshot.PetSkillUnlocks {
+		if !pets[row.FormKey] || row.SkillKey == "" || row.UnlockLevel < 1 {
+			return fmt.Errorf("宠物技能解锁无效: %s/%s", row.FormKey, row.SkillKey)
+		}
+	}
+	if len(snapshot.AdventureLevels) > 0 {
+		for index, row := range snapshot.AdventureLevels {
+			if row.Level != index+1 || row.XPToNext < 0 || row.PowerAllowance < 0 || (row.Level < len(snapshot.AdventureLevels) && row.XPToNext == 0) {
+				return fmt.Errorf("冒险等级表必须从 1 连续配置且经验值有效: Lv.%d", row.Level)
+			}
 		}
 	}
 	for _, row := range snapshot.LiveEvents {
@@ -229,8 +278,17 @@ func ValidateSnapshot(snapshot ConfigSnapshot) error {
 		if !events[row.EventKey] {
 			return fmt.Errorf("奖励轨道引用了不存在的活动 %s", row.EventKey)
 		}
-		if !items[row.ItemName] {
-			return fmt.Errorf("奖励轨道引用了不存在的物品 %s", row.ItemName)
+		switch row.RewardType {
+		case "item":
+			if !items[row.RewardKey] {
+				return fmt.Errorf("奖励轨道引用了不存在的物品 %s", row.RewardKey)
+			}
+		case "currency":
+			if !currencies[row.RewardKey] {
+				return fmt.Errorf("奖励轨道引用了不存在的货币 %s", row.RewardKey)
+			}
+		default:
+			return fmt.Errorf("奖励轨道奖励类型无效: %s", row.RewardType)
 		}
 	}
 	for _, row := range snapshot.ExpeditionTemplates {
@@ -302,6 +360,12 @@ func snapshotImageReferences(snapshot ConfigSnapshot) []string {
 	for _, row := range snapshot.AdventureExpeditions {
 		add(row.StartImage, row.EndImage)
 	}
+	for _, row := range snapshot.Currencies {
+		add(row.Image)
+	}
+	for _, row := range snapshot.AdventureShopItems {
+		add(row.Image)
+	}
 	for _, row := range snapshot.EquipmentTemplates {
 		add(row.Image)
 	}
@@ -320,13 +384,13 @@ func ApplySnapshot(tx *gorm.DB, snapshot ConfigSnapshot) error {
 	if err := tx.Where("key IN ?", localKeys).Find(&localRows).Error; err != nil {
 		return err
 	}
-	tables := []any{&models.SystemConfig{}, &models.CommandConfig{}, &models.PetSpeciesConfig{}, &models.ItemConfig{}, &models.ShopItemConfig{}, &models.CheckinRewardConfig{}, &models.WorkSettingConfig{}, &models.MenuConfig{}, &models.ImageConfig{}, &models.RewardTrackConfig{}, &models.LiveEventExpeditionSourceConfig{}, &models.LiveEventChoiceConfig{}, &models.LiveEventConfig{}, &models.GrowthRoleConfig{}, &models.GrowthStanceConfig{}, &models.PersonalityRuleConfig{}, &models.CodexCatalogConfig{}, &models.ExpeditionTemplateConfig{}, &models.ChanceRewardConfig{}, &models.ChanceGameConfig{}, &models.EquipmentRecipeMaterialConfig{}, &models.EquipmentRecipeConfig{}, &models.EquipmentAffixConfig{}, &models.EquipmentTemplateConfig{}, &models.AdventureBossRewardTierConfig{}, &models.AdventureBossConfig{}, &models.AdventureExpeditionConfig{}, &models.AdventureLootEntryConfig{}, &models.AdventureLootPoolConfig{}, &models.AdventureEncounterConfig{}, &models.AdventureMonsterSkillConfig{}, &models.AdventureSkillConfig{}, &models.AdventureMonsterConfig{}, &models.AdventureObjectiveConfig{}, &models.AdventureZonePrerequisiteConfig{}, &models.AdventureZoneConfig{}, &models.AdventureMapConfig{}}
+	tables := []any{&models.SystemConfig{}, &models.CommandConfig{}, &models.PetEvolutionCostConfig{}, &models.PetSkillUnlockConfig{}, &models.PetEvolutionRuleConfig{}, &models.PetSpeciesConfig{}, &models.AdventureLevelConfig{}, &models.ItemConfig{}, &models.ShopItemConfig{}, &models.CheckinRewardConfig{}, &models.WorkSettingConfig{}, &models.MenuConfig{}, &models.ImageConfig{}, &models.RewardTrackConfig{}, &models.LiveEventExpeditionSourceConfig{}, &models.LiveEventChoiceConfig{}, &models.LiveEventConfig{}, &models.GrowthRoleConfig{}, &models.GrowthStanceConfig{}, &models.PersonalityRuleConfig{}, &models.CodexCatalogConfig{}, &models.ExpeditionTemplateConfig{}, &models.ChanceRewardConfig{}, &models.ChanceGameConfig{}, &models.EquipmentRecipeMaterialConfig{}, &models.EquipmentRecipeConfig{}, &models.EquipmentAffixConfig{}, &models.EquipmentTemplateConfig{}, &models.AdventureBossRewardTierConfig{}, &models.AdventureBossConfig{}, &models.AdventureExpeditionConfig{}, &models.AdventureShopItemConfig{}, &models.CurrencyConfig{}, &models.AdventureLootEntryConfig{}, &models.AdventureLootPoolConfig{}, &models.AdventureEncounterEffectConfig{}, &models.AdventureEncounterConfig{}, &models.AdventureMonsterSkillConfig{}, &models.AdventureSkillConfig{}, &models.AdventureMonsterConfig{}, &models.AdventureObjectiveConfig{}, &models.AdventureZonePrerequisiteConfig{}, &models.AdventureZoneConfig{}, &models.AdventureMapConfig{}}
 	for _, model := range tables {
 		if err := tx.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(model).Error; err != nil {
 			return err
 		}
 	}
-	rows := []any{snapshot.System, snapshot.Commands, snapshot.PetSpecies, snapshot.Items, snapshot.ShopItems, snapshot.CheckinRewards, snapshot.WorkSettings, snapshot.Menus, snapshot.Images, snapshot.LiveEvents, snapshot.RewardTracks, snapshot.GrowthRoles, snapshot.GrowthStances, snapshot.PersonalityRules, snapshot.CodexCatalog, snapshot.ExpeditionTemplates, snapshot.ChanceGames, snapshot.ChanceRewards, snapshot.AdventureMaps, snapshot.AdventureZones, snapshot.AdventurePrereqs, snapshot.AdventureObjectives, snapshot.AdventureMonsters, snapshot.AdventureSkills, snapshot.AdventureMonsterSkills, snapshot.AdventureEncounters, snapshot.AdventureLootPools, snapshot.AdventureLootEntries, snapshot.AdventureExpeditions, snapshot.AdventureBosses, snapshot.AdventureBossRewardTiers, snapshot.EquipmentTemplates, snapshot.EquipmentAffixes, snapshot.EquipmentRecipes, snapshot.EquipmentRecipeMaterials, snapshot.LiveEventChoices, snapshot.LiveEventSources}
+	rows := []any{snapshot.System, snapshot.Commands, snapshot.PetSpecies, snapshot.PetEvolutionRules, snapshot.PetEvolutionCosts, snapshot.PetSkillUnlocks, snapshot.AdventureLevels, snapshot.Items, snapshot.ShopItems, snapshot.CheckinRewards, snapshot.WorkSettings, snapshot.Menus, snapshot.Images, snapshot.LiveEvents, snapshot.RewardTracks, snapshot.GrowthRoles, snapshot.GrowthStances, snapshot.PersonalityRules, snapshot.CodexCatalog, snapshot.ExpeditionTemplates, snapshot.ChanceGames, snapshot.ChanceRewards, snapshot.AdventureMaps, snapshot.AdventureZones, snapshot.AdventurePrereqs, snapshot.AdventureObjectives, snapshot.AdventureMonsters, snapshot.AdventureSkills, snapshot.AdventureMonsterSkills, snapshot.AdventureEncounters, snapshot.AdventureEncounterEffects, snapshot.AdventureLootPools, snapshot.AdventureLootEntries, snapshot.Currencies, snapshot.AdventureShopItems, snapshot.AdventureExpeditions, snapshot.AdventureBosses, snapshot.AdventureBossRewardTiers, snapshot.EquipmentTemplates, snapshot.EquipmentAffixes, snapshot.EquipmentRecipes, snapshot.EquipmentRecipeMaterials, snapshot.LiveEventChoices, snapshot.LiveEventSources}
 	for _, value := range rows {
 		raw, _ := json.Marshal(value)
 		if string(raw) != "[]" && string(raw) != "null" {
@@ -392,6 +456,9 @@ func CheckSnapshotCompatibility(db *gorm.DB, snapshot ConfigSnapshot) ([]Compati
 		{"live_events", "adventure_expedition_runs", "event_key", "status = 'running' AND event_key <> ''", events},
 	}
 	for _, check := range checks {
+		if !db.Migrator().HasTable(check.table) {
+			continue
+		}
 		values := make([]string, 0)
 		if err := db.Table(check.table).Where(check.condition).Distinct(check.column).Pluck(check.column, &values).Error; err != nil {
 			return nil, err

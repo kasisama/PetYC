@@ -64,9 +64,15 @@ func ensureAdventureProgressTx(tx *gorm.DB, accountID string, progress *models.P
 	return tx.First(progress, "account_id = ?", accountID).Error
 }
 
-func adventureXPForNextLevel(level int) int64 {
+func adventureXPForNextLevelTx(tx *gorm.DB, level int) int64 {
 	if level < 1 {
 		level = 1
+	}
+	if tx.Migrator().HasTable(&models.AdventureLevelConfig{}) {
+		var configured models.AdventureLevelConfig
+		if result := tx.Limit(1).Find(&configured, "level = ?", level); result.Error == nil && result.RowsAffected > 0 {
+			return configured.XPToNext
+		}
 	}
 	return 100 + int64(50*(level-1))
 }
@@ -80,8 +86,8 @@ func (service *Service) addAdventureXPTx(tx *gorm.DB, accountID string, amount i
 		return progress, nil
 	}
 	progress.XP += amount
-	for progress.XP >= adventureXPForNextLevel(progress.Level) {
-		progress.XP -= adventureXPForNextLevel(progress.Level)
+	for next := adventureXPForNextLevelTx(tx, progress.Level); next > 0 && progress.XP >= next; next = adventureXPForNextLevelTx(tx, progress.Level) {
+		progress.XP -= next
 		progress.Level++
 	}
 	progress.UpdatedAt = service.Now()
@@ -158,22 +164,19 @@ func (service *Service) ExploreZoneInCommunity(ctx context.Context, accountID, c
 		if !accessible {
 			return fmt.Errorf("%w: 需要先完成 %s", ErrZoneLocked, strings.Join(missing, "、"))
 		}
-		var pet models.PetProfile
-		if err := tx.First(&pet, "account_id = ?", accountID).Error; err != nil {
-			return ErrPetRequired
+		petRow, err := gameplay.ActivePetTx(tx, accountID)
+		if err != nil {
+			return err
 		}
+		pet := *petRow
 		if pet.Status == "受伤" {
 			return ErrAdventureInjured
 		}
-		if pet.Status != "" && pet.Status != "空闲" {
-			return ErrAdventureBusy
-		}
-		var active int64
-		if err := tx.Model(&models.AdventureExplorationSession{}).Where("account_id = ? AND status = ?", accountID, "active").Count(&active).Error; err != nil {
+		if err := gameplay.ReservePetRunTx(tx, accountID, pet.ID); err != nil {
+			if errors.Is(err, gameplay.ErrTooManyConcurrentRuns) || errors.Is(err, gameplay.ErrActivityActive) {
+				return ErrAdventureBusy
+			}
 			return err
-		}
-		if active > 0 {
-			return ErrAdventureBusy
 		}
 		if zone.HungerCost > 0 && pet.Hunger-zone.HungerCost <= 10 {
 			return gameplay.ErrPetTooHungry
@@ -205,7 +208,7 @@ func (service *Service) ExploreZoneInCommunity(ctx context.Context, accountID, c
 			}
 		}
 		now := service.Now()
-		session := models.AdventureExplorationSession{ID: uuid.NewString(), AccountID: accountID, CommunityID: communityID, MapKey: adventureMap.Key, ZoneKey: zone.Key, EncounterKey: selected.EncounterKey, Status: "active", StartedAt: now}
+		session := models.AdventureExplorationSession{ID: uuid.NewString(), AccountID: accountID, PetID: pet.ID, CommunityID: communityID, MapKey: adventureMap.Key, ZoneKey: zone.Key, EncounterKey: selected.EncounterKey, Status: "active", StartedAt: now}
 		pet.Hunger -= zone.HungerCost
 		pet.Readiness -= zone.ReadinessCost
 		pet.Status = "探索"
@@ -256,7 +259,7 @@ func (service *Service) startAdventureCombatTx(tx *gorm.DB, exploration *models.
 	if err := tx.First(&monster, "key = ? AND enabled = ?", monsterKey, true).Error; err != nil {
 		return nil, err
 	}
-	stats, err := service.EquippedStatsTx(tx, pet.AccountID)
+	stats, err := service.EquippedStatsForPetTx(tx, pet.AccountID, pet.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -270,7 +273,7 @@ func (service *Service) startAdventureCombatTx(tx *gorm.DB, exploration *models.
 		monsterHealth = 1
 	}
 	combat := models.AdventureCombatSession{
-		ID: uuid.NewString(), AccountID: pet.AccountID, CommunityID: exploration.CommunityID, ExplorationID: exploration.ID, MonsterKey: monster.Key,
+		ID: uuid.NewString(), AccountID: pet.AccountID, PetID: pet.ID, CommunityID: exploration.CommunityID, ExplorationID: exploration.ID, MonsterKey: monster.Key,
 		Status: "active", Round: 1, PlayerHealth: pet.Health + stats.Health, MonsterHealth: monsterHealth,
 		CooldownsJSON: "{}", ExpiresAt: service.Now().Add(10 * time.Minute), StartedAt: service.Now(),
 	}
@@ -397,10 +400,11 @@ func (service *Service) CombatAction(ctx context.Context, accountID, actionKey, 
 			}
 			return ErrCombatExpired
 		}
-		var pet models.PetProfile
-		if err := tx.First(&pet, "account_id = ?", accountID).Error; err != nil {
+		petRow, err := gameplay.PetByIDTx(tx, accountID, combat.PetID)
+		if err != nil {
 			return err
 		}
+		pet := *petRow
 		var monster models.AdventureMonsterConfig
 		if err := tx.First(&monster, "key = ?", combat.MonsterKey).Error; err != nil {
 			return err
@@ -430,7 +434,7 @@ func (service *Service) CombatAction(ctx context.Context, accountID, actionKey, 
 				monster.Wisdom = monster.Wisdom * int64(zone.DifficultyPermille) / 1000
 			}
 		}
-		stats, err := service.EquippedStatsTx(tx, accountID)
+		stats, err := service.EquippedStatsForPetTx(tx, accountID, combat.PetID)
 		if err != nil {
 			return err
 		}
@@ -666,10 +670,11 @@ func (service *Service) adventureDamage(attack, wisdom, defense int64, powerPerm
 func (service *Service) finishCombatTx(tx *gorm.DB, combat *models.AdventureCombatSession, status string) error {
 	now := service.Now()
 	combat.Status, combat.FinishedAt = status, &now
-	var pet models.PetProfile
-	if err := tx.First(&pet, "account_id = ?", combat.AccountID).Error; err != nil {
+	petRow, err := gameplay.PetByIDTx(tx, combat.AccountID, combat.PetID)
+	if err != nil {
 		return err
 	}
+	pet := *petRow
 	if status == "defeat" || status == "expired" {
 		pet.Health, pet.Status = 1, "受伤"
 	} else {

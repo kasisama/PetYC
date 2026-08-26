@@ -16,6 +16,20 @@ import (
 	"qq-pet-saas/models"
 )
 
+func upsertTestSpecies(t *testing.T, db *gorm.DB, species models.PetSpeciesConfig) {
+	t.Helper()
+	if species.Key == "" {
+		species.Key = species.Name
+	}
+	if species.FamilyKey == "" {
+		species.FamilyKey = species.Key
+	}
+	species.Adoptable = true
+	if err := db.Where("name = ?", species.Name).Assign(species).FirstOrCreate(&models.PetSpeciesConfig{}).Error; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPlayerHandlersUseTheUnifiedReplyConstructor(t *testing.T) {
 	entries, err := os.ReadDir(".")
 	if err != nil {
@@ -40,6 +54,58 @@ func TestPlayerHandlersUseTheUnifiedReplyConstructor(t *testing.T) {
 	}
 }
 
+func TestMenuUsesConfiguredSceneReplyAndImage(t *testing.T) {
+	service, _, _ := newTestService(t)
+	if err := service.DB.AutoMigrate(&models.MenuConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.DB.Save(&models.MenuConfig{
+		Name: "主菜单", Reply: "欢迎来到图文菜单", Image: "https://cdn.example.com/menu.webp",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	message, err := handleMenu(context.Background(), oneBotEvent("100", "menu-image", "宠物菜单"), service)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if message.Text != "欢迎来到图文菜单" || message.Image != "https://cdn.example.com/menu.webp" {
+		t.Fatalf("菜单场景未返回配置图文: %#v", message)
+	}
+}
+
+func TestMenuEmptyOrInvalidImageStillSendsText(t *testing.T) {
+	service, _, _ := newTestService(t)
+	if err := service.DB.AutoMigrate(&models.MenuConfig{}); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name  string
+		image string
+	}{
+		{name: "empty", image: ""},
+		{name: "missing-file", image: "上传/not-exist.webp"},
+		{name: "path-escape", image: "../secret.png"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := service.DB.Save(&models.MenuConfig{
+				Name: "主菜单", Reply: "纯文字菜单", Image: tc.image,
+			}).Error; err != nil {
+				t.Fatal(err)
+			}
+			message, err := handleMenu(context.Background(), oneBotEvent("100", "menu-fallback-"+tc.name, "主菜单"), service)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if message.Text != "纯文字菜单" || message.Image != "" {
+				t.Fatalf("无效配图应降级为纯文字: %#v", message)
+			}
+		})
+	}
+}
+
 func TestAdoptListFollowsConfiguredStarterPets(t *testing.T) {
 	previousPets := config.Core.InitialPets
 	previousSpecies := config.Pets
@@ -47,7 +113,7 @@ func TestAdoptListFollowsConfiguredStarterPets(t *testing.T) {
 		config.Core.InitialPets = previousPets
 		config.Pets = previousSpecies
 	})
-	config.Core.InitialPets = []string{"团子", "叶伊布"}
+	config.Core.InitialPets = []string{"团子", "苔须灵"}
 	config.Pets = map[string]config.PetSpecies{
 		"团子": {Name: "团子", Description: "这是一个可爱的小兔子。"},
 	}
@@ -61,14 +127,14 @@ func TestAdoptListFollowsConfiguredStarterPets(t *testing.T) {
 	if err != nil || !handled {
 		t.Fatalf("领养列表失败: handled=%v err=%v", handled, err)
 	}
-	if !strings.Contains(message.Text, "1. 团子｜这是一个可爱的小兔子") || !strings.Contains(message.Text, "2. 叶伊布") || strings.Contains(message.Text, "呱呱") {
+	if !strings.Contains(message.Text, "1. 团子｜这是一个可爱的小兔子") || !strings.Contains(message.Text, "2. 苔须灵") || strings.Contains(message.Text, "烬爪兽") {
 		t.Fatalf("领养列表未使用配置: %q", message.Text)
 	}
 	if !strings.Contains(message.Text, "领养 团子") {
 		t.Fatalf("领养提示应使用配置中的第一只宠物: %q", message.Text)
 	}
 
-	rejected, _, err := router.Route(context.Background(), oneBotEvent("100", "adopt-cfg", "领养 呱呱"))
+	rejected, _, err := router.Route(context.Background(), oneBotEvent("100", "adopt-cfg", "领养 烬爪兽"))
 	if err != nil || !strings.Contains(rejected.Text, "没有找到这位伙伴") {
 		t.Fatalf("未配置的宠物应被拒绝: err=%v message=%q", err, rejected.Text)
 	}
@@ -89,7 +155,7 @@ func TestTextCommandsSupportAdoptAndExpeditionFlow(t *testing.T) {
 	if err != nil || !handled || !strings.Contains(message.Text, "领养") {
 		t.Fatalf("unexpected initial status: handled=%v err=%v message=%q", handled, err, message.Text)
 	}
-	event.Text = "领养 诺诺"
+	event.Text = "领养 光芽兽"
 	message, _, err = router.Route(context.Background(), event)
 	if err != nil || !strings.Contains(message.Text, "领养成功") {
 		t.Fatalf("unexpected adopt response: err=%v message=%q", err, message.Text)
@@ -147,7 +213,7 @@ func TestFamiliarPetCommandsRemainPrimaryAndDiscoverable(t *testing.T) {
 			t.Fatalf("兼容命令 %q 未生效: handled=%v err=%v", command, handled, err)
 		}
 	}
-	if _, _, err := router.Route(context.Background(), oneBotEvent("100", "42", "领养 诺诺")); err != nil {
+	if _, _, err := router.Route(context.Background(), oneBotEvent("100", "42", "领养 光芽兽")); err != nil {
 		t.Fatal(err)
 	}
 	message, handled, err := router.Route(context.Background(), oneBotEvent("100", "42", "宠物摸头"))
@@ -170,11 +236,9 @@ func TestFamiliarPetCommandsRemainPrimaryAndDiscoverable(t *testing.T) {
 
 func TestFamiliarShopJourneyUsesUnifiedPetWalletAndInventory(t *testing.T) {
 	service, db, _ := newTestService(t)
-	if err := db.Create(&models.PetSpeciesConfig{
-		Name: "诺诺", Hunger: 100, HungerMax: 100, FavoriteFood: "小饼干",
-	}).Error; err != nil {
-		t.Fatal(err)
-	}
+	upsertTestSpecies(t, db, models.PetSpeciesConfig{
+		Name: "光芽兽", Hunger: 100, HungerMax: 100, FavoriteFood: "小饼干",
+	})
 	if err := db.Create(&models.ItemConfig{
 		Name: "小饼干", Status: "active", Type: "饱食", Effect: "15",
 		Image: "物品/小饼干.png", Description: "一块香香脆脆的小饼干。", SellPrice: 4,
@@ -191,7 +255,7 @@ func TestFamiliarShopJourneyUsesUnifiedPetWalletAndInventory(t *testing.T) {
 	if err := RegisterCommands(router.Register, func() *Service { return service }); err != nil {
 		t.Fatal(err)
 	}
-	event := oneBotEvent("100", "shop-player", "领养 诺诺")
+	event := oneBotEvent("100", "shop-player", "领养 光芽兽")
 	if message, handled, err := router.Route(context.Background(), event); err != nil || !handled || !strings.Contains(message.Text, "领养成功") {
 		t.Fatalf("adoption failed: handled=%v text=%q err=%v", handled, message.Text, err)
 	}
@@ -276,12 +340,10 @@ func TestTimedGrowthCommandsUseActivityRunAndFamiliarCompletionCommand(t *testin
 	config.Interaction.StudyGrowth = 2
 
 	service, db, now := newTestService(t)
-	if err := db.Create(&models.PetSpeciesConfig{
-		Name: "诺诺", Wisdom: 10, WisdomMax: 100, Hunger: 100, HungerMax: 100,
+	upsertTestSpecies(t, db, models.PetSpeciesConfig{
+		Name: "光芽兽", Wisdom: 10, WisdomMax: 100, Hunger: 100, HungerMax: 100,
 		StudyStartImg: "宠物/学习开始.png", StudyEndImg: "宠物/学习完成.png",
-	}).Error; err != nil {
-		t.Fatal(err)
-	}
+	})
 	if err := db.Create(&models.ItemConfig{Name: "专业书本", Status: "active", Type: "智慧", Effect: "4", Time: 1}).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +351,7 @@ func TestTimedGrowthCommandsUseActivityRunAndFamiliarCompletionCommand(t *testin
 	if err := RegisterCommands(router.Register, func() *Service { return service }); err != nil {
 		t.Fatal(err)
 	}
-	event := oneBotEvent("100", "activity-player", "领养 诺诺")
+	event := oneBotEvent("100", "activity-player", "领养 光芽兽")
 	if _, _, err := router.Route(context.Background(), event); err != nil {
 		t.Fatal(err)
 	}
@@ -349,14 +411,12 @@ func TestCommandCatalogUsesStableFeaturesAndUniqueTriggers(t *testing.T) {
 
 func TestMyPetIncludesConfiguredSpeciesImage(t *testing.T) {
 	service, db, _ := newTestService(t)
-	if err := db.Create(&models.PetSpeciesConfig{Name: "诺诺", Image: "宠物图片\\诺诺.png"}).Error; err != nil {
-		t.Fatal(err)
-	}
+	upsertTestSpecies(t, db, models.PetSpeciesConfig{Name: "光芽兽", Image: "宠物图片\\光芽兽.png"})
 	router := core.NewCommandRouter()
 	if err := RegisterCommands(router.Register, func() *Service { return service }); err != nil {
 		t.Fatal(err)
 	}
-	event := oneBotEvent("100", "42", "领养 诺诺")
+	event := oneBotEvent("100", "42", "领养 光芽兽")
 	if _, _, err := router.Route(context.Background(), event); err != nil {
 		t.Fatal(err)
 	}
@@ -365,7 +425,7 @@ func TestMyPetIncludesConfiguredSpeciesImage(t *testing.T) {
 	if err != nil || !handled {
 		t.Fatalf("查看宠物失败: handled=%v err=%v", handled, err)
 	}
-	if message.Image != "宠物图片\\诺诺.png" {
+	if message.Image != "宠物图片\\光芽兽.png" {
 		t.Fatalf("未带出宠物图片: %#v", message)
 	}
 }
@@ -376,7 +436,7 @@ func TestDailyJournalDoesNotResetAndOnlyRewardsOncePerDay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = service.Adopt(context.Background(), account.ID, "诺诺", "诺诺"); err != nil {
+	if _, err = service.Adopt(context.Background(), account.ID, "光芽兽", "光芽兽"); err != nil {
 		t.Fatal(err)
 	}
 	first, rewarded, err := service.RecordDaily(context.Background(), account.ID, "陪伴")
@@ -435,7 +495,7 @@ func TestDeleteAccountRemovesGlobalProgressAndIdentities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = service.Adopt(context.Background(), account.ID, "诺诺", "诺诺"); err != nil {
+	if _, err = service.Adopt(context.Background(), account.ID, "光芽兽", "光芽兽"); err != nil {
 		t.Fatal(err)
 	}
 	if err = db.Create(&models.PetBehaviorProfile{AccountID: account.ID, Care: 3, Trait: "温柔"}).Error; err != nil {
@@ -464,7 +524,7 @@ func TestExpeditionStatusReportsRemainingTime(t *testing.T) {
 	service, _, now := newTestService(t)
 	event := oneBotEvent("100", "42", "远征状态")
 	account, _ := service.ResolveAccount(context.Background(), event)
-	_, _ = service.Adopt(context.Background(), account.ID, "诺诺", "诺诺")
+	_, _ = service.Adopt(context.Background(), account.ID, "光芽兽", "光芽兽")
 	run, _ := service.StartExpedition(context.Background(), account.ID, 1)
 	*now = now.Add(5 * time.Minute)
 	text, err := service.FormatExpeditionStatus(context.Background(), account.ID)
@@ -482,7 +542,7 @@ func TestExpeditionStartUsesPlayerFacingCopy(t *testing.T) {
 	if err := RegisterCommands(router.Register, func() *Service { return service }); err != nil {
 		t.Fatal(err)
 	}
-	event := oneBotEvent("100", "42", "领养 诺诺")
+	event := oneBotEvent("100", "42", "领养 光芽兽")
 	_, _, _ = router.Route(context.Background(), event)
 	event.Text = "远征 1"
 	message, handled, err := router.Route(context.Background(), event)
@@ -517,7 +577,7 @@ func TestBossCommandSupportsStatusAndAsynchronousSupport(t *testing.T) {
 	if err := RegisterCommands(router.Register, func() *Service { return service }); err != nil {
 		t.Fatal(err)
 	}
-	event := oneBotEvent("100", "42", "领养 诺诺")
+	event := oneBotEvent("100", "42", "领养 光芽兽")
 	_, _, _ = router.Route(context.Background(), event)
 	event.Text = "首领"
 	message, handled, err := router.Route(context.Background(), event)
@@ -560,7 +620,10 @@ func TestEventCommandShowsTrackAndDoesNotDuplicateSettledReward(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Create(&models.RewardTrackConfig{EventKey: "forest-week", Milestone: 5, ItemName: "木材", Quantity: 2}).Error; err != nil {
+	if err := db.Create(&models.ItemConfig{Key: "wood", Name: "木材", Status: "active"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.RewardTrackConfig{EventKey: "forest-week", Milestone: 5, RewardType: "item", RewardKey: "wood", RewardName: "木材", Quantity: 2}).Error; err != nil {
 		t.Fatal(err)
 	}
 	router := core.NewCommandRouter()
@@ -610,7 +673,7 @@ func TestRoleCommandShowsDeterministicThreeSkillLoadout(t *testing.T) {
 	if err := RegisterCommands(router.Register, func() *Service { return service }); err != nil {
 		t.Fatal(err)
 	}
-	event := oneBotEvent("100", "42", "领养 诺诺")
+	event := oneBotEvent("100", "42", "领养 光芽兽")
 	_, _, _ = router.Route(context.Background(), event)
 	event.Text = "定位 守护者"
 	message, handled, err := router.Route(context.Background(), event)
@@ -625,7 +688,7 @@ func TestInvalidTacticalInputReturnsActionableText(t *testing.T) {
 	if err := RegisterCommands(router.Register, func() *Service { return service }); err != nil {
 		t.Fatal(err)
 	}
-	event := oneBotEvent("100", "42", "领养 诺诺")
+	event := oneBotEvent("100", "42", "领养 光芽兽")
 	_, _, _ = router.Route(context.Background(), event)
 	event.Text = "编队 乱来"
 	message, handled, err := router.Route(context.Background(), event)
@@ -640,11 +703,11 @@ func TestPlayerMenuSnapshotAndBannedTerms(t *testing.T) {
 		t.Fatal(err)
 	}
 	expected := "🐾【宠物菜单】\n\n" +
-		"🌟 开始陪伴\n宠物菜单 · 领养宠物 · 我的宠物 · 签到 · 我的背包 · 改名 · 治疗 · 找回 · 放生 · 帮助\n\n" +
+		"🌟 开始陪伴\n宠物菜单 · 领养宠物 · 我的宠物 · 宠物列表 · 切换宠物 · 签到 · 我的背包 · 改名 · 治疗 · 找回 · 放生 · 帮助\n\n" +
 		"🛍️ 背包与商店\n商店 · 好感商店 · 查看商品 · 查看物品 · 购买 · 出售 · 使用\n\n" +
 		"🍖 日常陪伴\n喂养 · 摸头 · 散步 · 送礼 · 洗澡\n\n" +
 		"📚 成长计划\n学习 · 锻炼 · 健身 · 打工 · 进化 · 觉醒 · 定位 · 编队 · 技能 · 图鉴\n\n" +
-		"🧭 探索远征\n远征 · 远征状态 · 领取 · 地图 · 探索 · 装备 · 蓝图 · 地图首领 · 首领\n\n" +
+		"🧭 探索远征\n远征 · 远征状态 · 领取 · 地图 · 探索 · 远征背包 · 材料背包 · 装备背包 · 蓝图背包 · 远征商店 · 地图首领 · 首领\n\n" +
 		"🎲 休闲玩法\n钓鱼 · 抛竿 · 收竿 · 抽奖 · 猜拳 · 宠物交易 · 交易列表 · 接受交易 · 交易信息 · 取消交易\n\n" +
 		"🏕️ 社群协作\n营地 · 共建 · 小队 · 活动 · 赛季 · 设施 · 求助 · 求助列表 · 支援\n\n" +
 		"🔐 账号与隐私\n生成绑定码 · 绑定 · 我的数据\n\n" +

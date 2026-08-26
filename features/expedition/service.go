@@ -120,28 +120,16 @@ func (service *Service) StartExpedition(ctx context.Context, accountID string, t
 		if err != nil {
 			return err
 		}
-		var pet models.PetProfile
-		if err = tx.First(&pet, "account_id = ?", accountID).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return ErrPetRequired
+		petRow, petErr := gameplay.ActivePetTx(tx, accountID)
+		if petErr != nil {
+			return petErr
+		}
+		pet := *petRow
+		if err = gameplay.ReservePetRunTx(tx, accountID, pet.ID); err != nil {
+			if errors.Is(err, gameplay.ErrTooManyConcurrentRuns) || errors.Is(err, gameplay.ErrActivityActive) {
+				return ErrExpeditionActive
 			}
 			return err
-		}
-		if pet.Status != "" && pet.Status != "空闲" {
-			return ErrExpeditionActive
-		}
-		var active int64
-		if err = tx.Model(&models.ExpeditionRun{}).Where("account_id = ? AND status = ?", accountID, "running").Count(&active).Error; err != nil {
-			return err
-		}
-		if active > 0 {
-			return ErrExpeditionActive
-		}
-		if err = tx.Model(&models.ActivityRun{}).Where("account_id = ? AND status = ?", accountID, gameplay.ActivityStatusRunning).Count(&active).Error; err != nil {
-			return err
-		}
-		if active > 0 {
-			return ErrExpeditionActive
 		}
 		hungerCost := template.HungerCost
 		readinessCost := template.ReadinessCost
@@ -184,7 +172,7 @@ func (service *Service) StartExpedition(ctx context.Context, accountID string, t
 		}
 		now := service.Now()
 		run = models.ExpeditionRun{
-			ID: uuid.NewString(), AccountID: accountID, Tier: tierNumber, Name: template.Name, Stance: pet.Stance,
+			ID: uuid.NewString(), AccountID: accountID, PetID: pet.ID, Tier: tierNumber, Name: template.Name, Stance: pet.Stance,
 			Status: "running", RewardItem: template.RewardItem, RewardQuantity: template.RewardQuantity,
 			RewardRecords: records, RewardGrowth: growth, RewardCurrency: template.RewardCurrency,
 			CodexCategory: template.CodexCategory, CodexEntry: template.CodexEntry, CodexProgress: codexProgress,
@@ -290,10 +278,11 @@ func (service *Service) ClaimExpedition(ctx context.Context, accountID string) (
 				return err
 			}
 		}
-		var pet models.PetProfile
-		if err := tx.First(&pet, "account_id = ?", accountID).Error; err != nil {
+		petRow, err := gameplay.PetByIDTx(tx, accountID, run.PetID)
+		if err != nil {
 			return err
 		}
+		pet := *petRow
 		pet.Growth += run.RewardGrowth
 		pet.Status = "空闲"
 		if err := tx.Save(&pet).Error; err != nil {
@@ -498,6 +487,9 @@ func accountHasIndependentProgress(tx *gorm.DB, accountID string) (bool, error) 
 		&models.ActivityRun{}, &models.ItemUseRecord{}, &models.ExpeditionRun{}, &models.CodexEntry{}, &models.CommunityMember{},
 		&models.SquadMember{}, &models.PetBehaviorProfile{}, &models.SeasonVote{}, &models.EventProgress{}, &models.EventProgressGrant{}, &models.EventRewardClaim{},
 		&models.ChanceDailyState{}, &models.ChancePlayerState{}, &models.ChanceOutcome{}, &models.FishingRun{}, &models.BattleRecord{}, &models.TradeAudit{},
+		&models.AdventureShopPurchase{},
+		&models.PlayerAdventureProgress{}, &models.PlayerZoneProgress{}, &models.PlayerObjectiveProgress{}, &models.AdventureExplorationSession{},
+		&models.AdventureCombatSession{}, &models.PlayerEquipment{}, &models.PlayerBlueprintProgress{}, &models.AdventureExpeditionRun{},
 	}
 	for _, model := range modelsWithProgress {
 		var count int64
@@ -596,7 +588,11 @@ func (service *Service) SetStance(ctx context.Context, accountID, stance string)
 	for _, configured := range gameplayrules.EnabledStances(service.DB.WithContext(ctx)) {
 		allowed = append(allowed, configured.Name)
 		if configured.Name == stance {
-			result := service.DB.WithContext(ctx).Model(&models.PetProfile{}).Where("account_id = ?", accountID).Update("stance", stance)
+			pet, err := gameplay.ActivePet(ctx, service.DB, accountID)
+			if err != nil {
+				return err
+			}
+			result := service.DB.WithContext(ctx).Model(&models.PetProfile{}).Where("id = ? AND account_id = ?", pet.ID, accountID).Update("stance", stance)
 			if result.Error != nil {
 				return result.Error
 			}
@@ -646,7 +642,7 @@ func (service *Service) DeleteAccount(ctx context.Context, accountID string) err
 			&models.CompanionJournal{}, &models.CompanionActionDaily{}, &models.GlobalInventoryItem{}, &models.PlayerWallet{}, &models.WalletLedger{}, &models.PetBehaviorProfile{},
 			&models.BossContribution{}, &models.SeasonVote{}, &models.PetProfile{},
 			&models.PlayerAdventureProgress{}, &models.PlayerZoneProgress{}, &models.PlayerObjectiveProgress{},
-			&models.AdventureExplorationSession{}, &models.PlayerEquipment{}, &models.PlayerBlueprintProgress{},
+			&models.AdventureExplorationSession{}, &models.AdventureShopPurchase{}, &models.PlayerEquipment{}, &models.PlayerBlueprintProgress{},
 			&models.AdventureExpeditionRun{}, &models.AdventureBossContribution{}, &models.AdventureBossRewardClaim{}, &models.EquipmentCraftRecord{},
 			&models.PlayerIdentity{},
 		}
@@ -769,11 +765,8 @@ func (service *Service) ChallengeBoss(ctx context.Context, event core.InboundEve
 	if boss.Defeated || boss.CurrentHP <= 0 {
 		return boss, 0, errors.New("本周社区首领已经完成调查")
 	}
-	var pet models.PetProfile
-	if err := service.DB.WithContext(ctx).First(&pet, "account_id = ?", accountID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, 0, ErrPetRequired
-		}
+	pet, err := gameplay.ActivePetTx(service.DB.WithContext(ctx), accountID)
+	if err != nil {
 		return nil, 0, err
 	}
 	multiplier := int64(100)
@@ -1125,7 +1118,11 @@ func recordBehaviorTx(tx *gorm.DB, accountID, behavior string, amount int64, now
 	if column == "" {
 		return errors.New("未知宠物行为")
 	}
-	profile := models.PetBehaviorProfile{AccountID: accountID, UpdatedAt: now}
+	pet, err := gameplay.ActivePetTx(tx, accountID)
+	if err != nil {
+		return err
+	}
+	profile := models.PetBehaviorProfile{PetID: pet.ID, AccountID: accountID, UpdatedAt: now}
 	switch behavior {
 	case "explore":
 		profile.Explore = amount
@@ -1135,12 +1132,12 @@ func recordBehaviorTx(tx *gorm.DB, accountID, behavior string, amount int64, now
 		profile.Support = amount
 	}
 	if err := tx.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "account_id"}},
+		Columns:   []clause.Column{{Name: "pet_id"}},
 		DoUpdates: clause.Assignments(map[string]interface{}{column: gorm.Expr(column+" + ?", amount), "updated_at": now}),
 	}).Create(&profile).Error; err != nil {
 		return err
 	}
-	if err := tx.First(&profile, "account_id = ?", accountID).Error; err != nil {
+	if err := tx.First(&profile, "pet_id = ?", pet.ID).Error; err != nil {
 		return err
 	}
 	trait := gameplayrules.ResolveTrait(tx, profile)
@@ -1148,7 +1145,7 @@ func recordBehaviorTx(tx *gorm.DB, accountID, behavior string, amount int64, now
 		if err := tx.Model(&profile).Update("trait", trait).Error; err != nil {
 			return err
 		}
-		return tx.Model(&models.PetProfile{}).Where("account_id = ?", accountID).Update("traits", trait).Error
+		return tx.Model(&models.PetProfile{}).Where("id = ?", pet.ID).Update("traits", trait).Error
 	}
 	return nil
 }
@@ -1165,15 +1162,18 @@ func (service *Service) SetRole(ctx context.Context, accountID, role string) (*m
 	if skills == "" {
 		return nil, fmt.Errorf("定位只能是%s", humanList(available))
 	}
-	result := service.DB.WithContext(ctx).Model(&models.PetProfile{}).Where("account_id = ?", accountID).Updates(map[string]interface{}{"role": role, "skills": skills})
+	pet, err := gameplay.ActivePet(ctx, service.DB, accountID)
+	if err != nil {
+		return nil, err
+	}
+	result := service.DB.WithContext(ctx).Model(&models.PetProfile{}).Where("id = ?", pet.ID).Updates(map[string]interface{}{"role": role, "skills": skills})
 	if result.Error != nil {
 		return nil, result.Error
 	}
 	if result.RowsAffected == 0 {
 		return nil, ErrPetRequired
 	}
-	var pet models.PetProfile
-	return &pet, service.DB.WithContext(ctx).First(&pet, "account_id = ?", accountID).Error
+	return gameplay.ActivePet(ctx, service.DB, accountID)
 }
 
 func humanList(values []string) string {

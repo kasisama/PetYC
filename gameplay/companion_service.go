@@ -88,27 +88,25 @@ func (service *CompanionService) Interact(ctx context.Context, accountID, action
 	result := &CompanionResult{Action: action}
 	err := WithTransactionRetry(ctx, service.DB, func(tx *gorm.DB) error {
 		*result = CompanionResult{Action: action}
-		var pet models.PetProfile
-		if err := tx.First(&pet, "account_id = ?", accountID).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return ErrPetRequired
-			}
+		activePet, err := ActivePetTx(tx, accountID)
+		if err != nil {
 			return err
 		}
+		pet := *activePet
 		if pet.Status != "" && pet.Status != "空闲" && !(action == ActionFeed && pet.Status == "濒死") {
 			return ErrActionCooldown
 		}
 		var species models.PetSpeciesConfig
-		if lookup := tx.Limit(1).Find(&species, "name = ?", pet.PetType); lookup.Error != nil {
+		if lookup := tx.Limit(1).Find(&species, "key = ? OR name = ?", pet.CurrentForm, pet.CurrentForm); lookup.Error != nil {
 			return lookup.Error
 		}
 		now := service.now()
 		day := now.Format("2006-01-02")
-		daily := models.CompanionActionDaily{AccountID: accountID, Day: day, Action: action, LastAt: time.Time{}, UpdatedAt: now}
+		daily := models.CompanionActionDaily{AccountID: accountID, PetID: pet.ID, Day: day, Action: action, LastAt: time.Time{}, UpdatedAt: now}
 		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&daily).Error; err != nil {
 			return err
 		}
-		if err := tx.First(&daily, "account_id = ? AND day = ? AND action = ?", accountID, day, action).Error; err != nil {
+		if err := tx.First(&daily, "account_id = ? AND pet_id = ? AND day = ? AND action = ?", accountID, pet.ID, day, action).Error; err != nil {
 			return err
 		}
 
