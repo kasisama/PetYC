@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { IconChevronLeft, IconChevronRight, IconHeartFilled } from '@tabler/icons-vue'
 import { RouterLink, useRoute } from 'vue-router'
-import { computed, onMounted, ref } from 'vue'
-import { getPlatformStatus } from '../../api/ecosystem'
+import { computed } from 'vue'
+import { usePlatformStatus } from '../../composables/usePlatformStatus'
 import { useShellLayout } from '../../composables/useShellLayout'
 import { useTheme } from '../../composables/useTheme'
 import { adminNavItems } from './navigation'
@@ -10,9 +10,9 @@ import { adminNavItems } from './navigation'
 const route = useRoute()
 const shell = useShellLayout()
 const { theme, themes, setTheme } = useTheme()
-const platformHealth=ref<Record<string,any>>({})
-const online=computed(()=>Boolean(platformHealth.value.onebot?.connected||platformHealth.value.qq_official?.connected))
-onMounted(async()=>{try{platformHealth.value=await getPlatformStatus()}catch{platformHealth.value={}}})
+const { status: platformHealth, state: platformStatusState } = usePlatformStatus()
+const online=computed(()=>Boolean(platformHealth.value?.onebot?.connected||platformHealth.value?.qq_official?.connected))
+const statusLabel=computed(()=>platformStatusState.value==='loading'?'正在获取机器人状态':platformStatusState.value==='unknown'?'机器人状态未知':online.value?'机器人在线':'机器人暂未连接')
 </script>
 
 <template>
@@ -45,7 +45,7 @@ onMounted(async()=>{try{platformHealth.value=await getPlatformStatus()}catch{pla
       <IconChevronLeft v-else :size="18" />
       <span>{{ shell.collapsed.value ? '展开导航' : '收起导航' }}</span>
     </button>
-    <p class="sidebar-foot"><span class="status-dot" :class="{offline:!online}" />{{online?'机器人在线':'机器人暂未连接'}}</p>
+    <p class="sidebar-foot"><span class="status-dot" :class="{offline:platformStatusState!=='ready'||!online}" />{{statusLabel}}</p>
   </aside>
 </template>
 

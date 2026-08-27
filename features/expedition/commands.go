@@ -185,6 +185,17 @@ func text(message string) core.OutboundMessage {
 	return core.OutboundMessage{Text: message, Markdown: &core.MarkdownPayload{Content: message}, ReplyTo: "source"}
 }
 
+func menuText(message, markdown string) core.OutboundMessage {
+	result := text(message)
+	markdown = strings.TrimSpace(markdown)
+	if markdown == "" {
+		result.Markdown = nil
+	} else {
+		result.Markdown = &core.MarkdownPayload{Content: markdown}
+	}
+	return result
+}
+
 func businessText(code, message string) core.OutboundMessage {
 	result := text(message)
 	result.BusinessResult = code
@@ -1212,7 +1223,7 @@ func handleMenu(_ context.Context, _ core.InboundEvent, service *Service) (core.
 		var scene models.MenuConfig
 		result := service.DB.Where("name IN ?", []string{"主菜单", "宠物菜单"}).Order("CASE name WHEN '主菜单' THEN 0 ELSE 1 END").First(&scene)
 		if result.Error == nil && strings.TrimSpace(scene.Reply) != "" {
-			message := text(strings.TrimSpace(scene.Reply))
+			message := menuText(strings.TrimSpace(scene.Reply), scene.Markdown)
 			message.Image = core.ExistingImageSource(scene.Image)
 			message.MessageKey = "menu.main"
 			return message, nil
@@ -1232,15 +1243,18 @@ func handleMenu(_ context.Context, _ core.InboundEvent, service *Service) (core.
 		grouped[feature.Category] = append(grouped[feature.Category], feature.DefaultCommand)
 	}
 	lines := []string{"🐾【宠物菜单】", ""}
+	markdownLines := []string{"# 🐾 宠物菜单", ""}
 	for _, category := range categoryOrder {
 		commands := grouped[category]
 		if len(commands) == 0 {
 			continue
 		}
 		lines = append(lines, categoryTitle[category], strings.Join(commands, " · "), "")
+		markdownLines = append(markdownLines, "**"+categoryTitle[category]+"**", strings.Join(commands, " · "), "")
 	}
 	lines = append(lines, "💡 直接发送上面的命令即可使用", "例如：签到 / 我的宠物 / 远征")
-	return text(strings.Join(lines, "\n")), nil
+	markdownLines = append(markdownLines, "**💡 直接发送上面的命令即可使用**", "例如：签到 / 我的宠物 / 远征")
+	return menuText(strings.Join(lines, "\n"), strings.Join(markdownLines, "\n")), nil
 }
 
 func handleHelp(ctx context.Context, event core.InboundEvent, service *Service) (core.OutboundMessage, error) {

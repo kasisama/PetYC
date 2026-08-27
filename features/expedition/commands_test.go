@@ -60,7 +60,7 @@ func TestMenuUsesConfiguredSceneReplyAndImage(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := service.DB.Save(&models.MenuConfig{
-		Name: "主菜单", Reply: "欢迎来到图文菜单", Image: "https://cdn.example.com/menu.webp",
+		Name: "主菜单", Reply: "欢迎来到图文菜单", Markdown: "# 欢迎来到图文菜单", Image: "https://cdn.example.com/menu.webp",
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -71,6 +71,9 @@ func TestMenuUsesConfiguredSceneReplyAndImage(t *testing.T) {
 	}
 	if message.Text != "欢迎来到图文菜单" || message.Image != "https://cdn.example.com/menu.webp" {
 		t.Fatalf("菜单场景未返回配置图文: %#v", message)
+	}
+	if message.Markdown == nil || message.Markdown.Content != "# 欢迎来到图文菜单" {
+		t.Fatalf("菜单场景未返回独立 Markdown: %#v", message.Markdown)
 	}
 }
 
@@ -101,6 +104,9 @@ func TestMenuEmptyOrInvalidImageStillSendsText(t *testing.T) {
 			}
 			if message.Text != "纯文字菜单" || message.Image != "" {
 				t.Fatalf("无效配图应降级为纯文字: %#v", message)
+			}
+			if message.Markdown != nil {
+				t.Fatalf("空 Markdown 不应复制纯文本: %#v", message.Markdown)
 			}
 		})
 	}
@@ -714,6 +720,9 @@ func TestPlayerMenuSnapshotAndBannedTerms(t *testing.T) {
 		"💡 直接发送上面的命令即可使用\n例如：签到 / 我的宠物 / 远征"
 	if message.Text != expected {
 		t.Fatalf("menu snapshot changed:\n%s", message.Text)
+	}
+	if message.Markdown == nil || !strings.Contains(message.Markdown.Content, "# 🐾 宠物菜单") || !strings.Contains(message.Markdown.Content, "**🌟 开始陪伴**") {
+		t.Fatalf("menu markdown snapshot missing formatting: %#v", message.Markdown)
 	}
 	for _, word := range []string{"新版", "旧版", "下线", "固定进度", "平台额度", "内部账号", "不含抽奖", "迁移"} {
 		if strings.Contains(message.Text, word) {

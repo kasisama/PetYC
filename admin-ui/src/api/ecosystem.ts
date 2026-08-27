@@ -217,5 +217,6 @@ export function buildPortHandoffURL(address: string, confirmationToken: string) 
   return `${address.replace(/\/$/, '')}/admin/platforms#port-handoff=${encodeURIComponent(confirmationToken)}`
 }
 export function reconnectQQ(reason: string) { return api.post('/api/admin/platforms/qq/reconnect', { reason }) }
+export function syncQQDiscovery(reason: string) { return api.post('/api/admin/platforms/qq/discovery/sync', { reason }) }
 export function getQQEnvTemplate() { return api.get<{ template: string }>('/api/admin/platforms/qq/env-template') }
 export function getAuditLogs(query: URLSearchParams) { return api.get<PageResult<Record<string, unknown>>>(`/api/admin/audit-logs?${query}`) }

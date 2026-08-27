@@ -34,18 +34,19 @@ const (
 )
 
 type InboundEvent struct {
-	Platform   Platform
-	SceneType  SceneType
-	AppID      string
-	SpaceID    string
-	RoomID     string
-	ActorID    string
-	ActorName  string
-	MessageID  string
-	EventID    string
-	MessageSeq int
-	Text       string
-	Timestamp  time.Time
+	Platform    Platform
+	SceneType   SceneType
+	AppID       string
+	SpaceID     string
+	RoomID      string
+	ActorID     string
+	ActorName   string
+	MessageID   string
+	ReferenceID string
+	EventID     string
+	MessageSeq  int
+	Text        string
+	Timestamp   time.Time
 }
 
 type MarkdownPayload struct {
@@ -160,7 +161,7 @@ func (router *CommandRouter) Route(ctx context.Context, event InboundEvent) (Out
 		commands = append(commands, command)
 	}
 	sort.Slice(commands, func(left, right int) bool { return len(commands[left]) > len(commands[right]) })
-	text := strings.TrimSpace(event.Text)
+	text := normalizeInboundCommandText(event.Text)
 	var handler UnifiedHandler
 	var matchedCommand string
 	for _, command := range commands {
@@ -178,6 +179,14 @@ func (router *CommandRouter) Route(ctx context.Context, event InboundEvent) (Out
 	message, err := handler(ctx, event)
 	recordGameplayMetric(event, matchedCommand, message, err)
 	return message, true, err
+}
+
+// normalizeInboundCommandText keeps existing plain-text commands compatible
+// with platforms such as QQ Official that send slash-prefixed commands.
+func normalizeInboundCommandText(text string) string {
+	text = strings.TrimSpace(text)
+	text = strings.TrimPrefix(text, "/")
+	return strings.TrimSpace(text)
 }
 
 func recordGameplayMetric(event InboundEvent, command string, message OutboundMessage, handlerErr error) {
@@ -323,13 +332,16 @@ func RebuildUnifiedRouter(db *gorm.DB) error {
 					return OutboundMessage{}, err
 				}
 				reply := strings.TrimSpace(current.Reply)
-				return OutboundMessage{
+				message := OutboundMessage{
 					MessageKey: "menu." + menuName,
 					Text:       reply,
 					Image:      ExistingImageSource(current.Image),
-					Markdown:   &MarkdownPayload{Content: reply},
 					ReplyTo:    "source",
-				}, nil
+				}
+				if markdown := strings.TrimSpace(current.Markdown); markdown != "" {
+					message.Markdown = &MarkdownPayload{Content: markdown}
+				}
+				return message, nil
 			}); err != nil {
 				return err
 			}

@@ -2,6 +2,9 @@ package qqofficial
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 
@@ -71,14 +74,20 @@ func TestApplyDefaultConfigStopsExistingRuntimeWhenQQIsDisabled(t *testing.T) {
 
 	cancelled := false
 	defaultRuntime.Lock()
-	previousStatus, previousCancel := defaultRuntime.status, defaultRuntime.cancel
+	previousStatus, previousClient, previousCancel := defaultRuntime.status, defaultRuntime.client, defaultRuntime.cancel
+	previousConfig, previousDeduper := defaultRuntime.config, defaultRuntime.deduper
+	previousRunning, previousGeneration := defaultRuntime.running, defaultRuntime.generation
 	_, cancel := context.WithCancel(context.Background())
 	defaultRuntime.status = newRuntimeStatus(Config{AppID: "old-app", Secret: "old-secret", Intents: IntentsGroupAndC2C})
 	defaultRuntime.cancel = func() { cancelled = true; cancel() }
+	defaultRuntime.config = Config{AppID: "old-app", Secret: "old-secret", Intents: IntentsGroupAndC2C}
+	defaultRuntime.running = true
 	defaultRuntime.Unlock()
 	t.Cleanup(func() {
 		defaultRuntime.Lock()
-		defaultRuntime.status, defaultRuntime.cancel = previousStatus, previousCancel
+		defaultRuntime.status, defaultRuntime.client, defaultRuntime.cancel = previousStatus, previousClient, previousCancel
+		defaultRuntime.config, defaultRuntime.deduper = previousConfig, previousDeduper
+		defaultRuntime.running, defaultRuntime.generation = previousRunning, previousGeneration
 		defaultRuntime.Unlock()
 	})
 
@@ -91,6 +100,127 @@ func TestApplyDefaultConfigStopsExistingRuntimeWhenQQIsDisabled(t *testing.T) {
 	snapshot := DefaultRuntimeSnapshot()
 	if snapshot.Configured || snapshot.SessionState != "not_started" {
 		t.Fatalf("snapshot after disable = %#v", snapshot)
+	}
+}
+
+func TestApplyDefaultConfigSkipsRestartWhenEffectiveConfigIsUnchanged(t *testing.T) {
+	t.Setenv("QQPET_DATA_DIR", t.TempDir())
+	t.Setenv("QQBOT_APP_ID", "same-app")
+	t.Setenv("QQBOT_APP_SECRET", "same-secret")
+	config, enabled, err := LoadConfig()
+	if err != nil || !enabled {
+		t.Fatalf("LoadConfig() failed: enabled=%v err=%v", enabled, err)
+	}
+
+	cancelled := false
+	defaultRuntime.Lock()
+	previousStatus, previousClient, previousCancel := defaultRuntime.status, defaultRuntime.client, defaultRuntime.cancel
+	previousConfig, previousDeduper := defaultRuntime.config, defaultRuntime.deduper
+	previousRunning, previousGeneration := defaultRuntime.running, defaultRuntime.generation
+	defaultRuntime.status = newRuntimeStatus(config)
+	defaultRuntime.cancel = func() { cancelled = true }
+	defaultRuntime.config = config
+	defaultRuntime.running = true
+	defaultRuntime.Unlock()
+	t.Cleanup(func() {
+		defaultRuntime.Lock()
+		defaultRuntime.status, defaultRuntime.client, defaultRuntime.cancel = previousStatus, previousClient, previousCancel
+		defaultRuntime.config, defaultRuntime.deduper = previousConfig, previousDeduper
+		defaultRuntime.running, defaultRuntime.generation = previousRunning, previousGeneration
+		defaultRuntime.Unlock()
+	})
+
+	if err = ApplyDefaultConfig(); err != nil {
+		t.Fatalf("ApplyDefaultConfig() error = %v", err)
+	}
+	if cancelled {
+		t.Fatal("unchanged effective config restarted the QQ runtime")
+	}
+}
+
+func TestApplyDefaultConfigRestartsStoppedRuntimeWithSameConfig(t *testing.T) {
+	t.Setenv("QQPET_DATA_DIR", t.TempDir())
+	t.Setenv("QQBOT_APP_ID", "stopped-app")
+	t.Setenv("QQBOT_APP_SECRET", "stopped-secret")
+	config, enabled, err := LoadConfig()
+	if err != nil || !enabled {
+		t.Fatalf("LoadConfig() failed: enabled=%v err=%v", enabled, err)
+	}
+
+	oldCancelCalled := false
+	defaultRuntime.Lock()
+	previousStatus, previousClient, previousCancel := defaultRuntime.status, defaultRuntime.client, defaultRuntime.cancel
+	previousConfig, previousDeduper := defaultRuntime.config, defaultRuntime.deduper
+	previousRunning, previousGeneration := defaultRuntime.running, defaultRuntime.generation
+	defaultRuntime.status = newRuntimeStatus(config)
+	defaultRuntime.cancel = func() { oldCancelCalled = true }
+	defaultRuntime.config = config
+	defaultRuntime.running = false
+	defaultRuntime.Unlock()
+	t.Cleanup(func() {
+		defaultRuntime.Lock()
+		currentCancel := defaultRuntime.cancel
+		defaultRuntime.status, defaultRuntime.client, defaultRuntime.cancel = previousStatus, previousClient, previousCancel
+		defaultRuntime.config, defaultRuntime.deduper = previousConfig, previousDeduper
+		defaultRuntime.running, defaultRuntime.generation = previousRunning, previousGeneration
+		defaultRuntime.Unlock()
+		if currentCancel != nil {
+			currentCancel()
+		}
+	})
+
+	if err = ApplyDefaultConfig(); err != nil {
+		t.Fatalf("ApplyDefaultConfig() error = %v", err)
+	}
+	if !oldCancelCalled {
+		t.Fatal("stopped runtime with unchanged config was not replaced")
+	}
+}
+
+func TestConfiguredRuntimeReusesDeduplicatorAcrossReconnects(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/token":
+			_ = json.NewEncoder(writer).Encode(map[string]interface{}{"access_token": "access", "expires_in": 7200})
+		case "/gateway/bot":
+			_ = json.NewEncoder(writer).Encode(GatewayInfo{URL: "ws://127.0.0.1:1", Shards: 1})
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	defaultRuntime.Lock()
+	previousStatus, previousClient, previousCancel := defaultRuntime.status, defaultRuntime.client, defaultRuntime.cancel
+	previousConfig, previousDeduper := defaultRuntime.config, defaultRuntime.deduper
+	previousRunning, previousGeneration := defaultRuntime.running, defaultRuntime.generation
+	defaultRuntime.status, defaultRuntime.client, defaultRuntime.cancel = nil, nil, nil
+	defaultRuntime.config, defaultRuntime.deduper = Config{}, nil
+	defaultRuntime.running, defaultRuntime.generation = false, 0
+	defaultRuntime.Unlock()
+	t.Cleanup(func() {
+		defaultRuntime.Lock()
+		cancel := defaultRuntime.cancel
+		defaultRuntime.status, defaultRuntime.client, defaultRuntime.cancel = previousStatus, previousClient, previousCancel
+		defaultRuntime.config, defaultRuntime.deduper = previousConfig, previousDeduper
+		defaultRuntime.running, defaultRuntime.generation = previousRunning, previousGeneration
+		defaultRuntime.Unlock()
+		if cancel != nil {
+			cancel()
+		}
+	})
+
+	config := Config{AppID: "app", Secret: "secret", APIBase: server.URL, TokenURL: server.URL + "/token", Intents: IntentsGroupAndC2C}
+	first, err := startConfigured(context.Background(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := startConfigured(context.Background(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Deduper == nil || first.Deduper != second.Deduper {
+		t.Fatal("runtime reconnect replaced the process-level message deduplicator")
 	}
 }
 

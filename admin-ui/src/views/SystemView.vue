@@ -14,6 +14,7 @@ import {
 import PageHeader from '../components/ui/PageHeader.vue'
 import UiModal from '../components/ui/UiModal.vue'
 import AuditLogPanel from '../components/AuditLogPanel.vue'
+import UpdateCard from '../components/system/UpdateCard.vue'
 import { useSession } from '../composables/useSession'
 
 const router = useRouter()
@@ -200,6 +201,7 @@ onBeforeUnmount(() => {
     />
 
     <div class="stack">
+      <UpdateCard />
       <!-- 区块1 账号安全 -->
       <form class="card" @submit.prevent="handlePasswordSubmit">
         <h2 class="card-title">账号安全</h2>

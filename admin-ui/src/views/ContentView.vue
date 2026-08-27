@@ -214,7 +214,7 @@ const commandGroups = computed(() => {
     })
   return [...groups.entries()].map(([category, rows]) => ({ category, rows }))
 })
-const visibleMenus = computed(() => menus.value.filter((row) => `${menuScene(row.Name)} ${row.Reply} ${row.Image}`.toLowerCase().includes(query.value)))
+const visibleMenus = computed(() => menus.value.filter((row) => `${menuScene(row.Name)} ${row.Reply} ${row.Markdown} ${row.Image}`.toLowerCase().includes(query.value)))
 const visiblePlayerMessages = computed(() => playerMessages.value.filter((row) => `${row.key} ${row.description} ${row.template}`.toLowerCase().includes(query.value)))
 const selectedPlayerMessage = computed(() => playerMessages.value.find((row) => row.key === selectedMessageKey.value) ?? null)
 const currentSchema = computed<ConfigSchema>(() => {
@@ -583,6 +583,7 @@ function commitEditor() {
   if (editor.kind === 'menu') {
     editor.draft.Name = String(editor.draft.Name || '').trim()
     editor.draft.Reply = String(editor.draft.Reply || '').trim()
+    editor.draft.Markdown = String(editor.draft.Markdown || '').trim()
     const candidates = menus.value.map((row, index) => index === editor.index ? editor.draft : row)
     if (editor.index < 0) candidates.push(editor.draft)
     const validationError = validateMenuRows(candidates)
@@ -1157,7 +1158,7 @@ onMounted(load)
 
       <div v-else-if="textTab === 'menus'" class="menu-grid">
         <article v-for="row in visibleMenus" :key="row.Name" class="menu-card">
-          <header><div><span>QQ 菜单场景</span><h3>{{ menuScene(row.Name) }}</h3></div><button class="btn btn-ghost btn-small" @click="openEditor('menu', row)">编辑</button></header>
+          <header><div><span>QQ 菜单场景 · {{ row.Markdown ? '已配置 Markdown' : '纯文本' }}</span><h3>{{ menuScene(row.Name) }}</h3></div><button class="btn btn-ghost btn-small" @click="openEditor('menu', row)">编辑</button></header>
           <div class="qq-preview"><div class="qq-avatar"><IconPaw :size="19" /></div><div class="qq-thread"><div v-if="row.Image" class="qq-image-block"><AssetThumbnail :path="row.Image" :label="menuScene(row.Name)" kind="image" size="tile" /></div><div class="qq-message">{{ row.Reply || '这里会显示机器人发送给玩家的菜单回复。' }}</div></div></div>
         </article>
       </div>
@@ -1304,9 +1305,10 @@ onMounted(load)
       </div>
       <div v-else-if="editor.kind === 'menu' && editor.draft" class="form-grid">
         <ImageDropzone class="editor-image" :path="editorImagePath()" :label="editorImageLabel()" kind="image" :busy="uploading" @file="uploadEditorAsset" @clear="clearEditorImage" />
-        <label><span>场景标识</span><input v-model="editor.draft.Name" :disabled="editor.index >= 0" /></label><label><span>菜单配图</span><input v-model="editor.draft.Image" placeholder="上传后自动填写，也可输入图片相对路径或 HTTPS 地址" /></label><label><span>机器人回复</span><textarea v-model="editor.draft.Reply" rows="10" /></label>
-        <p class="section-help">配图可上传到「图片/上传/」、填写相对路径或 HTTPS 地址；空图时只发送文字。保存当前配置后，文本和图片立即对玩家生效；新增、删除或重命名场景后仍需点「重载生效」。</p>
+        <label><span>场景标识</span><input v-model="editor.draft.Name" :disabled="editor.index >= 0" /></label><label><span>菜单配图</span><input v-model="editor.draft.Image" placeholder="上传后自动填写，也可输入图片相对路径或 HTTPS 地址" /></label><label><span>纯文本回复（必填）</span><textarea v-model="editor.draft.Reply" rows="10" /></label><label><span>Markdown 回复（可选）</span><textarea v-model="editor.draft.Markdown" rows="10" placeholder="# 标题&#10;**加粗内容**&#10;留空时发送上面的纯文本回复" /></label>
+        <p class="section-help">Markdown 支持标题、加粗、链接等 QQ 机器人语法；留空时只发送纯文本。配图可上传到「图片/上传/」、填写相对路径或 HTTPS 地址。保存当前配置后，文本、Markdown 和图片立即对玩家生效；新增、删除或重命名场景后仍需点「重载生效」。</p>
         <div class="qq-preview large"><div class="qq-avatar"><IconPaw :size="19" /></div><div class="qq-thread"><div v-if="editor.draft.Image" class="qq-image-block"><AssetThumbnail :path="editor.draft.Image" :label="editorImageLabel()" kind="image" size="tile" /></div><div class="qq-message">{{ editor.draft.Reply || '输入文案后在这里检查 QQ 消息效果。' }}</div></div></div>
+        <div v-if="editor.draft.Markdown" class="markdown-source"><strong>QQ Markdown 源码</strong><small>最终渲染效果以 QQ 客户端为准</small><pre>{{ editor.draft.Markdown }}</pre></div>
       </div>
 
       <template #footer>
@@ -1385,7 +1387,7 @@ onMounted(load)
 @media(max-width:700px){.message-catalog,.message-variable-grid{grid-template-columns:1fr}.message-preview-panel>header{flex-direction:column}.message-preview-panel header label{width:100%}}
 .pet-editor{display:grid;gap:4px}.pet-step{padding:14px;border:1px solid var(--border-color);border-radius:var(--radius-card);background:var(--bg-elevated)}.pet-step>header b{color:var(--text-muted);font-size:11px;font-weight:500}.wide-field{grid-column:1/-1}.attribute-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.attribute-grid label{display:grid;grid-template-columns:minmax(90px,1fr) minmax(90px,1fr);align-items:center;gap:8px;padding:8px 10px;border-radius:9px;background:var(--bg-surface)}.attribute-grid span,.path-field span{color:var(--text-muted);font-size:11px}.attribute-grid input,.path-field input,.pet-image-grid>article>input{width:100%;min-height:36px;padding:6px 9px;border:1px solid var(--border-color);border-radius:var(--radius-input);background:var(--bg-base);color:var(--text-main);font:inherit}.bonus-grid{margin-top:0}.path-field{display:grid;gap:5px}.pet-image-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.pet-image-grid article{display:grid;align-content:start;gap:8px;padding:11px;border:1px solid var(--border-color);border-radius:11px;background:var(--bg-surface)}.pet-image-grid h4{margin:0;font-size:13px}
 @media(max-width:700px){.attribute-grid,.pet-image-grid{grid-template-columns:1fr}.pet-step>header{align-items:start;flex-direction:column}.wide-field{grid-column:auto}}
-.section-help{margin:0;color:var(--text-muted);font-size:12px}.choice-list.detailed label{grid-template-columns:28px minmax(120px,1fr) minmax(100px,.7fr) minmax(150px,1fr) 78px auto}.choice-list select{min-height:38px;padding:7px 9px;border:1px solid var(--border-color);border-radius:var(--radius-input);background:var(--bg-base);color:var(--text-main)}
+.section-help{margin:0;color:var(--text-muted);font-size:12px}.markdown-source{display:grid;gap:5px;padding:12px;border:1px solid var(--border-color);border-radius:10px;background:var(--bg-elevated)}.markdown-source small{color:var(--text-muted);font-size:11px}.markdown-source pre{overflow:auto;margin:3px 0 0;padding:10px;border-radius:8px;background:var(--bg-base);white-space:pre-wrap;font:12px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace}.choice-list.detailed label{grid-template-columns:28px minmax(120px,1fr) minmax(100px,.7fr) minmax(150px,1fr) 78px auto}.choice-list select{min-height:38px;padding:7px 9px;border:1px solid var(--border-color);border-radius:var(--radius-input);background:var(--bg-base);color:var(--text-main)}
 @media(max-width:900px){.choice-list.detailed label{grid-template-columns:28px 1fr auto}.choice-list.detailed label input:nth-of-type(2),.choice-list.detailed label select,.choice-list.detailed label input:nth-of-type(3){grid-column:2}}
 .event-editor-actions{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border:1px solid var(--border-color);border-radius:11px;background:var(--bg-elevated)}.event-editor-actions p{margin:0;color:var(--text-muted);font-size:12px}.zone-picker{display:grid;gap:10px;margin-top:12px}.zone-picker>section{overflow:hidden;border:1px solid var(--border-color);border-radius:11px}.zone-picker>section>header{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;background:var(--bg-elevated)}.zone-picker>section>header small{color:var(--text-muted)}.zone-picker label{display:flex;align-items:center;gap:10px;padding:10px 12px;border-top:1px solid var(--border-color);cursor:pointer}.zone-picker label:hover{background:var(--bg-hover)}.zone-picker input{width:16px;height:16px;accent-color:var(--accent)}.zone-picker label span{display:grid;gap:2px}.zone-picker label small,.zone-picker>p{color:var(--text-muted);font-size:11px}.zone-picker>p{margin:0;padding:14px;border:1px dashed var(--border-color);border-radius:11px}
 @media(max-width:700px){.event-editor-actions{align-items:stretch;flex-direction:column}}

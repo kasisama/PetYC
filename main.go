@@ -7,7 +7,10 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"os/signal"
 	"runtime"
+	"syscall"
+	"time"
 
 	"golang.org/x/term"
 	"qq-pet-saas/admin"
@@ -20,12 +23,28 @@ import (
 	"qq-pet-saas/qqofficial"
 	"qq-pet-saas/security"
 	"qq-pet-saas/setupwizard"
+	"qq-pet-saas/updater"
 )
 
 func main() {
+	if handled, err := updater.MaybeRunHelper(os.Args[1:]); handled {
+		if err != nil {
+			log.Printf("[更新] %v", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "--version" {
 		fmt.Println(version)
 		return
+	}
+	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	core.BuildVersion = version
+	updateService := updater.NewService(updater.Config{CurrentVersion: version})
+	admin.UpdateService = updateService
+	if executable, err := os.Executable(); err == nil {
+		updater.CleanupStaleHelpers(executable)
 	}
 	runtimeConfig, err := security.LoadRuntimeConfig()
 	if err != nil {
@@ -39,7 +58,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("[Main] 读取首次配置状态失败: %v", err)
 	}
-	if runtime.GOOS == "linux" && !onboarding.SetupCompleted {
+	if shouldRunLinuxTerminalSetup(runtime.GOOS, onboarding.SetupCompleted) {
 		runtimeConfig, err = setupwizard.RunLinuxTerminal(runtimeConfig, credentials)
 		if err != nil {
 			log.Printf("[首次配置] %v，请在交互式终端中重新运行程序", err)
@@ -53,6 +72,9 @@ func main() {
 		log.Printf("[Main] 自动释放官方图片资源失败: %v", err)
 	}
 	database.InitDB()
+	if sqlDB, dbErr := database.DB.DB(); dbErr == nil {
+		defer sqlDB.Close()
+	}
 	if err := config.EnsureOfficialDefaults(database.DB); err != nil {
 		log.Fatalf("[Main] 初始化官方 SQL 配置失败: %v", err)
 	}
@@ -79,12 +101,34 @@ func main() {
 	admin.QQOfficialStatusFunc = func() interface{} { return qqofficial.DefaultRuntimeSnapshot() }
 	admin.QQOfficialReconnectFunc = qqofficial.ReconnectDefault
 	admin.QQOfficialApplyConfigFunc = qqofficial.ApplyDefaultConfig
+	admin.QQOfficialSyncDiscoveryFunc = func(ctx context.Context) (interface{}, error) {
+		rows := make([]models.CommandConfig, 0)
+		if err := database.DB.WithContext(ctx).Where("enabled = ?", true).Order("sort_order asc").Find(&rows).Error; err != nil {
+			return nil, err
+		}
+		commands := make([]qqofficial.DiscoveryCommand, 0, len(rows))
+		for _, row := range rows {
+			commands = append(commands, qqofficial.DiscoveryCommand{
+				Key: row.FuncName, Command: row.Command, DisplayName: row.DisplayName,
+				Description: row.Description, SortOrder: row.SortOrder,
+			})
+		}
+		return qqofficial.SyncDefaultDiscovery(ctx, commands)
+	}
 	worker := notifications.NewWorker(database.DB, deliverNotification)
-	go worker.Run(context.Background())
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		worker.Run(rootCtx)
+	}()
 
-	var onReady func(string)
+	onReady := func(address string) {
+		updateService.SetRuntime(address+"/healthz", stop)
+	}
 	if runtime.GOOS == "windows" && !onboarding.SetupCompleted {
+		initializeUpdater := onReady
 		onReady = func(address string) {
+			initializeUpdater(address)
 			url := address + "/admin/login?first-run=1"
 			if err := exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start(); err != nil {
 				log.Printf("[首次配置] 无法自动打开浏览器，请访问 %s", url)
@@ -92,22 +136,35 @@ func main() {
 		}
 	}
 	interactive := runtime.GOOS == "windows" && term.IsTerminal(int(os.Stdin.Fd()))
-	if err := runServerWithInteractiveRetry(
+	serverErr := runServerWithInteractiveRetry(
 		&runtimeConfig,
 		interactive,
 		os.Stdin,
 		os.Stdout,
 		onReady,
-		core.StartAppWithReady,
+		func(address string, port int, callback func(string) error) error {
+			return core.StartAppWithReadyContext(rootCtx, address, port, callback)
+		},
 		findNextAvailablePort,
-	); err != nil {
-		if errors.Is(err, errStartupCancelled) {
+	)
+	stop()
+	select {
+	case <-workerDone:
+	case <-time.After(5 * time.Second):
+		log.Print("[停止] 通知任务未在 5 秒内退出，将继续关闭进程")
+	}
+	if serverErr != nil {
+		if errors.Is(serverErr, errStartupCancelled) {
 			log.Print("[启动] 用户已取消启动")
 			os.Exit(2)
 		}
-		log.Printf("[App] %v", err)
+		log.Printf("[App] %v", serverErr)
 		os.Exit(1)
 	}
+}
+
+func shouldRunLinuxTerminalSetup(goos string, setupCompleted bool) bool {
+	return goos == "linux" && !setupCompleted && !security.WebSetupEnabled()
 }
 
 var version = "dev"

@@ -3,6 +3,7 @@ package qqofficial
 import (
 	"context"
 	"errors"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -97,9 +98,13 @@ func (status *RuntimeStatus) markSend() {
 
 var defaultRuntime struct {
 	sync.Mutex
-	status *RuntimeStatus
-	client *Client
-	cancel context.CancelFunc
+	status     *RuntimeStatus
+	client     *Client
+	cancel     context.CancelFunc
+	config     Config
+	deduper    *Deduplicator
+	running    bool
+	generation uint64
 }
 
 func SendDefault(ctx context.Context, event core.InboundEvent, message core.OutboundMessage) error {
@@ -147,10 +152,20 @@ func ApplyDefaultConfig() error {
 		defaultRuntime.cancel = nil
 		defaultRuntime.status = nil
 		defaultRuntime.client = nil
+		defaultRuntime.config = Config{}
+		defaultRuntime.running = false
+		defaultRuntime.generation++
 		defaultRuntime.Unlock()
 		if cancel != nil {
 			cancel()
 		}
+		return nil
+	}
+	defaultRuntime.Lock()
+	unchanged := defaultRuntime.running && defaultRuntime.cancel != nil && defaultRuntime.config == config
+	defaultRuntime.Unlock()
+	if unchanged {
+		log.Printf("[QQOfficial] 运行配置未变化，跳过网关重启")
 		return nil
 	}
 	_, err = startConfigured(context.Background(), config)
@@ -167,15 +182,30 @@ func startConfigured(parent context.Context, config Config) (*Gateway, error) {
 	gateway := NewGateway(config, tokens, client)
 	gateway.Status = status
 	defaultRuntime.Lock()
-	if defaultRuntime.cancel != nil {
-		defaultRuntime.cancel()
+	if defaultRuntime.deduper == nil {
+		defaultRuntime.deduper = NewDeduplicator(10 * time.Minute)
 	}
+	gateway.Deduper = defaultRuntime.deduper
+	previousCancel := defaultRuntime.cancel
+	defaultRuntime.generation++
+	generation := defaultRuntime.generation
 	defaultRuntime.cancel, defaultRuntime.status, defaultRuntime.client = cancel, status, client
+	defaultRuntime.config = config
+	defaultRuntime.running = true
 	defaultRuntime.Unlock()
+	if previousCancel != nil {
+		previousCancel()
+	}
 	go func() {
-		if runErr := gateway.Run(ctx); runErr != nil && !errors.Is(runErr, context.Canceled) {
+		runErr := gateway.Run(ctx)
+		if runErr != nil && !errors.Is(runErr, context.Canceled) {
 			status.markError(runErr)
 		}
+		defaultRuntime.Lock()
+		if defaultRuntime.generation == generation {
+			defaultRuntime.running = false
+		}
+		defaultRuntime.Unlock()
 	}()
 	return gateway, nil
 }

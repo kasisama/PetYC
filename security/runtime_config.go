@@ -47,6 +47,13 @@ func RuntimeConfigPath() string {
 	return filepath.Join(dir, runtimeConfigFileName)
 }
 
+// WebSetupEnabled reports whether the explicitly opted-in browser-based
+// first-run flow may be used from a non-loopback client, such as a browser
+// reaching the service through a Docker port mapping.
+func WebSetupEnabled() bool {
+	return envRuntimeBool("QQPET_WEB_SETUP")
+}
+
 func LoadRuntimeConfig() (RuntimeConfig, error) {
 	runtimeConfigMu.Lock()
 	defer runtimeConfigMu.Unlock()

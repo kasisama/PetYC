@@ -66,6 +66,7 @@ func RegisterRoutes(router *gin.Engine) {
 	RegisterContentRoutes(api, database.DB)
 	RegisterEcosystemRoutes(api, database.DB)
 	RegisterAdventureRoutes(api, database.DB)
+	RegisterUpdateRoutes(api)
 }
 
 func GetGroups(c *gin.Context) {

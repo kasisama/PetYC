@@ -110,15 +110,17 @@ describe('内容工作台数据兼容', () => {
     })
   })
 
-  it('菜单场景兼容图片字段并为旧数据补空值', () => {
-    expect(normalizeMenu({ name: '主菜单', reply: '欢迎', image: '上传/main.webp' })).toEqual({
+  it('菜单场景兼容 Markdown 和图片字段并为旧数据补空值', () => {
+    expect(normalizeMenu({ name: '主菜单', reply: '欢迎', markdown: '# 欢迎', image: '上传/main.webp' })).toEqual({
       Name: '主菜单',
       Reply: '欢迎',
+      Markdown: '# 欢迎',
       Image: '上传/main.webp',
     })
     expect(normalizeMenu({ Name: '旧菜单', Reply: '纯文字' })).toEqual({
       Name: '旧菜单',
       Reply: '纯文字',
+      Markdown: '',
       Image: '',
     })
   })

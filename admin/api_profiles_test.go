@@ -41,6 +41,23 @@ func TestProfileArchiveContainsOnlyManifestAndWhitelistConfig(t *testing.T) {
 	}
 }
 
+func TestProfileArchivePreservesMenuMarkdown(t *testing.T) {
+	snapshot := archiveTestSnapshot()
+	snapshot.Menus = []models.MenuConfig{{Name: "主菜单", Reply: "纯文本菜单", Markdown: "# 宠物菜单"}}
+
+	raw, err := buildProfileArchive(models.ConfigProfile{ID: "profile", Name: "菜单配置", AppVersion: "0.0.1", SchemaVersion: 1}, snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, imported, _, err := parseProfileArchive(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(imported.Menus) != 1 || imported.Menus[0].Reply != "纯文本菜单" || imported.Menus[0].Markdown != "# 宠物菜单" {
+		t.Fatalf("菜单 Markdown 未在配置包中保留: %#v", imported.Menus)
+	}
+}
+
 func TestProfileAssetsIncludeAndRewriteMenuImages(t *testing.T) {
 	snapshot := archiveTestSnapshot()
 	snapshot.Menus = []models.MenuConfig{{Name: "主菜单", Reply: "欢迎", Image: "上传/menu.webp"}}

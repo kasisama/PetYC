@@ -14,6 +14,26 @@ import (
 	"qq-pet-saas/security"
 )
 
+func TestShouldRunLinuxTerminalSetup(t *testing.T) {
+	t.Setenv("QQPET_WEB_SETUP", "")
+	if !shouldRunLinuxTerminalSetup("linux", false) {
+		t.Fatal("fresh Linux install should require terminal setup by default")
+	}
+	if shouldRunLinuxTerminalSetup("linux", true) {
+		t.Fatal("completed Linux install must not run terminal setup")
+	}
+	if shouldRunLinuxTerminalSetup("windows", false) {
+		t.Fatal("non-Linux install must not run Linux terminal setup")
+	}
+}
+
+func TestShouldRunLinuxTerminalSetupAllowsOptInWebSetup(t *testing.T) {
+	t.Setenv("QQPET_WEB_SETUP", "1")
+	if shouldRunLinuxTerminalSetup("linux", false) {
+		t.Fatal("web setup opt-in should bypass Linux terminal setup")
+	}
+}
+
 func TestRunServerWithInteractiveRetryUsesSuggestedPortAndPersistsIt(t *testing.T) {
 	t.Setenv("QQPET_DATA_DIR", t.TempDir())
 	config := validRuntimeConfig(8080)

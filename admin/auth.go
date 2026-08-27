@@ -372,7 +372,7 @@ type setupPasswordRequest struct {
 }
 
 func (handler *AuthHandler) SetupPassword(c *gin.Context) {
-	if !requestIsLoopback(c.Request) {
+	if !requestIsLoopback(c.Request) && !security.WebSetupEnabled() {
 		c.JSON(http.StatusForbidden, gin.H{"error": "首次密码只能在运行服务的本机设置"})
 		return
 	}

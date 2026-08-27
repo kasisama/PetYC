@@ -19,7 +19,7 @@ func TestStartupSummaryShowsUsefulEndpoints(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			summary := startupSummary(test.address)
-			for _, expected := range []string{"QQ-Pet SaaS 已就绪", test.admin, test.oneBot} {
+			for _, expected := range []string{"QQ-Pet 已就绪", test.admin, test.oneBot} {
 				if !strings.Contains(summary, expected) {
 					t.Fatalf("startup summary should contain %q, got %q", expected, summary)
 				}

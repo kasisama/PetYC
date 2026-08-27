@@ -1,6 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import PlatformsView from './PlatformsView.vue'
+import { __resetPlatformStatusForTests } from '../composables/usePlatformStatus'
 
 function response(data: unknown) {
   return new Response(JSON.stringify({ code: 0, msg: 'success', data }), {
@@ -10,8 +11,10 @@ function response(data: unknown) {
 }
 
 afterEach(() => {
+  __resetPlatformStatusForTests()
   document.body.innerHTML = ''
   vi.unstubAllGlobals()
+  vi.useRealTimers()
 })
 
 describe('PlatformsView', () => {
@@ -51,6 +54,38 @@ describe('PlatformsView', () => {
     expect(secretInputs.some((input) => input.placeholder === '已配置，留空保持不变')).toBe(true)
     expect(text).not.toContain('true')
     expect(text).not.toContain('false')
+    wrapper.unmount()
+  })
+
+  it('updates connection state automatically and reports refresh failures without remounting', async () => {
+    vi.useFakeTimers()
+    let connected = false
+    let statusFails = false
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input)
+      if (path === '/api/admin/platforms/status') {
+        if (statusFails) return new Response(JSON.stringify({ message: 'temporary failure' }), { status: 503, headers: { 'Content-Type': 'application/json' } })
+        return response({ onebot: { connected: false }, qq_official: { configured: true, connected, session_state: connected ? 'running' : 'connecting', capabilities: {} } })
+      }
+      if (path === '/api/admin/groups') return response([])
+      return response({})
+    }))
+
+    const wrapper = mount(PlatformsView, { attachTo: document.body })
+    await flushPromises()
+    expect(wrapper.text()).toContain('等待连接')
+
+    connected = true
+    await vi.advanceTimersByTimeAsync(5_000)
+    await flushPromises()
+    expect(wrapper.text()).toContain('网关在线')
+    expect(wrapper.text()).toContain('running')
+
+    statusFails = true
+    await vi.advanceTimersByTimeAsync(5_000)
+    await flushPromises()
+    expect(wrapper.text()).toContain('状态未知')
+    expect(wrapper.text()).toContain('平台状态自动刷新失败')
     wrapper.unmount()
   })
 })

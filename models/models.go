@@ -191,9 +191,10 @@ type WorkSettingConfig struct {
 
 // MenuConfig 菜单配置表
 type MenuConfig struct {
-	Name  string `gorm:"primaryKey;size:64;comment:菜单指令名"`
-	Reply string `gorm:"type:text;comment:菜单回复内容"`
-	Image string `gorm:"size:255;comment:菜单场景配图"`
+	Name     string `gorm:"primaryKey;size:64;comment:菜单指令名"`
+	Reply    string `gorm:"type:text;comment:菜单纯文本回复内容"`
+	Markdown string `gorm:"type:text;comment:菜单 Markdown 回复内容"`
+	Image    string `gorm:"size:255;comment:菜单场景配图"`
 }
 
 // ImageConfig 游戏核心图片表

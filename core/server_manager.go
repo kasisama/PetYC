@@ -152,6 +152,15 @@ func (manager *ServerManager) Wait() error {
 	return <-manager.errors
 }
 
+func (manager *ServerManager) WaitContext(ctx context.Context) error {
+	select {
+	case err := <-manager.errors:
+		return err
+	case <-ctx.Done():
+		return nil
+	}
+}
+
 func (manager *ServerManager) Close() error {
 	manager.mu.Lock()
 	active := manager.active

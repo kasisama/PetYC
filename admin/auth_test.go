@@ -382,6 +382,7 @@ func TestAdminPasswordChangeValidatesInput(t *testing.T) {
 func TestInitialPasswordSetupRequiresLoopbackAndDisablesSetupMode(t *testing.T) {
 	t.Setenv("QQPET_DATA_DIR", t.TempDir())
 	t.Setenv("QQPET_WS_TOKEN", "")
+	t.Setenv("QQPET_WEB_SETUP", "")
 	manager := newMemorySessionManager()
 	handler := NewAuthHandler(manager)
 	router := gin.New()
@@ -408,6 +409,29 @@ func TestInitialPasswordSetupRequiresLoopbackAndDisablesSetupMode(t *testing.T) 
 	valid, err := security.VerifyAdminCredentials("owner", "local-password")
 	if err != nil || !valid {
 		t.Fatalf("configured credentials valid = %v, error = %v", valid, err)
+	}
+	repeat := performJSONRequest(router, http.MethodPost, "/api/admin/auth/setup", body, nil)
+	if repeat.Code != http.StatusForbidden {
+		t.Fatalf("remote repeat setup status = %d, want %d", repeat.Code, http.StatusForbidden)
+	}
+}
+
+func TestInitialPasswordSetupAllowsOptInWebSetupAndOnlyRunsOnce(t *testing.T) {
+	t.Setenv("QQPET_DATA_DIR", t.TempDir())
+	t.Setenv("QQPET_WS_TOKEN", "")
+	t.Setenv("QQPET_WEB_SETUP", "1")
+	handler := NewAuthHandler(newMemorySessionManager())
+	router := gin.New()
+	router.POST("/api/admin/auth/setup", handler.SetupPassword)
+
+	body := `{"username":"owner","password":"browser-password","confirm_password":"browser-password"}`
+	first := performJSONRequest(router, http.MethodPost, "/api/admin/auth/setup", body, nil)
+	if first.Code != http.StatusOK {
+		t.Fatalf("web setup status = %d, body = %s", first.Code, first.Body.String())
+	}
+	repeat := performJSONRequest(router, http.MethodPost, "/api/admin/auth/setup", body, nil)
+	if repeat.Code != http.StatusConflict {
+		t.Fatalf("repeat web setup status = %d, want %d, body = %s", repeat.Code, http.StatusConflict, repeat.Body.String())
 	}
 }
 

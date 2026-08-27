@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ var OneBotStatusFunc func() interface{}
 var QQOfficialStatusFunc func() interface{}
 var QQOfficialReconnectFunc func() error
 var QQOfficialApplyConfigFunc func() error
+var QQOfficialSyncDiscoveryFunc func(context.Context) (interface{}, error)
 
 type PortHandoffResult struct {
 	Address           string    `json:"address"`
@@ -34,6 +36,7 @@ func RegisterPlatformRoutes(group *gin.RouterGroup, db *gorm.DB) {
 	group.PUT("/platforms/config", api.putConfig)
 	group.POST("/platforms/port/confirm", api.confirmPort)
 	group.POST("/platforms/qq/reconnect", api.reconnectQQOfficial)
+	group.POST("/platforms/qq/discovery/sync", api.syncQQOfficialDiscovery)
 	group.GET("/platforms/qq/env-template", qqOfficialEnvTemplate)
 }
 
@@ -255,16 +258,61 @@ func (api *PlatformAPI) reconnectQQOfficial(c *gin.Context) {
 		err = QQOfficialReconnectFunc()
 	}
 	if err != nil {
-		_ = writeAudit(api.DB, "reconnect_qq_gateway", "platform", "qq_official", reason, nil, nil, false, err)
+		if api.DB != nil {
+			if auditErr := writeAudit(api.DB, "reconnect_qq_gateway", "platform", "qq_official", reason, nil, nil, false, err); auditErr == nil {
+				markAuditRecorded(c)
+			}
+		}
 		Error(c, 4000, err.Error())
 		return
 	}
 	result := gin.H{"accepted": true}
-	if err = writeAudit(api.DB, "reconnect_qq_gateway", "platform", "qq_official", reason, nil, result, true, nil); err != nil {
-		Error(c, 5000, "网关已重连，但审计日志写入失败")
-		return
+	if api.DB != nil {
+		if err = writeAudit(api.DB, "reconnect_qq_gateway", "platform", "qq_official", reason, nil, result, true, nil); err != nil {
+			Error(c, 5000, "网关已重连，但审计日志写入失败")
+			return
+		}
+		markAuditRecorded(c)
 	}
 	Success(c, result)
+}
+
+func (api *PlatformAPI) syncQQOfficialDiscovery(c *gin.Context) {
+	var request struct {
+		Reason string `json:"reason"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		Error(c, 4000, "请求格式错误")
+		return
+	}
+	reason, err := requiredReason(request.Reason)
+	if err != nil {
+		Error(c, 4000, err.Error())
+		return
+	}
+	var result interface{}
+	if QQOfficialSyncDiscoveryFunc == nil {
+		err = errors.New("QQ 官方菜单同步服务未初始化")
+	} else {
+		result, err = QQOfficialSyncDiscoveryFunc(c.Request.Context())
+		if err == nil {
+			if api.DB != nil {
+				if auditErr := writeAudit(api.DB, "sync_qq_discovery", "platform", "qq_official", reason, nil, result, true, nil); auditErr != nil {
+					Error(c, 5000, "菜单与指令面板已同步，但审计日志写入失败")
+					return
+				}
+				markAuditRecorded(c)
+			}
+			Success(c, result)
+			return
+		}
+	}
+	if api.DB != nil {
+		if auditErr := writeAudit(api.DB, "sync_qq_discovery", "platform", "qq_official", reason, nil, result, false, err); auditErr == nil {
+			markAuditRecorded(c)
+		}
+	}
+	Error(c, 4000, err.Error())
 }
 
 func qqOfficialEnvTemplate(c *gin.Context) {

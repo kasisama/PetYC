@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/url"
@@ -13,6 +14,8 @@ import (
 	"qq-pet-saas/gameplayrules"
 	"qq-pet-saas/security"
 )
+
+var BuildVersion = "dev"
 
 func NewAppRouter() *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
@@ -32,6 +35,9 @@ func NewAppRouter() *gin.Engine {
 		return SyncUnifiedCommandConfigs(database.DB)
 	}
 	admin.RegisterRoutes(router)
+	router.GET("/healthz", func(c *gin.Context) {
+		c.JSON(200, gin.H{"status": "ok", "version": BuildVersion})
+	})
 	router.GET("/v1/ws", HandleWebSocket)
 	return router
 }
@@ -42,6 +48,10 @@ func StartApp(listenAddress string, port int) error {
 }
 
 func StartAppWithReady(listenAddress string, port int, onReady func(string) error) error {
+	return StartAppWithReadyContext(context.Background(), listenAddress, port, onReady)
+}
+
+func StartAppWithReadyContext(ctx context.Context, listenAddress string, port int, onReady func(string) error) error {
 	manager := NewServerManagerWithEndpoint(NewAppRouter(), persistRuntimeEndpoint)
 	admin.PlatformPortChangeFunc = func(port int) (admin.PortHandoffResult, error) {
 		handoff, err := manager.BeginPortHandoff(port)
@@ -73,7 +83,7 @@ func StartAppWithReady(listenAddress string, port int, onReady func(string) erro
 			return fmt.Errorf("完成服务器启动: %w", err)
 		}
 	}
-	if err := manager.Wait(); err != nil {
+	if err := manager.WaitContext(ctx); err != nil {
 		return fmt.Errorf("服务器运行失败: %w", err)
 	}
 	return nil
@@ -94,7 +104,7 @@ func startupSummary(address string) string {
 		}
 		websocketAddress = parsed.String()
 	}
-	return fmt.Sprintf("[启动] QQ-Pet SaaS 已就绪\n  管理后台：%s/admin\n  OneBot：  %s/v1/ws", httpAddress, websocketAddress)
+	return fmt.Sprintf("[启动] QQ-Pet 已就绪\n  管理后台：%s/admin\n  OneBot：  %s/v1/ws", httpAddress, websocketAddress)
 }
 
 func persistRuntimeEndpoint(address string, port int) error {

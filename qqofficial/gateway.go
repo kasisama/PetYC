@@ -109,15 +109,23 @@ func (gateway *Gateway) HandleDispatch(ctx context.Context, payload GatewayPaylo
 		return nil
 	}
 	if !gateway.Deduper.Accept(event) {
-		log.Printf("[QQOfficial] 忽略重复消息 type=%s content=%q", payload.Type, content)
+		if event.MessageID != "" {
+			log.Printf("[QQOfficial] 忽略重复消息 type=%s message_id=%s msg_seq=%d", payload.Type, maskedIdentifier(event.MessageID), event.MessageSeq)
+		} else {
+			log.Printf("[QQOfficial] 忽略重复交互 type=%s event_id=%s", payload.Type, maskedIdentifier(event.EventID))
+		}
 		return nil
 	}
+	// Gateway 重连会取消连接上下文，但已经通过去重并接手的消息仍应在
+	// 有界时间内完成。跨 runtime 共享的去重器会阻止新连接再次处理它。
+	dispatchCtx, cancelDispatch := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
+	defer cancelDispatch()
 	if payload.Type == "INTERACTION_CREATE" {
-		if err = gateway.Sender.AcknowledgeInteraction(ctx, event.EventID, "0"); err != nil {
+		if err = gateway.Sender.AcknowledgeInteraction(dispatchCtx, event.EventID, "0"); err != nil {
 			return err
 		}
 	}
-	message, handled, err := gateway.Route(ctx, event)
+	message, handled, err := gateway.Route(dispatchCtx, event)
 	if err != nil {
 		log.Printf("[QQOfficial] 指令处理失败 type=%s content=%q: %v", payload.Type, content, err)
 		return err
@@ -127,12 +135,20 @@ func (gateway *Gateway) HandleDispatch(ctx context.Context, payload GatewayPaylo
 		return nil
 	}
 	log.Printf("[QQOfficial] 指令已匹配，准备回复 type=%s content=%q", payload.Type, content)
-	if _, err = gateway.Sender.Send(ctx, event, message); err != nil {
+	if _, err = gateway.Sender.Send(dispatchCtx, event, message); err != nil {
 		log.Printf("[QQOfficial] 回复发送失败 type=%s: %v", payload.Type, err)
 		return err
 	}
 	log.Printf("[QQOfficial] 回复发送成功 type=%s", payload.Type)
 	return nil
+}
+
+func maskedIdentifier(value string) string {
+	runes := []rune(strings.TrimSpace(value))
+	if len(runes) <= 8 {
+		return "****"
+	}
+	return string(runes[:4]) + "…" + string(runes[len(runes)-4:])
 }
 
 func consoleMessageText(value string) string {
@@ -226,6 +242,17 @@ func (gateway *Gateway) runConnection(ctx context.Context, gatewayURL string, sh
 		return err
 	}
 	defer connection.Close()
+	connectionDone := make(chan struct{})
+	defer close(connectionDone)
+	go func() {
+		select {
+		case <-ctx.Done():
+			// gorilla/websocket 的 ReadJSON 不会因 DialContext 的上下文取消而
+			// 自动返回；必须关闭连接，避免旧 runtime 继续消费后续事件。
+			_ = connection.Close()
+		case <-connectionDone:
+		}
+	}()
 	var hello GatewayPayload
 	if err = connection.ReadJSON(&hello); err != nil {
 		return err

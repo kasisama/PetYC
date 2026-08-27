@@ -2,6 +2,7 @@ package admin
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -250,9 +251,10 @@ func TestPlatformPortConfirmPassesOneTimeToken(t *testing.T) {
 func TestRegisterPlatformRoutesIncludesConfigAndPortConfirmation(t *testing.T) {
 	router := newPlatformTestRouter()
 	wanted := map[string]bool{
-		"GET /api/admin/platforms/config":        false,
-		"PUT /api/admin/platforms/config":        false,
-		"POST /api/admin/platforms/port/confirm": false,
+		"GET /api/admin/platforms/config":             false,
+		"PUT /api/admin/platforms/config":             false,
+		"POST /api/admin/platforms/port/confirm":      false,
+		"POST /api/admin/platforms/qq/discovery/sync": false,
 	}
 	for _, route := range router.Routes() {
 		key := route.Method + " " + route.Path
@@ -264,5 +266,25 @@ func TestRegisterPlatformRoutesIncludesConfigAndPortConfirmation(t *testing.T) {
 		if !found {
 			t.Errorf("missing route %s", route)
 		}
+	}
+}
+
+func TestQQDiscoverySyncRequiresReasonAndCallsConfiguredService(t *testing.T) {
+	previous := QQOfficialSyncDiscoveryFunc
+	calls := 0
+	QQOfficialSyncDiscoveryFunc = func(context.Context) (interface{}, error) {
+		calls++
+		return gin.H{"menu_version": 2}, nil
+	}
+	t.Cleanup(func() { QQOfficialSyncDiscoveryFunc = previous })
+	router := newPlatformTestRouter()
+
+	response := platformRequest(t, router, http.MethodPost, "/api/admin/platforms/qq/discovery/sync", `{"reason":""}`)
+	if response["code"].(float64) == 0 || calls != 0 {
+		t.Fatalf("blank reason response = %#v, calls = %d", response, calls)
+	}
+	response = platformRequest(t, router, http.MethodPost, "/api/admin/platforms/qq/discovery/sync", `{"reason":"发布当前指令目录"}`)
+	if response["code"].(float64) != 0 || calls != 1 {
+		t.Fatalf("sync response = %#v, calls = %d", response, calls)
 	}
 }

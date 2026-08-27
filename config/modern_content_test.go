@@ -57,3 +57,21 @@ func TestEnsureModernMenusCreatesCurrentDefaultsWithoutDeletingExistingMenus(t *
 		t.Fatalf("二次启动不应覆盖管理员修改，实际 %q", menu.Reply)
 	}
 }
+
+func TestOfficialMenusAllProvideMarkdown(t *testing.T) {
+	snapshot, err := LoadOfficialSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Menus) == 0 {
+		t.Fatal("官方配置不应缺少菜单场景")
+	}
+	for _, menu := range snapshot.Menus {
+		if strings.TrimSpace(menu.Markdown) == "" {
+			t.Fatalf("菜单 %q 缺少 Markdown 回复", menu.Name)
+		}
+		if !strings.HasPrefix(strings.TrimSpace(menu.Markdown), "# ") {
+			t.Fatalf("菜单 %q 的 Markdown 应以一级标题开头，实际 %q", menu.Name, menu.Markdown)
+		}
+	}
+}

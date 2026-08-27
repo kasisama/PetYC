@@ -286,7 +286,7 @@ func TestSaveConfigPersistsRows(t *testing.T) {
 	}
 	db.Create(&models.MenuConfig{Name: "主菜单", Reply: "旧内容"})
 
-	body := []byte(`[{"Name":"主菜单","Reply":"新内容","Image":"上传/main.webp"},{"Name":"帮助","Reply":"帮助内容","Image":""}]`)
+	body := []byte(`[{"Name":"主菜单","Reply":"新内容","Markdown":"# 新内容","Image":"上传/main.webp"},{"Name":"帮助","Reply":"帮助内容","Markdown":"","Image":""}]`)
 	response := doConfigRequest(t, newConfigTestRouter(db), http.MethodPut, "/api/admin/config/menus", body)
 	if response.Code != 0 {
 		t.Fatalf("期望 code 0，实际 %d，msg=%s", response.Code, response.Msg)
@@ -301,6 +301,9 @@ func TestSaveConfigPersistsRows(t *testing.T) {
 	db.First(&updated, "name = ?", "主菜单")
 	if updated.Reply != "新内容" {
 		t.Fatalf("既有记录未被更新，Reply=%q", updated.Reply)
+	}
+	if updated.Markdown != "# 新内容" {
+		t.Fatalf("菜单 Markdown 未被保存，Markdown=%q", updated.Markdown)
 	}
 	if updated.Image != "上传/main.webp" {
 		t.Fatalf("菜单图片未被保存，Image=%q", updated.Image)
@@ -419,7 +422,7 @@ func TestSaveMenuConfigAllowsEmptyImage(t *testing.T) {
 	if err := db.First(&row, "name = ?", "主菜单").Error; err != nil {
 		t.Fatal(err)
 	}
-	if row.Reply != "纯文字菜单" || row.Image != "" {
+	if row.Reply != "纯文字菜单" || row.Markdown != "" || row.Image != "" {
 		t.Fatalf("纯文字菜单保存结果错误: %#v", row)
 	}
 }

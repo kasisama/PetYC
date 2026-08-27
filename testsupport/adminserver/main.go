@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -18,9 +19,11 @@ import (
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+	"qq-pet-saas/admin"
 	"qq-pet-saas/core"
 	"qq-pet-saas/database"
 	"qq-pet-saas/models"
+	"qq-pet-saas/updater"
 )
 
 const (
@@ -49,10 +52,35 @@ func main() {
 		log.Fatal(err)
 	}
 	database.DB = db
+	core.BuildVersion = "dev"
+	admin.UpdateService = updater.NewService(updater.Config{CurrentVersion: "dev"})
 
+	appRouter := core.NewAppRouter()
 	server := &http.Server{
-		Addr:              listenAddress,
-		Handler:           core.NewAppRouter(),
+		Addr: listenAddress,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/api/admin/auth/session":
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{"authenticated": true, "username": "integration-admin"})
+			case "/api/admin/config/status":
+				writeTestResponse(w, map[string]interface{}{"db_revision": 1, "loaded_revision": 1, "pending_reload": false})
+			case "/api/admin/audit-logs":
+				writeTestResponse(w, map[string]interface{}{"items": []interface{}{}, "total": 0})
+			case "/api/admin/platforms/status":
+				writeTestResponse(w, map[string]interface{}{"onebot": map[string]interface{}{"connected": false}, "qq_official": map[string]interface{}{"connected": false, "capabilities": map[string]interface{}{}}})
+			case "/api/admin/onboarding/status":
+				writeTestResponse(w, map[string]interface{}{"setup_completed": true, "tour_version_completed": 1, "current_tour_version": 1})
+			case "/api/admin/updates/check":
+				writeTestResponse(w, map[string]interface{}{
+					"currentVersion": "dev", "latestVersion": "", "available": false,
+					"canAutoUpdate": false, "installMode": "manual", "reason": "开发构建不支持在线更新",
+					"releaseUrl": "https://github.com/kasisama/PetYC/releases/latest",
+				})
+			default:
+				appRouter.ServeHTTP(w, r)
+			}
+		}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	shutdownSignal, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -68,6 +96,11 @@ func main() {
 	if err = server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
+}
+
+func writeTestResponse(w http.ResponseWriter, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"code": 0, "msg": "success", "data": data})
 }
 
 func seed(db *gorm.DB) error {

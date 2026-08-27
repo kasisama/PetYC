@@ -43,15 +43,53 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           mkdir -p dist
-          GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=$VERSION" -o "dist/qq-pet-saas_${VERSION}_windows_amd64.exe" .
-          GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=$VERSION" -o "dist/qq-pet-saas_${VERSION}_linux_amd64" .
+          GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=$VERSION" -o "dist/petyc_${VERSION}_windows_amd64.exe" .
+          GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=$VERSION" -o "dist/petyc_${VERSION}_linux_amd64" .
 
       - name: Check release contents
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          ! strings "dist/qq-pet-saas_${VERSION}_linux_amd64" | grep -F '初始数据/'
+          ! strings "dist/petyc_${VERSION}_linux_amd64" | grep -F '初始数据/'
           ! grep -E -i 'app_secret|onebot.*token|masterqq|notifyqq|player_account|wallet_ledger' config/defaults/config_v0.1.0.json
-          "./dist/qq-pet-saas_${VERSION}_linux_amd64" --version | grep -Fx "$VERSION"
+          "./dist/petyc_${VERSION}_linux_amd64" --version | grep -Fx "$VERSION"
+
+      - name: Build and sign update manifest
+        env:
+          UPDATE_SIGNING_PRIVATE_KEY: ${{ secrets.UPDATE_SIGNING_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          TAG="$GITHUB_REF_NAME"
+          WINDOWS="petyc_${VERSION}_windows_amd64.exe"
+          LINUX="petyc_${VERSION}_linux_amd64"
+          WINDOWS_SHA=$(sha256sum "dist/$WINDOWS" | cut -d ' ' -f1)
+          LINUX_SHA=$(sha256sum "dist/$LINUX" | cut -d ' ' -f1)
+          WINDOWS_SIZE=$(stat -c %s "dist/$WINDOWS")
+          LINUX_SIZE=$(stat -c %s "dist/$LINUX")
+          BASE_URL="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
+          jq -n \
+            --arg version "$VERSION" \
+            --arg publishedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg notes "PetYC $TAG，完整更新说明请查看 GitHub Release。" \
+            --arg windowsUrl "$BASE_URL/$WINDOWS" \
+            --arg windowsSha "$WINDOWS_SHA" \
+            --argjson windowsSize "$WINDOWS_SIZE" \
+            --arg linuxUrl "$BASE_URL/$LINUX" \
+            --arg linuxSha "$LINUX_SHA" \
+            --argjson linuxSize "$LINUX_SIZE" \
+            '{
+              schema: 1,
+              version: $version,
+              channel: "stable",
+              publishedAt: $publishedAt,
+              notes: $notes,
+              platforms: {
+                "windows-amd64": {url: $windowsUrl, sha256: $windowsSha, size: $windowsSize},
+                "linux-amd64": {url: $linuxUrl, sha256: $linuxSha, size: $linuxSize}
+              }
+            }' > dist/update-manifest.json
+          go run ./cmd/signmanifest -manifest dist/update-manifest.json -output dist/update-manifest.json.sig
+          go run ./cmd/verifymanifest dist/update-manifest.json dist/update-manifest.json.sig
 
       - name: Publish GitHub release
         env:

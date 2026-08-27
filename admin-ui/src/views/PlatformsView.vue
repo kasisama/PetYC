@@ -5,26 +5,28 @@ import {
   buildPortHandoffURL,
   confirmPlatformPort,
   getPlatformConfig,
-  getPlatformStatus,
   getQQEnvTemplate,
   reconnectQQ,
   savePlatformConfig,
+  syncQQDiscovery,
   type PlatformRuntimeConfig,
-  type PlatformStatus,
 } from '../api/ecosystem'
 import { bulkUpdateGroupState, fetchGroups, updateGroup, type GroupSwitch } from '../api/ops'
 import PageHeader from '../components/ui/PageHeader.vue'
 import UiDrawer from '../components/ui/UiDrawer.vue'
 import UiModal from '../components/ui/UiModal.vue'
 import { useToast } from '../composables/useToast'
+import { usePlatformStatus } from '../composables/usePlatformStatus'
 
 const toast = useToast()
-const status = ref<PlatformStatus | null>(null)
+const { status, state: platformStatusState, refresh: refreshPlatformStatus } = usePlatformStatus()
 const groups = ref<GroupSwitch[]>([])
 const loading = ref(false)
 const reconnectOpen = ref(false)
+const discoveryOpen = ref(false)
 const configOpen = ref(false)
 const reason = ref('')
+const discoveryReason = ref('')
 const busy = ref(false)
 const configLoading = ref(false)
 const savedConfig = ref<PlatformRuntimeConfig | null>(null)
@@ -47,17 +49,32 @@ const form = reactive({
 
 const qq = computed<Record<string, any>>(() => status.value?.qq_official ?? {})
 const onebot = computed<Record<string, any>>(() => status.value?.onebot ?? {})
+const statusUnknown = computed(() => platformStatusState.value === 'unknown')
+const onebotTitle = computed(() => statusUnknown.value ? '状态未知' : platformStatusState.value === 'loading' ? '正在获取' : onebot.value.connected ? '在线' : '离线')
+const qqTitle = computed(() => statusUnknown.value ? '状态未知' : platformStatusState.value === 'loading' ? '正在获取' : qq.value.connected ? '网关在线' : qq.value.configured ? '等待连接' : '未配置')
 const capabilityLabels:Record<string,{label:string;impact:string}>={group:{label:'官方群消息',impact:'关闭后不接收官方群命令'},guild:{label:'频道消息',impact:'关闭后不接收频道命令'},markdown:{label:'富文本消息',impact:'不可用时自动发送纯文本'},keyboard:{label:'消息按钮',impact:'不可用时玩家仍可输入命令'},interaction:{label:'按钮互动事件',impact:'仅影响按钮回调'},audit:{label:'消息审核事件',impact:'仅影响平台审核回执'}}
 const capabilities = computed(()=>Object.entries(qq.value.capabilities??{}).map(([key,enabled])=>({key,enabled:Boolean(enabled),label:capabilityLabels[key]?.label??key,impact:capabilityLabels[key]?.impact??'不影响核心文本玩法'})))
 const onebotGroups = computed(() => groups.value.filter((row) => row.platform === 'onebot'))
 const officialGroups = computed(() => groups.value.filter((row) => row.platform === 'qq_group' || row.platform === 'qq_guild'))
 
-async function load() {
+async function loadGroups() {
   loading.value = true
   try {
-    ;[status.value, groups.value] = await Promise.all([getPlatformStatus(), fetchGroups()])
+    groups.value = await fetchGroups()
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : '平台状态加载失败')
+    toast.error(error instanceof Error ? error.message : '场景状态加载失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+async function refreshAll() {
+  loading.value = true
+  try {
+    const [, nextGroups] = await Promise.all([refreshPlatformStatus({ fresh: true }), fetchGroups()])
+    groups.value = nextGroups
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : '平台状态刷新失败')
   } finally {
     loading.value = false
   }
@@ -70,9 +87,27 @@ async function reconnect() {
     await reconnectQQ(reason.value)
     toast.success('网关重连已发起')
     reconnectOpen.value = false
-    await load()
+    try {
+      await refreshPlatformStatus({ fresh: true })
+    } catch (error) {
+      toast.warning(error instanceof Error ? `重连已发起，但状态刷新失败：${error.message}` : '重连已发起，但状态刷新失败')
+    }
   } catch (error) {
     toast.error(error instanceof Error ? error.message : '重连失败')
+  } finally {
+    busy.value = false
+  }
+}
+
+async function syncDiscovery() {
+  if (!discoveryReason.value.trim()) return toast.error('请填写同步原因')
+  busy.value = true
+  try {
+    await syncQQDiscovery(discoveryReason.value)
+    toast.success('自定义菜单与四类指令面板已同步')
+    discoveryOpen.value = false
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : '菜单与指令面板同步失败')
   } finally {
     busy.value = false
   }
@@ -174,7 +209,11 @@ async function saveConfig() {
     applyConfig(result)
     configOpen.value = false
     toast.success('运行配置已保存，QQ 网关配置已自动应用')
-    await load()
+    try {
+      await refreshPlatformStatus({ fresh: true })
+    } catch (error) {
+      toast.warning(error instanceof Error ? `配置已保存，但状态刷新失败：${error.message}` : '配置已保存，但状态刷新失败')
+    }
   } catch (error) {
     toast.error(error instanceof Error ? error.message : '运行配置保存失败')
   } finally {
@@ -197,7 +236,7 @@ async function confirmArrivedHandoff() {
 
 onMounted(async () => {
   await confirmArrivedHandoff()
-  await load()
+  await loadGroups()
 })
 </script>
 
@@ -205,21 +244,23 @@ onMounted(async () => {
   <section>
     <PageHeader eyebrow="Platforms" title="机器人平台状态" description="查看连接、能力与运行参数；密钥只写入本机安全配置，不会从接口回显。">
       <template #actions>
-        <button class="btn btn-ghost" :disabled="loading" @click="load"><IconRefresh :size="17" />刷新</button>
+        <button class="btn btn-ghost" :disabled="loading" @click="refreshAll"><IconRefresh :size="17" />刷新</button>
         <button class="btn btn-primary" @click="openConfig"><IconSettings :size="17" />运行配置</button>
       </template>
     </PageHeader>
 
+    <p v-if="statusUnknown" class="status-refresh-notice" role="status">平台状态自动刷新失败，当前详情来自上次成功响应；系统将在网络恢复后自动更新。</p>
+
     <div class="platform-grid">
       <article class="platform-card">
-        <header><div class="platform-icon"><IconPlugConnected /></div><div><span>OneBot / NapCat</span><h2>{{ onebot.connected ? '在线' : '离线' }}</h2></div><i :class="onebot.connected ? 'online' : 'offline'" /></header>
+        <header><div class="platform-icon"><IconPlugConnected /></div><div><span>OneBot / NapCat</span><h2>{{ onebotTitle }}</h2></div><i :class="platformStatusState === 'ready' && onebot.connected ? 'online' : 'offline'" /></header>
         <dl><div><dt>在线连接</dt><dd>{{ onebot.connection_count ?? 0 }}</dd></div><div><dt>最近消息</dt><dd>{{ onebot.last_message_at ?? '暂无' }}</dd></div><div><dt>群开关</dt><dd>{{ onebotGroups.filter(row => row.is_active).length }} / {{ onebotGroups.length }}</dd></div></dl>
         <div class="actions"><button class="btn btn-primary" @click="bulk('onebot', true)">全部启用</button><button class="btn btn-ghost" @click="bulk('onebot', false)">全部停用</button></div>
       </article>
       <article class="platform-card">
-        <header><div class="platform-icon qq">QQ</div><div><span>QQ 官方机器人</span><h2>{{ qq.connected ? '网关在线' : qq.configured ? '等待连接' : '未配置' }}</h2></div><i :class="qq.connected ? 'online' : 'offline'" /></header>
+        <header><div class="platform-icon qq">QQ</div><div><span>QQ 官方机器人</span><h2>{{ qqTitle }}</h2></div><i :class="platformStatusState === 'ready' && qq.connected ? 'online' : 'offline'" /></header>
         <dl><div><dt>AppID</dt><dd>{{ qq.masked_app_id || '未配置' }}</dd></div><div><dt>AppSecret</dt><dd>{{ qq.app_secret_configured ? '已安全配置' : '未配置' }}</dd></div><div><dt>Session</dt><dd>{{ qq.session_state ?? '—' }}</dd></div><div><dt>分片</dt><dd>{{ qq.connected_shards ?? 0 }} / {{ qq.recommended_shards ?? 0 }}</dd></div><div><dt>场景开关</dt><dd>{{ officialGroups.filter(row => row.is_active).length }} / {{ officialGroups.length }}</dd></div><div><dt>发送队列</dt><dd>{{ qq.queue_depth ?? 0 }}</dd></div><div><dt>最近错误</dt><dd>{{ qq.last_error || '无' }}</dd></div></dl>
-        <div class="actions"><button class="btn btn-primary" :disabled="!qq.configured" @click="reconnectOpen = true">重新连接网关</button><button class="btn btn-ghost" @click="copyTemplate"><IconCopy :size="16" />复制部署模板</button><button class="btn btn-ghost" @click="bulk('official', false)">停用全部场景</button></div>
+        <div class="actions"><button class="btn btn-primary" :disabled="!qq.configured" @click="reconnectOpen = true">重新连接网关</button><button class="btn btn-ghost" :disabled="!qq.connected" @click="discoveryOpen = true">同步菜单与指令</button><button class="btn btn-ghost" @click="copyTemplate"><IconCopy :size="16" />复制部署模板</button><button class="btn btn-ghost" @click="bulk('official', false)">停用全部场景</button></div>
       </article>
     </div>
 
@@ -246,6 +287,7 @@ onMounted(async () => {
     </UiDrawer>
 
     <UiModal :open="reconnectOpen" title="重新连接 QQ 网关" description="不会修改凭据，只会关闭当前连接并重新建立 Session。" :busy="busy" @close="reconnectOpen = false"><form class="operation-box" @submit.prevent="reconnect"><label>操作原因<textarea v-model="reason" rows="4" /></label><div class="actions"><button type="button" class="btn btn-ghost" @click="reconnectOpen = false">取消</button><button class="btn btn-danger" :disabled="busy">确认重连</button></div></form></UiModal>
+    <UiModal :open="discoveryOpen" title="同步 QQ 菜单与指令面板" description="会用当前已启用指令覆盖机器人的全局单聊菜单，并创建或更新本系统管理的单聊、群聊、频道和频道私信指令面板。" :busy="busy" @close="discoveryOpen = false"><form class="operation-box" @submit.prevent="syncDiscovery"><label>操作原因<textarea v-model="discoveryReason" rows="4" /></label><div class="actions"><button type="button" class="btn btn-ghost" @click="discoveryOpen = false">取消</button><button class="btn btn-primary" :disabled="busy">确认同步</button></div></form></UiModal>
   </section>
 </template>
 
@@ -253,4 +295,5 @@ onMounted(async () => {
 .platform-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.platform-card,.capability-panel{padding:20px;border:1px solid var(--border-color);border-radius:var(--radius-card);background:var(--bg-surface)}.platform-card header{display:flex;align-items:center;gap:12px}.platform-card header h2{margin:2px 0}.platform-card header span{color:var(--text-muted)}.platform-card header>i{margin-left:auto;width:10px;height:10px;border-radius:50%}.online{background:var(--success);box-shadow:0 0 0 5px var(--success-soft)}.offline{background:var(--text-muted)}.platform-icon{display:grid;place-items:center;width:42px;height:42px;border-radius:12px;background:var(--accent-soft);color:var(--accent)}.platform-icon.qq{font-weight:800}.platform-card dl{display:grid;grid-template-columns:1fr 1fr;margin:18px 0}.platform-card dl div{padding:10px;border-top:1px solid var(--border-color)}.platform-card dt{font-size:11px;color:var(--text-muted)}.platform-card dd{margin:3px 0;word-break:break-word}.capability-panel{display:grid;grid-template-columns:260px 1fr;gap:18px;margin-top:14px}.capability-panel h2{margin:2px 0 6px}.capability-panel p{margin:0;color:var(--text-muted)}.capability-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.capability-grid span{display:grid;grid-template-columns:auto 1fr;align-items:center;gap:8px;padding:11px;background:var(--bg-elevated);border-radius:10px}.capability-grid i{width:8px;height:8px;border-radius:50%;background:var(--text-muted)}.capability-grid .enabled i{background:var(--success)}.capability-grid strong{grid-column:2;font-size:11px;color:var(--text-muted)}.runtime-form{display:grid;gap:18px}.form-section{padding:18px;border:1px solid var(--border-color);border-radius:14px;background:var(--bg-elevated)}.form-section>header h3{margin:0}.form-section>header p{margin:5px 0 16px;color:var(--text-muted)}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.form-grid label{display:grid;gap:7px;color:var(--text-muted)}.form-grid .wide{grid-column:1/-1}.form-grid input,.form-grid select,.operation-box textarea{width:100%;padding:11px 12px;border:1px solid var(--border-color);border-radius:10px;background:var(--bg-base);color:var(--text-primary)}.form-grid small{font-size:11px}.switch-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.switch-grid label{display:flex;align-items:center;gap:9px;padding:11px;border:1px solid var(--border-color);border-radius:10px}.drawer-actions{display:flex;justify-content:flex-end;gap:10px}.drawer-loading{padding:30px;text-align:center;color:var(--text-muted)}
 @media(max-width:900px){.platform-grid,.capability-panel{grid-template-columns:1fr}.capability-grid{grid-template-columns:repeat(2,1fr)}}@media(max-width:560px){.capability-grid,.form-grid,.switch-grid{grid-template-columns:1fr}.form-grid .wide{grid-column:auto}.platform-card dl{grid-template-columns:1fr}}
 .scene-panel{margin-top:14px;padding:20px;border:1px solid var(--border-color);border-radius:var(--radius-card);background:var(--bg-surface)}.scene-panel h2{margin:2px 0 6px}.scene-panel p{margin:0;color:var(--text-muted)}.scene-list{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:16px}.scene-list button{display:grid;gap:4px;padding:12px;border:1px solid var(--border-color);border-radius:10px;background:var(--bg-elevated);color:var(--text-main);text-align:left;cursor:pointer}.scene-list button.active{border-color:color-mix(in srgb,var(--success) 55%,var(--border-color));background:var(--success-soft)}.scene-list span,.scene-list small{color:var(--text-muted);font-size:11px}.scene-list strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.empty-scenes{margin-top:14px!important;padding:16px;border:1px dashed var(--border-color);border-radius:10px;text-align:center}@media(max-width:900px){.scene-list{grid-template-columns:repeat(2,1fr)}}@media(max-width:560px){.scene-list{grid-template-columns:1fr}}
+.status-refresh-notice{margin:0 0 14px;padding:11px 13px;border:1px solid color-mix(in srgb,var(--warning) 35%,var(--border-color));border-radius:10px;background:color-mix(in srgb,var(--warning) 9%,var(--bg-surface));color:var(--text-muted);font-size:12px}
 </style>

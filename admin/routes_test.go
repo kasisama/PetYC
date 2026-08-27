@@ -25,6 +25,9 @@ func TestRegisterRoutesMountsConfigCenterAPI(t *testing.T) {
 		"GET /api/admin/communities":       "",
 		"GET /api/admin/platforms/status":  "",
 		"GET /api/admin/audit-logs":        "",
+		"GET /api/admin/updates/check":     "",
+		"GET /api/admin/updates/status":    "",
+		"POST /api/admin/updates/install":  "",
 	}
 	for _, route := range router.Routes() {
 		delete(wanted, route.Method+" "+route.Path)

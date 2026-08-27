@@ -45,7 +45,11 @@ func (client *Client) sendGroupMedia(ctx context.Context, event core.InboundEven
 	if event.MessageID != "" {
 		payload["msg_id"] = event.MessageID
 		payload["msg_seq"] = 1
-		payload["message_reference"] = map[string]interface{}{"message_id": event.MessageID, "ignore_get_message_error": true}
+	} else if event.EventID != "" {
+		payload["event_id"] = event.EventID
+	}
+	if strings.TrimSpace(event.ReferenceID) != "" {
+		payload["message_reference"] = map[string]interface{}{"message_id": strings.TrimSpace(event.ReferenceID)}
 	}
 	var result SendResult
 	endpoint := fmt.Sprintf("%s/v2/groups/%s/messages", client.BaseURL, url.PathEscape(event.SpaceID))

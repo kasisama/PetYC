@@ -53,7 +53,7 @@ function installApiMock() {
         sort_order: 1,
       },
     ],
-    menus: [{ Name: 'main', Reply: '欢迎回来，请选择要进行的操作。', Image: '上传/main.webp' }],
+    menus: [{ Name: 'main', Reply: '欢迎回来，请选择要进行的操作。', Markdown: '# 欢迎回来\n\n**请选择操作**', Image: '上传/main.webp' }],
   }
   const gameSettings = [
     {
@@ -234,9 +234,11 @@ describe('ContentView 内容工作台', () => {
     await clickByText(wrapper, '菜单场景')
 
     expect(wrapper.get('.menu-card img[alt="主菜单图片"]').attributes('src')).toBe('/images/上传/main.webp')
+    expect(wrapper.text()).toContain('已配置 Markdown')
     await clickByText(wrapper, '编辑')
     expect(document.body.textContent).toContain('菜单配图')
-    expect(document.body.textContent).toContain('文本和图片保存后即时生效')
+    expect(document.body.textContent).toContain('Markdown 回复（可选）')
+    expect(document.body.textContent).toContain('文本、Markdown 和图片立即对玩家生效')
     const pathInput = document.body.querySelector('input[placeholder*="上传后自动填写"]') as HTMLInputElement
     expect(pathInput.value).toBe('上传/main.webp')
     const dropzoneRoot = document.body.querySelector('[aria-label="图片上传与预览"]') as HTMLElement
@@ -244,6 +246,10 @@ describe('ContentView 内容工作台', () => {
     expect(dropzoneRoot.querySelector('img[alt="主菜单图片"]')?.getAttribute('src')).toBe('/images/上传/main.webp')
     expect(qqPreview.querySelector('img[alt="主菜单图片"]')?.getAttribute('src')).toBe('/images/上传/main.webp')
     expect(qqPreview.textContent).toContain('欢迎回来，请选择要进行的操作。')
+    const textareas = [...document.body.querySelectorAll('textarea')] as HTMLTextAreaElement[]
+    expect(textareas).toHaveLength(2)
+    expect(textareas[1].value).toContain('# 欢迎回来')
+    expect(document.body.querySelector('.markdown-source')?.textContent).toContain('**请选择操作**')
 
     const dropzone = document.body.querySelector('.image-dropzone') as HTMLElement
     const file = new File([new Uint8Array([137, 80, 78, 71])], 'new-menu.png', { type: 'image/png' })
@@ -261,6 +267,7 @@ describe('ContentView 内容工作台', () => {
     await clickSaveCurrentConfig()
     const uploaded = fetchMock.mock.calls.find(([url, init]) => String(url).includes('/api/admin/config/menus') && (init as RequestInit)?.method === 'PUT')
     expect(JSON.parse(String((uploaded?.[1] as RequestInit).body))[0].Image).toBe('上传/new-pet.png')
+    expect(JSON.parse(String((uploaded?.[1] as RequestInit).body))[0].Markdown).toContain('# 欢迎回来')
 
     await clickByText(wrapper, '编辑')
     await clickDocumentButton('移除当前图片')

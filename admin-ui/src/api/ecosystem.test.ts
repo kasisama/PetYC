@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { buildPortHandoffURL, grantItem, reconnectQQ, savePlatformConfig } from './ecosystem'
+import { buildPortHandoffURL, grantItem, reconnectQQ, savePlatformConfig, syncQQDiscovery } from './ecosystem'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -17,6 +17,14 @@ describe('ecosystem operations', () => {
     vi.stubGlobal('fetch', fetchMock)
     await reconnectQQ('排查连接异常')
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('sends menu and command discovery sync once with an audit reason', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ code: 0, msg: 'success', data: { menu_version: 2 } }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    await syncQQDiscovery('发布当前指令目录')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/admin/platforms/qq/discovery/sync')
   })
 
   it('saves platform runtime config in one request', async () => {

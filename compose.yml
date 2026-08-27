@@ -1,0 +1,31 @@
+services:
+  petyc:
+    build:
+      context: .
+      args:
+        VERSION: ${PETYC_VERSION:-dev}
+    image: petyc:local
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 15s
+    environment:
+      LISTEN_ADDRESS: 0.0.0.0
+      PORT: 8080
+      QQPET_DATA_DIR: /config
+      QQPET_WEB_SETUP: "1"
+      TZ: Asia/Shanghai
+    ports:
+      - "127.0.0.1:${PETYC_PORT:-8080}:8080"
+    volumes:
+      - petyc-runtime:/data
+      - petyc-config:/config
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+volumes:
+  petyc-runtime:
+  petyc-config:

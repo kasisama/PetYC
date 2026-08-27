@@ -245,6 +245,7 @@ export interface WorkSettingConfigRow {
 export interface MenuConfigRow {
   Name: string
   Reply: string
+  Markdown: string
   Image: string
 }
 
@@ -512,6 +513,7 @@ export function normalizeMenu(raw: unknown): MenuConfigRow {
   return {
     Name: asString(pick(o, 'Name', 'name')),
     Reply: asString(pick(o, 'Reply', 'reply')),
+    Markdown: asString(pick(o, 'Markdown', 'markdown')),
     Image: asString(pick(o, 'Image', 'image')),
   }
 }
@@ -911,7 +913,7 @@ export function emptyWork(name = ''): WorkSettingConfigRow {
 }
 
 export function emptyMenu(name = ''): MenuConfigRow {
-  return { Name: name, Reply: '', Image: '' }
+  return { Name: name, Reply: '', Markdown: '', Image: '' }
 }
 
 export function emptyImage(name = ''): ImageConfigRow {

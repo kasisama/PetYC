@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"qq-pet-saas/core"
 )
@@ -75,6 +76,7 @@ func (client *Client) Send(ctx context.Context, event core.InboundEvent, message
 		}
 	}
 	rendered := message.Render(client.MarkdownEnabled, client.KeyboardEnabled)
+	markdownActive := rendered.Markdown != nil && strings.TrimSpace(rendered.Markdown.Content) != ""
 	var endpoint string
 	payload := make(map[string]interface{})
 	switch event.Platform {
@@ -84,26 +86,36 @@ func (client *Client) Send(ctx context.Context, event core.InboundEvent, message
 		} else {
 			endpoint = fmt.Sprintf("%s/v2/groups/%s/messages", client.BaseURL, url.PathEscape(event.SpaceID))
 		}
-		payload["content"] = rendered.Text
-		payload["msg_type"] = 0
+		if markdownActive {
+			payload["msg_type"] = 2
+			payload["markdown"] = rendered.Markdown
+		} else {
+			payload["content"] = rendered.Text
+			payload["msg_type"] = 0
+		}
 		if event.MessageID != "" {
 			payload["msg_id"] = event.MessageID
-			if event.SceneType == core.SceneGroup {
-				payload["message_reference"] = map[string]interface{}{"message_id": event.MessageID, "ignore_get_message_error": true}
-			}
 			if mediaSent {
 				payload["msg_seq"] = 2
 			} else {
 				payload["msg_seq"] = 1
 			}
+		} else if event.EventID != "" {
+			payload["event_id"] = event.EventID
 		}
-		if rendered.Markdown != nil {
-			payload["msg_type"] = 2
-			payload["markdown"] = rendered.Markdown
+		// QQ 官方的群 Markdown 被动回复示例只组合 markdown + msg_id + msg_seq。
+		// 同时携带 message_reference 会在部分 QQ 客户端把同一 Markdown 正文
+		// 渲染两次；纯文本仍保留显式引用能力。
+		if !markdownActive && event.SceneType == core.SceneGroup && strings.TrimSpace(event.ReferenceID) != "" {
+			payload["message_reference"] = map[string]interface{}{"message_id": strings.TrimSpace(event.ReferenceID)}
 		}
 	case core.PlatformQQGuild:
 		endpoint = fmt.Sprintf("%s/channels/%s/messages", client.BaseURL, url.PathEscape(event.RoomID))
-		payload["content"] = rendered.Text
+		if markdownActive {
+			payload["markdown"] = rendered.Markdown
+		} else {
+			payload["content"] = rendered.Text
+		}
 		if message.Image != "" {
 			imageURL := strings.TrimSpace(message.Image)
 			if !isHTTPURL(imageURL) {
@@ -118,9 +130,8 @@ func (client *Client) Send(ctx context.Context, event core.InboundEvent, message
 		if event.MessageID != "" {
 			payload["msg_id"] = event.MessageID
 			payload["message_reference"] = map[string]interface{}{"message_id": event.MessageID, "ignore_get_message_error": true}
-		}
-		if rendered.Markdown != nil {
-			payload["markdown"] = rendered.Markdown
+		} else if event.EventID != "" {
+			payload["event_id"] = event.EventID
 		}
 	default:
 		return nil, fmt.Errorf("不支持的平台: %s", event.Platform)
@@ -128,13 +139,19 @@ func (client *Client) Send(ctx context.Context, event core.InboundEvent, message
 	if rendered.Keyboard != nil {
 		payload["keyboard"] = renderCommandKeyboard(rendered.Keyboard)
 	}
+	markdownChars := 0
+	if markdownActive {
+		markdownChars = utf8.RuneCountInString(rendered.Markdown.Content)
+	}
+	_, hasReference := payload["message_reference"]
+	log.Printf("[QQOfficial] 请求组包 type=%d markdown=%t markdown_chars=%d reference=%t msg_seq=%v", payload["msg_type"], markdownActive, markdownChars, hasReference, payload["msg_seq"])
 	encoded, err := json.Marshal(payload)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("QQ 请求组包失败: %w", err)
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(encoded))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("QQ 请求组包失败: %w", err)
 	}
 	request.Header.Set("Authorization", "QQBot "+token)
 	request.Header.Set("Content-Type", "application/json")

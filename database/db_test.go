@@ -44,6 +44,32 @@ func TestFreshSchemaExcludesLegacyPlayerTables(t *testing.T) {
 	}
 }
 
+func TestMigrateSchemaAddsMenuMarkdownWithoutChangingExistingReply(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Exec(`CREATE TABLE menu_configs (name text PRIMARY KEY, reply text, image text)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Exec(`INSERT INTO menu_configs(name, reply, image) VALUES (?, ?, ?)`, "主菜单", "管理员旧内容", "上传/menu.webp").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err = MigrateSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if !db.Migrator().HasColumn(&models.MenuConfig{}, "Markdown") {
+		t.Fatal("menu_configs.markdown was not added")
+	}
+	var row models.MenuConfig
+	if err = db.First(&row, "name = ?", "主菜单").Error; err != nil {
+		t.Fatal(err)
+	}
+	if row.Reply != "管理员旧内容" || row.Markdown != "" || row.Image != "上传/menu.webp" {
+		t.Fatalf("legacy menu changed during migration: %#v", row)
+	}
+}
+
 func TestMigrateSchemaAllowsOnlyOneRunningExpeditionPerAccount(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {

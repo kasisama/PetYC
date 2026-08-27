@@ -34,12 +34,15 @@ type GatewayPayload struct {
 }
 
 type groupMessageEvent struct {
-	ID          string `json:"id"`
-	GroupOpenID string `json:"group_openid"`
-	Content     string `json:"content"`
-	Timestamp   string `json:"timestamp"`
-	MsgSeq      int    `json:"msg_seq"`
-	Author      struct {
+	ID           string `json:"id"`
+	GroupOpenID  string `json:"group_openid"`
+	Content      string `json:"content"`
+	Timestamp    string `json:"timestamp"`
+	MsgSeq       int    `json:"msg_seq"`
+	MessageScene struct {
+		Ext []string `json:"ext"`
+	} `json:"message_scene"`
+	Author struct {
 		MemberOpenID string `json:"member_openid"`
 		Username     string `json:"username"`
 	} `json:"author"`
@@ -95,8 +98,8 @@ func MapDispatch(appID string, payload GatewayPayload) (core.InboundEvent, bool,
 		return core.InboundEvent{
 			Platform: core.PlatformQQGroup, SceneType: core.SceneGroup, AppID: appID,
 			SpaceID: message.GroupOpenID, RoomID: message.GroupOpenID, ActorID: message.Author.MemberOpenID, ActorName: strings.TrimSpace(message.Author.Username),
-			MessageID: message.ID, EventID: payload.ID, MessageSeq: message.MsgSeq,
-			Text: strings.TrimSpace(message.Content), Timestamp: parseTimestamp(message.Timestamp),
+			MessageID: message.ID, ReferenceID: messageReferenceID(message.MessageScene.Ext), EventID: payload.ID, MessageSeq: message.MsgSeq,
+			Text: normalizeGroupMessageContent(message.Content), Timestamp: parseTimestamp(message.Timestamp),
 		}, true, nil
 	case "C2C_MESSAGE_CREATE":
 		var message c2cMessageEvent
@@ -132,16 +135,46 @@ func MapDispatch(appID string, payload GatewayPayload) (core.InboundEvent, bool,
 		if interaction.Data.Resolved.ButtonData == "" {
 			return core.InboundEvent{}, false, nil
 		}
+		eventID := strings.TrimSpace(interaction.ID)
 		if interaction.GroupOpenID != "" {
-			return core.InboundEvent{Platform: core.PlatformQQGroup, SceneType: core.SceneGroup, AppID: appID, SpaceID: interaction.GroupOpenID, RoomID: interaction.GroupOpenID, ActorID: interaction.GroupMemberID, EventID: interaction.ID, Text: strings.TrimSpace(interaction.Data.Resolved.ButtonData), Timestamp: time.Now()}, true, nil
+			return core.InboundEvent{Platform: core.PlatformQQGroup, SceneType: core.SceneGroup, AppID: appID, SpaceID: interaction.GroupOpenID, RoomID: interaction.GroupOpenID, ActorID: interaction.GroupMemberID, EventID: eventID, Text: strings.TrimSpace(interaction.Data.Resolved.ButtonData), Timestamp: time.Now()}, true, nil
 		}
 		if interaction.GuildID != "" {
-			return core.InboundEvent{Platform: core.PlatformQQGuild, SceneType: core.SceneGuild, AppID: appID, SpaceID: interaction.GuildID, RoomID: interaction.ChannelID, ActorID: interaction.UserOpenID, EventID: interaction.ID, Text: strings.TrimSpace(interaction.Data.Resolved.ButtonData), Timestamp: time.Now()}, true, nil
+			return core.InboundEvent{Platform: core.PlatformQQGuild, SceneType: core.SceneGuild, AppID: appID, SpaceID: interaction.GuildID, RoomID: interaction.ChannelID, ActorID: interaction.UserOpenID, EventID: eventID, Text: strings.TrimSpace(interaction.Data.Resolved.ButtonData), Timestamp: time.Now()}, true, nil
 		}
 		return core.InboundEvent{}, false, nil
 	default:
 		return core.InboundEvent{}, false, nil
 	}
+}
+
+// normalizeGroupMessageContent removes the leading mention marker included in
+// QQ Official group messages while preserving mentions in the command body.
+func normalizeGroupMessageContent(content string) string {
+	text := strings.TrimSpace(content)
+	if !strings.HasPrefix(text, "<@") {
+		return text
+	}
+
+	closing := strings.IndexByte(text, '>')
+	if closing < 3 {
+		return text
+	}
+	identifier := strings.TrimPrefix(text[2:closing], "!")
+	if identifier == "" || strings.ContainsAny(identifier, " \t\r\n<>") {
+		return text
+	}
+	return strings.TrimSpace(text[closing+1:])
+}
+
+func messageReferenceID(values []string) string {
+	for _, value := range values {
+		key, reference, found := strings.Cut(strings.TrimSpace(value), "=")
+		if found && key == "msg_idx" {
+			return strings.TrimSpace(reference)
+		}
+	}
+	return ""
 }
 
 func parseTimestamp(value string) time.Time {

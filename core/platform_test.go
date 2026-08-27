@@ -37,6 +37,31 @@ func TestCommandRouterUsesLongestMatchingCommand(t *testing.T) {
 	}
 }
 
+func TestCommandRouterAcceptsSlashPrefixedCommand(t *testing.T) {
+	router := NewCommandRouter()
+	var receivedText string
+	if err := router.Register("宠物菜单", func(_ context.Context, event InboundEvent) (OutboundMessage, error) {
+		receivedText = event.Text
+		return OutboundMessage{Text: "menu"}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	message, handled, err := router.Route(context.Background(), InboundEvent{Text: "  /宠物菜单  "})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !handled {
+		t.Fatal("expected slash-prefixed command to be handled")
+	}
+	if message.Text != "menu" {
+		t.Fatalf("expected menu response, got %q", message.Text)
+	}
+	if receivedText != "宠物菜单" {
+		t.Fatalf("expected handler to receive normalized command, got %q", receivedText)
+	}
+}
+
 func TestCommandRouterRejectsEmptyCommand(t *testing.T) {
 	router := NewCommandRouter()
 	err := router.Register("  ", func(context.Context, InboundEvent) (OutboundMessage, error) {
@@ -101,7 +126,7 @@ func TestRebuildUnifiedRouterRegistersConfiguredMenuScene(t *testing.T) {
 	if err = db.AutoMigrate(&models.CommandConfig{}, &models.MenuConfig{}); err != nil {
 		t.Fatal(err)
 	}
-	if err = db.Create(&models.MenuConfig{Name: "今日与状态", Reply: "今日图文菜单", Image: "https://cdn.example.com/today.webp"}).Error; err != nil {
+	if err = db.Create(&models.MenuConfig{Name: "今日与状态", Reply: "今日图文菜单", Markdown: "# 今日与状态", Image: "https://cdn.example.com/today.webp"}).Error; err != nil {
 		t.Fatal(err)
 	}
 
@@ -117,6 +142,9 @@ func TestRebuildUnifiedRouterRegistersConfiguredMenuScene(t *testing.T) {
 	}
 	if message.Text != "今日图文菜单" || message.Image != "https://cdn.example.com/today.webp" {
 		t.Fatalf("菜单场景图文不匹配: %#v", message)
+	}
+	if message.Markdown == nil || message.Markdown.Content != "# 今日与状态" {
+		t.Fatalf("菜单场景 Markdown 不匹配: %#v", message.Markdown)
 	}
 }
 
@@ -170,9 +198,14 @@ func TestRebuildUnifiedRouterMenuSceneReadsLatestConfigOnTrigger(t *testing.T) {
 	if err = RebuildUnifiedRouter(db); err != nil {
 		t.Fatal(err)
 	}
+	initial, handled, routeErr := RouteInbound(context.Background(), InboundEvent{Text: "今日与状态"})
+	if routeErr != nil || !handled || initial.Markdown != nil {
+		t.Fatalf("空 Markdown 应保持纯文本: handled=%v message=%#v err=%v", handled, initial, routeErr)
+	}
 	if err = db.Model(&models.MenuConfig{}).Where("name = ?", "今日与状态").Updates(map[string]any{
-		"reply": "新菜单",
-		"image": "https://cdn.example.com/new.webp",
+		"reply":    "新菜单",
+		"markdown": "**新菜单**",
+		"image":    "https://cdn.example.com/new.webp",
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -182,6 +215,9 @@ func TestRebuildUnifiedRouterMenuSceneReadsLatestConfigOnTrigger(t *testing.T) {
 	}
 	if message.Text != "新菜单" || message.Image != "https://cdn.example.com/new.webp" {
 		t.Fatalf("菜单场景未读取最新配置: %#v", message)
+	}
+	if message.Markdown == nil || message.Markdown.Content != "**新菜单**" {
+		t.Fatalf("菜单场景未读取最新 Markdown: %#v", message.Markdown)
 	}
 }
 
