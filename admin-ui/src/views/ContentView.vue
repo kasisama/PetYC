@@ -695,7 +695,7 @@ async function saveAssets() {
     if (assetTab.value === 'images') await saveConfig('images', images.value)
     status.value = await fetchConfigStatus()
     syncSnapshot()
-    toast.success('当前配置已保存')
+    toast.success('当前配置已保存，聊天命令会立即按新内容生效')
   } catch (reason) {
     toast.error(reason instanceof Error ? reason.message : '保存失败')
   } finally {
@@ -800,7 +800,7 @@ async function saveGame() {
     gameSettings.value = await saveGameSettings(gameSettings.value.map((row) => ({ key: row.key, value: row.value })))
     status.value = await fetchConfigStatus()
     syncSnapshot()
-    toast.success('游戏参数已保存')
+    toast.success('游戏参数已保存，聊天命令会立即按新内容生效')
   } catch (reason) {
     toast.error(reason instanceof Error ? reason.message : '游戏参数保存失败')
   } finally {

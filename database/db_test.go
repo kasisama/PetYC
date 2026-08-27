@@ -182,3 +182,34 @@ func TestMigrateSchemaAllowsMultipleRewardsAtSameMilestone(t *testing.T) {
 		t.Fatalf("same milestone should accept multiple reward items: %v", err)
 	}
 }
+
+func TestOpenSQLiteEnablesWALAndBusyTimeout(t *testing.T) {
+	path := t.TempDir() + "/pet_game.db"
+	db, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+
+	var journal string
+	if err = db.Raw("PRAGMA journal_mode").Scan(&journal).Error; err != nil {
+		t.Fatal(err)
+	}
+	if journal != "wal" {
+		t.Fatalf("journal_mode=%q, want wal", journal)
+	}
+	var timeout int
+	if err = db.Raw("PRAGMA busy_timeout").Scan(&timeout).Error; err != nil {
+		t.Fatal(err)
+	}
+	if timeout < 5000 {
+		t.Fatalf("busy_timeout=%d, want >= 5000", timeout)
+	}
+	if sqlDB.Stats().MaxOpenConnections != 1 {
+		t.Fatalf("MaxOpenConnections=%d, want 1 for file-backed SQLite", sqlDB.Stats().MaxOpenConnections)
+	}
+}

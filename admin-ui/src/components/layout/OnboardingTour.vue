@@ -15,7 +15,7 @@ const steps = [
   { route: 'profiles', target: 'nav-profiles', title: '配置方案', body: '创建、切换、导入或导出玩法配置。配置包不会携带玩家或平台密钥。' },
   { route: 'platforms', target: 'nav-platforms', title: '平台状态', body: '配置 OneBot / NapCat 与 QQ 官方机器人，并检查实时连接状态。' },
   { route: 'system', target: 'nav-system', title: '系统设置', body: '管理管理员密码、运行配置状态和恢复官方默认方案。' },
-  { route: 'system', target: 'hot-reload', title: '热重载', body: '内容保存进数据库后，用热重载同步到机器人运行内存。' },
+  { route: 'system', target: 'hot-reload', title: '热重载', body: '聊天命令会直接读数据库。热重载主要用于切换整套配置方案。' },
 ] as const
 const open = ref(false), index = ref(0), version = ref(1)
 let highlighted: HTMLElement | null = null

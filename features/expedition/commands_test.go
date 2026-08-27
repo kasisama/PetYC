@@ -10,7 +10,6 @@ import (
 
 	"gorm.io/gorm"
 
-	"qq-pet-saas/config"
 	"qq-pet-saas/core"
 	"qq-pet-saas/gameplay"
 	"qq-pet-saas/models"
@@ -113,18 +112,12 @@ func TestMenuEmptyOrInvalidImageStillSendsText(t *testing.T) {
 }
 
 func TestAdoptListFollowsConfiguredStarterPets(t *testing.T) {
-	previousPets := config.Core.InitialPets
-	previousSpecies := config.Pets
-	t.Cleanup(func() {
-		config.Core.InitialPets = previousPets
-		config.Pets = previousSpecies
-	})
-	config.Core.InitialPets = []string{"团子", "苔须灵"}
-	config.Pets = map[string]config.PetSpecies{
-		"团子": {Name: "团子", Description: "这是一个可爱的小兔子。"},
+	service, db, _ := newTestService(t)
+	if err := db.Save(&models.SystemConfig{Key: "Core.InitialPets", Value: "团子,苔须灵"}).Error; err != nil {
+		t.Fatal(err)
 	}
-
-	service, _, _ := newTestService(t)
+	upsertTestSpecies(t, db, models.PetSpeciesConfig{Name: "团子", Description: "这是一个可爱的小兔子。"})
+	upsertTestSpecies(t, db, models.PetSpeciesConfig{Name: "苔须灵", Description: "林地向导"})
 	router := core.NewCommandRouter()
 	if err := RegisterCommands(router.Register, func() *Service { return service }); err != nil {
 		t.Fatal(err)
@@ -338,14 +331,48 @@ func TestFamiliarShopJourneyUsesUnifiedPetWalletAndInventory(t *testing.T) {
 	}
 }
 
-func TestTimedGrowthCommandsUseActivityRunAndFamiliarCompletionCommand(t *testing.T) {
-	originalInteraction := config.Interaction
-	defer func() { config.Interaction = originalInteraction }()
-	config.Interaction.StudyLimit = 3
-	config.Interaction.StudyHungerCost = 5
-	config.Interaction.StudyGrowth = 2
+func TestDailyCheckinShowsPlayerFacingCurrencyName(t *testing.T) {
+	service, db, _ := newTestService(t)
+	if err := db.Save(&models.SystemConfig{Key: "Core.CoinName", Value: "星砂"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.CurrencyConfig{Key: gameplay.PrimaryCurrencyKey, Name: "星砂", Enabled: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.CheckinRewardConfig{Type: "checkin_newbie", Day: "1", Currency: 88, Affection: 8, Items: "调查便当*1"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	upsertTestSpecies(t, db, models.PetSpeciesConfig{Name: "光芽兽"})
+	router := core.NewCommandRouter()
+	if err := RegisterCommands(router.Register, func() *Service { return service }); err != nil {
+		t.Fatal(err)
+	}
+	event := oneBotEvent("100", "checkin-player", "领养 光芽兽")
+	if _, _, err := router.Route(context.Background(), event); err != nil {
+		t.Fatal(err)
+	}
+	event.Text = "宠物签到"
+	message, handled, err := router.Route(context.Background(), event)
+	if err != nil || !handled {
+		t.Fatalf("签到失败: handled=%v err=%v", handled, err)
+	}
+	if strings.Contains(message.Text, "primary_coin") {
+		t.Fatalf("玩家回复不得出现内部货币键: %q", message.Text)
+	}
+	if !strings.Contains(message.Text, "星砂 +88") || !strings.Contains(message.Text, "好感 +8") || !strings.Contains(message.Text, "调查便当 ×1") {
+		t.Fatalf("签到奖励展示不符合预期: %q", message.Text)
+	}
+}
 
+func TestTimedGrowthCommandsUseActivityRunAndFamiliarCompletionCommand(t *testing.T) {
 	service, db, now := newTestService(t)
+	for key, value := range map[string]string{
+		"Interaction.StudyLimit": "3", "Interaction.StudyHungerCost": "5", "Interaction.StudyGrowth": "2",
+	} {
+		if err := db.Save(&models.SystemConfig{Key: key, Value: value}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
 	upsertTestSpecies(t, db, models.PetSpeciesConfig{
 		Name: "光芽兽", Wisdom: 10, WisdomMax: 100, Hunger: 100, HungerMax: 100,
 		StudyStartImg: "宠物/学习开始.png", StudyEndImg: "宠物/学习完成.png",
@@ -710,7 +737,7 @@ func TestPlayerMenuSnapshotAndBannedTerms(t *testing.T) {
 	}
 	expected := "🐾【宠物菜单】\n\n" +
 		"🌟 开始陪伴\n宠物菜单 · 领养宠物 · 我的宠物 · 宠物列表 · 切换宠物 · 签到 · 我的背包 · 改名 · 治疗 · 找回 · 放生 · 帮助\n\n" +
-		"🛍️ 背包与商店\n商店 · 好感商店 · 查看商品 · 查看物品 · 购买 · 出售 · 使用\n\n" +
+		"🛍️ 背包与商店\n商店 · 好感商店 · 查看商品 · 查看物品 · 使用\n\n" +
 		"🍖 日常陪伴\n喂养 · 摸头 · 散步 · 送礼 · 洗澡\n\n" +
 		"📚 成长计划\n学习 · 锻炼 · 健身 · 打工 · 进化 · 觉醒 · 定位 · 编队 · 技能 · 图鉴\n\n" +
 		"🧭 探索远征\n远征 · 远征状态 · 领取 · 地图 · 探索 · 远征背包 · 材料背包 · 装备背包 · 蓝图背包 · 远征商店 · 地图首领 · 首领\n\n" +

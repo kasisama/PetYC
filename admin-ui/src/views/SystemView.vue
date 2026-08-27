@@ -265,15 +265,15 @@ onBeforeUnmount(() => {
         <p v-else-if="statusLoading" class="card-hint">正在读取运行状态…</p>
         <div class="explain">
           <p>
-            在「配置中心」点击<strong>保存</strong>时，只会把内容写入数据库，
-            <strong>不会</strong>立刻改变正在运行的机器人行为。
+            宠物种类、互动数值、商店、签到、菜单和游戏参数保存在数据库后，
+            <strong>下一条玩家命令就会按新内容生效</strong>，不必先点热重载。
           </p>
           <p>
-            需要点击<strong>热重载</strong>（本页或顶栏均可），才会把数据库中的最新配置加载到机器人内存并生效。
+            <strong>热重载</strong>仍用于切换配置方案、或把官方默认方案重新装进运行中的进程。
           </p>
           <ul class="explain-list">
-            <li><span class="tag tag-warn">仅保存</span> 数据库已更新，运行中机器人仍用旧配置</li>
-            <li><span class="tag tag-ok">已热重载</span> 机器人内存与数据库一致，新规则生效</li>
+            <li><span class="tag tag-ok">已保存</span> 聊天命令直接读数据库，保存后立即生效</li>
+            <li><span class="tag tag-warn">热重载</span> 切换整套配置方案时使用</li>
           </ul>
         </div>
 

@@ -20,6 +20,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"qq-pet-saas/config"
+	"qq-pet-saas/database"
 	"qq-pet-saas/security"
 )
 
@@ -329,7 +330,7 @@ func oneBotImageCQ(source string) string {
 	if clean == "." || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 		return ""
 	}
-	if host := strings.TrimRight(strings.TrimSpace(config.Core.ImageHost), "/"); host != "" {
+	if host := config.LiveImageHost(database.DB); host != "" {
 		segments := strings.Split(filepath.ToSlash(clean), "/")
 		for index, segment := range segments {
 			segments[index] = url.PathEscape(segment)

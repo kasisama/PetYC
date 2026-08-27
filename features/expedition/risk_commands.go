@@ -37,7 +37,7 @@ func handleLottery(ctx context.Context, event core.InboundEvent, service *Servic
 		lines[1] = fmt.Sprintf("获得：%s ×%d", result.Outcome.ItemName, result.Outcome.Quantity)
 	}
 	if result.Outcome.Currency > 0 {
-		lines = append(lines, fmt.Sprintf("%s：+%d", currencyName(), result.Outcome.Currency))
+		lines = append(lines, fmt.Sprintf("%s：+%d", currencyName(service.DB), result.Outcome.Currency))
 	}
 	if result.Outcome.PityTriggered {
 		lines = append(lines, "✨ 积攒的幸运终于爆发，本次触发保底奖励！")
@@ -93,7 +93,7 @@ func handleClaimFishing(ctx context.Context, event core.InboundEvent, service *S
 	}
 	lines := []string{"🐟【收竿成功】", "浮漂猛地一沉——你抓住时机收紧鱼线，把今天的收获稳稳带上了岸！", fmt.Sprintf("获得：%s ×%d", run.ItemName, run.Quantity)}
 	if run.Currency > 0 {
-		lines = append(lines, fmt.Sprintf("%s：+%d", currencyName(), run.Currency))
+		lines = append(lines, fmt.Sprintf("%s：+%d", currencyName(service.DB), run.Currency))
 	}
 	if run.Pity {
 		lines = append(lines, "✨ 本次触发保底收获")
@@ -125,7 +125,7 @@ func handleRockPaperScissors(ctx context.Context, event core.InboundEvent, servi
 		fmt.Sprintf("结果：%s", result.Record.Result),
 	}
 	if result.Record.RewardCurrency > 0 {
-		lines = append(lines, fmt.Sprintf("%s：+%d", currencyName(), result.Record.RewardCurrency))
+		lines = append(lines, fmt.Sprintf("%s：+%d", currencyName(service.DB), result.Record.RewardCurrency))
 	}
 	if result.Limit > 0 {
 		lines = append(lines, fmt.Sprintf("今日次数：%d/%d", result.Attempts, result.Limit))

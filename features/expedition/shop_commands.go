@@ -24,27 +24,28 @@ func handleRenamePet(ctx context.Context, event core.InboundEvent, service *Serv
 	if err = gameplay.ValidatePetName(name); err != nil {
 		return text("这个名字暂时不能使用。\n名字需要 2～12 个字符，且不能包含链接或联系方式。"), nil
 	}
-	pet, err := service.RenamePet(ctx, account.ID, name, currencyName(), config.Core.RenameCost)
+	renameCost := config.LiveInt64(service.DB, "Core.RenameCost", 0)
+	pet, err := service.RenamePet(ctx, account.ID, name, gameplay.DefaultCurrencyKey, renameCost)
 	if err != nil {
 		switch {
 		case errors.Is(err, gameplay.ErrPetRequired):
 			return text("你还没有宠物。\n发送“领养宠物”选择第一位伙伴。"), nil
 		case errors.Is(err, gameplay.ErrInsufficientFunds):
-			return text(fmt.Sprintf("余额还不够，改名需要 %d %s。\n可以先完成签到或远征。", config.Core.RenameCost, currencyName())), nil
+			return text(fmt.Sprintf("余额还不够，改名需要 %d %s。\n可以先完成签到或远征。", renameCost, currencyName(service.DB))), nil
 		default:
 			return core.OutboundMessage{}, err
 		}
 	}
 	message := text(fmt.Sprintf("🎀【改名成功·新名字诞生啦】\n你轻轻叫了一声「%s」，它马上回过头来——看来已经记住这个新名字了！", pet.Name))
-	if config.Core.RenameCost > 0 {
-		message.Text += fmt.Sprintf("\n消耗：%s ×%d", currencyName(), config.Core.RenameCost)
+	if renameCost > 0 {
+		message.Text += fmt.Sprintf("\n消耗：%s ×%d", currencyName(service.DB), renameCost)
 		message.Markdown = &core.MarkdownPayload{Content: message.Text}
 	}
 	return message, nil
 }
 
 func handleShop(ctx context.Context, event core.InboundEvent, service *Service) (core.OutboundMessage, error) {
-	return handleShopPage(ctx, event, service, gameplay.ShopTypeNormal, "商店", "🛍️ 宠物商店", currencyName())
+	return handleShopPage(ctx, event, service, gameplay.ShopTypeNormal, "商店", "🛍️ 宠物商店", currencyName(service.DB))
 }
 
 func handleAffectionShop(ctx context.Context, event core.InboundEvent, service *Service) (core.OutboundMessage, error) {
@@ -105,7 +106,7 @@ func handleShopItem(ctx context.Context, event core.InboundEvent, service *Servi
 	if err != nil {
 		return shopBusinessError(err)
 	}
-	currency := currencyName()
+	currency := currencyName(service.DB)
 	if listing.ShopType == gameplay.ShopTypeAffection {
 		currency = "好感"
 	}
@@ -145,7 +146,7 @@ func handleItemDetail(ctx context.Context, event core.InboundEvent, service *Ser
 	effect := itemEffectDescription(item.Type, item.Effect)
 	sell := "不可出售"
 	if item.SellPrice > 0 {
-		sell = fmt.Sprintf("%d %s", item.SellPrice, currencyName())
+		sell = fmt.Sprintf("%d %s", item.SellPrice, currencyName(service.DB))
 	}
 	message := text(fmt.Sprintf("【%s】\n类型：%s\n%s\n出售价格：%s\n%s", item.Name, displayItemType(item.Type), effect, sell, description))
 	message.Image = item.Image
@@ -167,7 +168,7 @@ func handleBuy(ctx context.Context, event core.InboundEvent, service *Service) (
 	if err != nil {
 		return shopBusinessError(err)
 	}
-	message := text(fmt.Sprintf("🛍️【购买成功】\n店员把「%s」仔细包好，已经放进你的背包啦！\n\n获得：%s ×%d\n消耗：%s ×%d\n余额：%d %s\n\n发送“我的背包”查看，或继续逛逛“商店”。", result.Listing.Name, result.Listing.Name, result.Quantity, result.CurrencyKey, result.Cost, result.RemainingBalance, result.CurrencyKey))
+	message := text(fmt.Sprintf("🛍️【购买成功】\n店员把「%s」仔细包好，已经放进你的背包啦！\n\n获得：%s ×%d\n消耗：%s ×%d\n余额：%d %s\n\n发送“我的背包”查看，或继续逛逛“商店”。", result.Listing.Name, result.Listing.Name, result.Quantity, currencyLabel(service.DB, result.CurrencyKey), result.Cost, result.RemainingBalance, currencyLabel(service.DB, result.CurrencyKey)))
 	message.Image = result.Listing.Image
 	return message, nil
 }
@@ -187,7 +188,7 @@ func handleSell(ctx context.Context, event core.InboundEvent, service *Service) 
 	if err != nil {
 		return shopBusinessError(err)
 	}
-	message := text(fmt.Sprintf("💰【出售成功】\n店员接过「%s」，清点后把报酬交到了你手中。\n\n交出：%s ×%d\n获得：%s ×%d\n余额：%d %s\n\n背包又腾出了一点空间。", result.Item.Name, result.Item.Name, result.Quantity, result.CurrencyKey, result.Revenue, result.RemainingBalance, result.CurrencyKey))
+	message := text(fmt.Sprintf("💰【出售成功】\n店员接过「%s」，清点后把报酬交到了你手中。\n\n交出：%s ×%d\n获得：%s ×%d\n余额：%d %s\n\n背包又腾出了一点空间。", result.Item.Name, result.Item.Name, result.Quantity, currencyLabel(service.DB, result.CurrencyKey), result.Revenue, result.RemainingBalance, currencyLabel(service.DB, result.CurrencyKey)))
 	message.Image = result.Item.Image
 	return message, nil
 }

@@ -1,7 +1,10 @@
 package database
 
 import (
+	"fmt"
 	"log"
+	"path/filepath"
+	"strings"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
@@ -13,7 +16,7 @@ var DB *gorm.DB
 
 func InitDB() {
 	var err error
-	DB, err = gorm.Open(sqlite.Open("pet_game.db"), &gorm.Config{})
+	DB, err = OpenSQLite("pet_game.db")
 	if err != nil {
 		log.Fatalf("数据库连接失败: %v", err)
 	}
@@ -23,6 +26,33 @@ func InitDB() {
 	if err = gameplayrules.EnsureDefaults(DB); err != nil {
 		log.Fatalf("初始化成长与图鉴默认配置失败: %v", err)
 	}
+}
+
+// OpenSQLite opens a file-backed SQLite database with WAL, a busy timeout,
+// and a single connection. SQLite writers are serialized; a larger pool only
+// increases lock contention under concurrent command, admin and notification
+// writes. In-memory test DSNs should keep using gorm.Open directly.
+func OpenSQLite(path string) (*gorm.DB, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil, fmt.Errorf("sqlite path is empty")
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(ON)", filepath.ToSlash(absolute))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	if err != nil {
+		return nil, err
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, err
+	}
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxIdleConns(1)
+	return db, nil
 }
 
 // MigrateSchema creates the complete current schema and its database-level

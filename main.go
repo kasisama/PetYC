@@ -81,7 +81,8 @@ func main() {
 	if err := config.LoadAllConfigsFromDB(database.DB); err != nil {
 		log.Fatalf("[Main] 从 SQLite 加载配置失败: %v", err)
 	}
-	if err := config.EnsureModernMenus(database.DB); err != nil {
+	interactiveMenu := term.IsTerminal(int(os.Stdin.Fd()))
+	if err := config.ApplyModernMenus(database.DB, config.PromptMenuOverwrite(os.Stdin, os.Stdout, interactiveMenu)); err != nil {
 		log.Fatalf("[Main] 更新默认菜单失败: %v", err)
 	}
 	if err := core.SyncUnifiedCommandConfigs(database.DB); err != nil {

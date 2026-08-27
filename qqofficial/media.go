@@ -19,6 +19,7 @@ import (
 
 	"qq-pet-saas/config"
 	"qq-pet-saas/core"
+	"qq-pet-saas/database"
 )
 
 const qqImageSoftLimit = 20 * 1024 * 1024
@@ -252,7 +253,7 @@ func readConfiguredImage(source string) ([]byte, string, error) {
 }
 
 func configuredImageURL(source string) string {
-	host := strings.TrimRight(strings.TrimSpace(config.Core.ImageHost), "/")
+	host := config.LiveImageHost(database.DB)
 	if host == "" || !isHTTPURL(host) {
 		return ""
 	}

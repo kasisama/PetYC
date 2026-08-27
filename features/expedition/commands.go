@@ -42,7 +42,7 @@ func handleCompanion(ctx context.Context, event core.InboundEvent, service *Serv
 	}
 	companion := gameplay.NewCompanionService(service.DB)
 	companion.Now = service.Now
-	result, err := companion.Interact(ctx, account.ID, action, itemName, quantity, currentCompanionRules())
+	result, err := companion.Interact(ctx, account.ID, action, itemName, quantity, currentCompanionRules(service.DB))
 	if err != nil {
 		return companionBusinessError(err)
 	}
@@ -123,31 +123,31 @@ func companionAction(message string) string {
 	return ""
 }
 
-func currentCompanionRules() gameplay.CompanionRules {
+func currentCompanionRules(db *gorm.DB) gameplay.CompanionRules {
 	return gameplay.CompanionRules{
 		Configured:          true,
-		WashGrowth:          config.Interaction.WashGrowth,
-		WashAffection:       config.Interaction.WashAffection,
-		WashHungerCost:      config.Interaction.WashHungerCost,
-		TouchGrowth:         config.Interaction.TouchGrowth,
-		TouchAffection:      config.Interaction.TouchAffection,
-		TouchGrowthLimit:    config.Interaction.TouchGrowthLimit,
-		TouchAffectionLimit: config.Interaction.TouchAffectLimit,
-		TouchHungerCost:     config.Interaction.TouchHungerCost,
-		TouchInterval:       time.Duration(config.Interaction.TouchInterval) * time.Second,
-		WalkGrowth:          config.Interaction.WalkGrowth,
-		WalkAffection:       config.Interaction.WalkAffection,
-		WalkGrowthLimit:     config.Interaction.WalkGrowthLimit,
-		WalkAffectionLimit:  config.Interaction.WalkAffectLimit,
-		WalkHungerCost:      config.Interaction.WalkHungerCost,
-		WalkInterval:        time.Duration(config.Interaction.WalkInterval) * time.Second,
-		GiftLimit:           config.Interaction.GiftLimit,
+		WashGrowth:          config.LiveInt64(db, "Interaction.WashGrowth", 8),
+		WashAffection:       config.LiveInt64(db, "Interaction.WashAffection", 10),
+		WashHungerCost:      config.LiveInt64(db, "Interaction.WashHungerCost", 5),
+		TouchGrowth:         config.LiveInt64(db, "Interaction.TouchGrowth", 8),
+		TouchAffection:      config.LiveInt64(db, "Interaction.TouchAffection", 10),
+		TouchGrowthLimit:    config.LiveInt64(db, "Interaction.TouchGrowthLimit", 24),
+		TouchAffectionLimit: config.LiveInt64(db, "Interaction.TouchAffectLimit", 30),
+		TouchHungerCost:     config.LiveInt64(db, "Interaction.TouchHungerCost", 5),
+		TouchInterval:       time.Duration(config.LiveInt64(db, "Interaction.TouchInterval", 600)) * time.Second,
+		WalkGrowth:          config.LiveInt64(db, "Interaction.WalkGrowth", 5),
+		WalkAffection:       config.LiveInt64(db, "Interaction.WalkAffection", 8),
+		WalkGrowthLimit:     config.LiveInt64(db, "Interaction.WalkGrowthLimit", 20),
+		WalkAffectionLimit:  config.LiveInt64(db, "Interaction.WalkAffectLimit", 24),
+		WalkHungerCost:      config.LiveInt64(db, "Interaction.WalkHungerCost", 15),
+		WalkInterval:        time.Duration(config.LiveInt64(db, "Interaction.WalkInterval", 600)) * time.Second,
+		GiftLimit:           config.LiveInt64(db, "Interaction.GiftLimit", 5),
 		Images: map[string]string{
-			gameplay.ActionFeed:  config.Images["喂养"],
-			gameplay.ActionTouch: config.Images["摸头"],
-			gameplay.ActionWalk:  config.Images["散步"],
-			gameplay.ActionGift:  config.Images["送礼"],
-			gameplay.ActionWash:  config.Images["洗澡"],
+			gameplay.ActionFeed:  config.LiveImagePath(db, "喂养"),
+			gameplay.ActionTouch: config.LiveImagePath(db, "摸头"),
+			gameplay.ActionWalk:  config.LiveImagePath(db, "散步"),
+			gameplay.ActionGift:  config.LiveImagePath(db, "送礼"),
+			gameplay.ActionWash:  config.LiveImagePath(db, "洗澡"),
 		},
 	}
 }
@@ -244,8 +244,12 @@ func friendlyError(err error) (core.OutboundMessage, error) {
 	return core.OutboundMessage{}, err
 }
 
-func handleAdoptList(_ context.Context, event core.InboundEvent, _ *Service) (core.OutboundMessage, error) {
-	pets := config.StarterPets()
+func handleAdoptList(_ context.Context, event core.InboundEvent, service *Service) (core.OutboundMessage, error) {
+	var db *gorm.DB
+	if service != nil {
+		db = service.DB
+	}
+	pets := config.LiveStarterSpecies(db)
 	if len(pets) == 0 {
 		message := text("宠物小屋正在整理新的见面名单，请稍后再来看看。")
 		message.MessageKey = "adoption.list.empty"
@@ -277,9 +281,9 @@ func handleAdoptList(_ context.Context, event core.InboundEvent, _ *Service) (co
 	var builder strings.Builder
 	builder.WriteString("🎈【挑选你的第一位伙伴】\n")
 	builder.WriteString("宠物小屋今天也热热闹闹，几位小家伙正等着与你见面：\n\n")
-	for index, name := range pets[start:end] {
-		builder.WriteString(fmt.Sprintf("%d. %s", start+index+1, name))
-		if tag := adoptTagline(name); tag != "" {
+	for index, species := range pets[start:end] {
+		builder.WriteString(fmt.Sprintf("%d. %s", start+index+1, species.Name))
+		if tag := adoptTagline(species); tag != "" {
 			builder.WriteString("｜")
 			builder.WriteString(tag)
 		}
@@ -289,22 +293,18 @@ func handleAdoptList(_ context.Context, event core.InboundEvent, _ *Service) (co
 	builder.WriteString(fmt.Sprintf("📖 当前页数：[%d/%d]\n", page, pageCount))
 	builder.WriteString("💡 小贴士：每位伙伴都有自己的喜好与成长路线。\n")
 	builder.WriteString("发送“领养 ")
-	builder.WriteString(pets[start])
+	builder.WriteString(pets[start].Name)
 	builder.WriteString("”迎接它回家。")
 	if page < pageCount {
 		builder.WriteString(fmt.Sprintf("\n发送“领养宠物 %d”继续看看。", page+1))
 	}
 	message := text(builder.String())
 	message.MessageKey = "adoption.list"
-	message.Image = core.ExistingImageSource(config.Images["领养"], "核心图片/领养.jpg", "核心图片/领养宠物.jpg")
+	message.Image = core.ExistingImageSource(config.LiveImagePath(db, "领养", "核心图片/领养.jpg", "核心图片/领养宠物.jpg"))
 	return message, nil
 }
 
-func adoptTagline(name string) string {
-	species, ok := config.Pets[name]
-	if !ok {
-		return ""
-	}
+func adoptTagline(species models.PetSpeciesConfig) string {
 	description := strings.TrimSpace(species.Description)
 	if description == "" {
 		return ""
@@ -331,11 +331,11 @@ func handleAdopt(ctx context.Context, event core.InboundEvent, service *Service)
 	if petType == "" {
 		return text("请选择要领养的伙伴。\n发送“领养宠物”查看可选伙伴。"), nil
 	}
-	starterBalance := config.Core.InitialCoin
+	starterBalance := config.LiveInt64(service.DB, "Core.InitialCoin", 100)
 	if starterBalance <= 0 {
 		starterBalance = 100
 	}
-	if _, err = service.AdoptWithStarter(ctx, account.ID, petType, petType, currencyName(), starterBalance); err != nil {
+	if _, err = service.AdoptWithStarter(ctx, account.ID, petType, petType, gameplay.DefaultCurrencyKey, starterBalance); err != nil {
 		if errors.Is(err, gameplay.ErrPetAlreadyExists) {
 			if gameplay.MaxPetSlotsTx(service.DB.WithContext(ctx)) <= 1 {
 				return text("宠物栏尚未开放，当前只能携带一只调查伙伴。\n发送“我的宠物”查看它的近况。"), nil
@@ -347,7 +347,7 @@ func handleAdopt(ctx context.Context, event core.InboundEvent, service *Service)
 		}
 		return core.OutboundMessage{}, err
 	}
-	species := config.Pets[petType]
+	species, _ := config.LiveSpecies(service.DB, petType)
 	lines := []string{
 		"🎉【领养成功·欢迎新伙伴回家】",
 		fmt.Sprintf("你领养了「%s」！", petType),
@@ -362,19 +362,37 @@ func handleAdopt(ctx context.Context, event core.InboundEvent, service *Service)
 			lines = append(lines, "喜欢的礼物："+species.FavoriteGift)
 		}
 	}
-	lines = append(lines, "", fmt.Sprintf("新家准备金：%s +%d", currencyName(), starterBalance), "发送“改名 新名字”为它取名，再发送“签到”领取第一份陪伴奖励。")
+	lines = append(lines, "", fmt.Sprintf("新家准备金：%s +%d", currencyName(service.DB), starterBalance), "发送“改名 新名字”为它取名，再发送“签到”领取第一份陪伴奖励。")
 	message := text(strings.Join(lines, "\n"))
 	message.MessageKey = "adoption.success"
 	message.Image = core.ExistingImageSource(species.AdoptImage, species.Image)
 	return message, nil
 }
 
-func currencyName() string {
-	name := strings.TrimSpace(config.Core.CoinName)
-	if name == "" {
-		return gameplay.DefaultCurrencyKey
+func currencyName(db *gorm.DB) string {
+	return currencyLabel(db, gameplay.DefaultCurrencyKey)
+}
+
+func currencyLabel(db *gorm.DB, key string) string {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		key = gameplay.DefaultCurrencyKey
 	}
-	return name
+	if key == gameplay.DefaultCurrencyKey || key == gameplay.PrimaryCurrencyKey {
+		name := strings.TrimSpace(config.LiveString(db, "Core.CoinName", ""))
+		if name != "" && name != key && name != gameplay.DefaultCurrencyKey {
+			return name
+		}
+	}
+	if db != nil && db.Migrator().HasTable(&models.CurrencyConfig{}) {
+		var row models.CurrencyConfig
+		if result := db.Limit(1).Find(&row, "key = ?", key); result.Error == nil && result.RowsAffected > 0 {
+			if name := strings.TrimSpace(row.Name); name != "" && name != key {
+				return name
+			}
+		}
+	}
+	return key
 }
 
 func handlePetList(ctx context.Context, event core.InboundEvent, service *Service) (core.OutboundMessage, error) {
@@ -534,7 +552,7 @@ func handleDaily(ctx context.Context, event core.InboundEvent, service *Service)
 		}
 		rewards := make([]string, 0, len(checkin.Items)+2)
 		if checkin.Currency > 0 {
-			rewards = append(rewards, fmt.Sprintf("%s +%d", checkin.CurrencyKey, checkin.Currency))
+			rewards = append(rewards, fmt.Sprintf("%s +%d", currencyLabel(service.DB, checkin.CurrencyKey), checkin.Currency))
 		}
 		if checkin.Affection > 0 {
 			rewards = append(rewards, fmt.Sprintf("好感 +%d", checkin.Affection))
@@ -678,7 +696,7 @@ func handleClaim(ctx context.Context, event core.InboundEvent, service *Service)
 		fmt.Sprintf("宠物成长：+%d", result.Growth),
 	}
 	if result.Currency > 0 {
-		lines = append(lines, fmt.Sprintf("%s：+%d", currencyName(), result.Currency))
+		lines = append(lines, fmt.Sprintf("%s：+%d", currencyName(service.DB), result.Currency))
 	}
 	if result.CodexEntry != "" {
 		lines = append(lines, fmt.Sprintf("图鉴：%s %d%%", result.CodexEntry, result.Progress))
@@ -866,7 +884,7 @@ func handleCommunity(ctx context.Context, event core.InboundEvent, service *Serv
 	if err != nil {
 		return core.OutboundMessage{}, err
 	}
-	return text(fmt.Sprintf("🏕️【社区营地】\n篝火旁聚集着来自本群的伙伴，大家共同建设的营地正一点点变得热闹。\n\n营地等级：Lv.%d\n建设材料：%d/下一阶段 %d\n\n发送“共建 木材 20”为营地添一份力量。", community.Level, community.Materials, community.Level*100)), nil
+	return text(fmt.Sprintf("🏕️【社区营地】\n篝火旁聚集着来自本群的伙伴，大家共同建设的营地正一点点变得热闹。\n\n营地等级：Lv.%d\n建设材料：%d/下一阶段 %d\n\n发送“共建 晨露果 20”为营地添一份力量。", community.Level, community.Materials, community.Level*100)), nil
 }
 
 func handleContribute(ctx context.Context, event core.InboundEvent, service *Service) (core.OutboundMessage, error) {
@@ -876,11 +894,11 @@ func handleContribute(ctx context.Context, event core.InboundEvent, service *Ser
 	}
 	parts := strings.Fields(strings.TrimSpace(strings.TrimPrefix(event.Text, "共建")))
 	if len(parts) != 2 {
-		return text("共建格式不正确。\n请发送“共建 木材 20”。"), nil
+		return text("共建格式不正确。\n请发送“共建 晨露果 20”。"), nil
 	}
 	quantity, parseErr := strconv.ParseInt(parts[1], 10, 64)
 	if parseErr != nil || quantity <= 0 {
-		return text("贡献数量需要是正整数。\n例如：“共建 木材 20”。"), nil
+		return text("贡献数量需要是正整数。\n例如：“共建 晨露果 20”。"), nil
 	}
 	community, err := service.Contribute(ctx, event, account.ID, parts[0], quantity)
 	if err != nil {
@@ -1055,7 +1073,7 @@ func handleHelpRequest(ctx context.Context, event core.InboundEvent, service *Se
 	}
 	parts := strings.Fields(strings.TrimSpace(strings.TrimPrefix(event.Text, "求助")))
 	if len(parts) != 2 {
-		return text("求助格式不正确。\n请发送“求助 木材 5”，每条最多求助20件物品。"), nil
+		return text("求助格式不正确。\n请发送“求助 晨露果 5”，每条最多求助20件物品。"), nil
 	}
 	quantity, parseErr := strconv.ParseInt(parts[1], 10, 64)
 	if parseErr != nil {
@@ -1081,7 +1099,7 @@ func handleHelpList(ctx context.Context, event core.InboundEvent, service *Servi
 		return core.OutboundMessage{}, err
 	}
 	if len(requests) == 0 {
-		return text("当前社区没有进行中的求助。\n发送“求助 木材 5”发布一条限额求助。"), nil
+		return text("当前社区没有进行中的求助。\n发送“求助 晨露果 5”发布一条限额求助。"), nil
 	}
 	lines := []string{"【社区求助单】"}
 	for _, request := range requests {
@@ -1202,9 +1220,8 @@ func menuCatalog(service *Service) []core.UnifiedFeature {
 		}
 	}
 	result := make([]core.UnifiedFeature, 0, len(features))
-	menuHidden := map[string]bool{"buy": true, "sell": true}
 	for _, feature := range features {
-		if feature.Hidden && !menuHidden[feature.FuncName] {
+		if feature.Hidden {
 			continue
 		}
 		if row, exists := configured[feature.FuncName]; exists && !feature.Hidden {
@@ -1331,7 +1348,7 @@ func handleTreatPet(ctx context.Context, event core.InboundEvent, service *Servi
 	}
 	care := gameplay.NewCareService(service.DB)
 	care.Wallet.Now = service.Now
-	result, err := care.Treat(ctx, account.ID, currencyName(), config.Core.TreatCost)
+	result, err := care.Treat(ctx, account.ID, gameplay.DefaultCurrencyKey, config.LiveInt64(service.DB, "Core.TreatCost", 500))
 	if err != nil {
 		return careBusinessError(err)
 	}
@@ -1341,11 +1358,11 @@ func handleTreatPet(ctx context.Context, event core.InboundEvent, service *Servi
 		fmt.Sprintf("%s 的体力：%d → %d", result.PetName, result.HealthBefore, result.HealthAfter),
 	}
 	if result.Cost > 0 {
-		lines = append(lines, fmt.Sprintf("消耗：%d %s｜余额：%d %s", result.Cost, result.CurrencyKey, result.RemainingBalance, result.CurrencyKey))
+		lines = append(lines, fmt.Sprintf("消耗：%d %s｜余额：%d %s", result.Cost, currencyLabel(service.DB, result.CurrencyKey), result.RemainingBalance, currencyLabel(service.DB, result.CurrencyKey)))
 	}
 	lines = append(lines, "", "它轻轻蹭了蹭你的手，好像在说：这次会更小心的。", "现在可以继续陪伴或远征了。")
 	message := text(strings.Join(lines, "\n"))
-	message.Image = config.Images["治疗"]
+	message.Image = config.LiveImagePath(service.DB, "治疗")
 	return message, nil
 }
 
@@ -1371,5 +1388,5 @@ func careBusinessError(err error) (core.OutboundMessage, error) {
 }
 
 func handleLegacyFamily(_ context.Context, _ core.InboundEvent, _ *Service) (core.OutboundMessage, error) {
-	return text("家族已经升级为“远征小队 + 社区栖息地”。\n发送“小队 列表”寻找伙伴，发送“营地”或“共建 木材 20”参与全员建设。"), nil
+	return text("家族玩法已并入营地与小队。\n发送“营地”查看当前社区，或发送“小队 列表”寻找伙伴。"), nil
 }

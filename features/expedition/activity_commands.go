@@ -65,7 +65,7 @@ func handleFinishActivity(ctx context.Context, event core.InboundEvent, service 
 	kind := strings.TrimSpace(strings.TrimPrefix(event.Text, "完成"))
 	activity := gameplay.NewActivityService(service.DB)
 	activity.Now = service.Now
-	result, err := activity.Complete(ctx, account.ID, kind, currencyName())
+	result, err := activity.Complete(ctx, account.ID, kind, gameplay.DefaultCurrencyKey)
 	if err != nil {
 		return activityBusinessError(err)
 	}
@@ -77,7 +77,7 @@ func handleFinishActivity(ctx context.Context, event core.InboundEvent, service 
 		lines = append(lines, fmt.Sprintf("🌱 成长 +%d", result.GrowthDelta))
 	}
 	if result.CurrencyDelta > 0 {
-		lines = append(lines, fmt.Sprintf("💰 %s +%d｜余额 %d", result.CurrencyKey, result.CurrencyDelta, result.RemainingBalance))
+		lines = append(lines, fmt.Sprintf("💰 %s +%d｜余额 %d", currencyLabel(service.DB, result.CurrencyKey), result.CurrencyDelta, result.RemainingBalance))
 	}
 	for _, item := range result.Items {
 		lines = append(lines, fmt.Sprintf("🎁 %s ×%d", item.Name, item.Quantity))
@@ -137,8 +137,8 @@ func activityStartRequest(db *gorm.DB, message, kind string) (gameplay.ActivityS
 		}
 		return gameplay.ActivityStartRequest{
 			Kind: kind, ItemName: argument, RequiredItemType: "智慧", RewardAttribute: "智慧",
-			DailyLimit: config.Interaction.StudyLimit, HungerCost: config.Interaction.StudyHungerCost, RewardGrowth: config.Interaction.StudyGrowth,
-			StartImage: config.Images["开始学习"], EndImage: config.Images["完成学习"],
+			DailyLimit: config.LiveInt64(db, "Interaction.StudyLimit", 5), HungerCost: config.LiveInt64(db, "Interaction.StudyHungerCost", 10), RewardGrowth: config.LiveInt64(db, "Interaction.StudyGrowth", 5),
+			StartImage: config.LiveImagePath(db, "开始学习"), EndImage: config.LiveImagePath(db, "完成学习"),
 		}, "", nil
 	case gameplay.ActivityTrain:
 		if argument == "" {
@@ -146,8 +146,8 @@ func activityStartRequest(db *gorm.DB, message, kind string) (gameplay.ActivityS
 		}
 		return gameplay.ActivityStartRequest{
 			Kind: kind, ItemName: argument, RequiredItemType: "力量", RewardAttribute: "力量",
-			DailyLimit: config.Interaction.TrainLimit, HungerCost: config.Interaction.TrainHungerCost, RewardGrowth: config.Interaction.TrainGrowth,
-			StartImage: config.Images["开始锻炼"], EndImage: config.Images["完成锻炼"],
+			DailyLimit: config.LiveInt64(db, "Interaction.TrainLimit", 3), HungerCost: config.LiveInt64(db, "Interaction.TrainHungerCost", 10), RewardGrowth: config.LiveInt64(db, "Interaction.TrainGrowth", 5),
+			StartImage: config.LiveImagePath(db, "开始锻炼"), EndImage: config.LiveImagePath(db, "完成锻炼"),
 		}, "", nil
 	case gameplay.ActivityFitness:
 		if argument == "" {
@@ -155,8 +155,8 @@ func activityStartRequest(db *gorm.DB, message, kind string) (gameplay.ActivityS
 		}
 		return gameplay.ActivityStartRequest{
 			Kind: kind, ItemName: argument, RequiredItemType: "防御", RewardAttribute: "防御",
-			DailyLimit: config.Interaction.FitnessLimit, HungerCost: config.Interaction.FitnessHungerCost, RewardGrowth: config.Interaction.FitnessGrowth,
-			StartImage: config.Images["开始健身"], EndImage: config.Images["完成健身"],
+			DailyLimit: config.LiveInt64(db, "Interaction.FitnessLimit", 5), HungerCost: config.LiveInt64(db, "Interaction.FitnessHungerCost", 12), RewardGrowth: config.LiveInt64(db, "Interaction.FitnessGrowth", 5),
+			StartImage: config.LiveImagePath(db, "开始健身"), EndImage: config.LiveImagePath(db, "完成健身"),
 		}, "", nil
 	case gameplay.ActivityWork:
 		if argument == "" {
@@ -169,7 +169,7 @@ func activityStartRequest(db *gorm.DB, message, kind string) (gameplay.ActivityS
 			}
 			lines := []string{"【可选岗位】"}
 			for _, job := range jobs {
-				lines = append(lines, fmt.Sprintf("%s｜%d分钟｜%d %s", job.Name, maxDurationMinute(job.Time), job.RewardCoin, currencyName()))
+				lines = append(lines, fmt.Sprintf("%s｜%d分钟｜%d %s", job.Name, maxDurationMinute(job.Time), job.RewardCoin, currencyName(db)))
 			}
 			lines = append(lines, "", "发送“打工 岗位名”开始。")
 			return gameplay.ActivityStartRequest{}, strings.Join(lines, "\n"), nil
