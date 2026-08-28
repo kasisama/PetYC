@@ -171,14 +171,6 @@ jobs:
           fi
 
           curl --silent --show-error --fail-with-body \
-            --request PATCH \
-            --form "access_token=$GITEE_TOKEN" \
-            --form "tag_name=$TAG" \
-            --form "name=$TAG" \
-            --form "prerelease=true" \
-            "$API/releases/$RELEASE_ID" > /dev/null
-
-          curl --silent --show-error --fail-with-body \
             --get --data-urlencode "access_token=$GITEE_TOKEN" \
             "$API/releases/$RELEASE_ID/attach_files" > /tmp/gitee-attachments.json
 
