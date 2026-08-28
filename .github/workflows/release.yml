@@ -326,6 +326,9 @@ jobs:
               --data-urlencode "access_token=$GITEE_TOKEN" \
               --write-out '%{http_code}' \
               "$API/contents/$path")
+            if [ "$status" = 200 ] && jq -e 'type == "array"' "/tmp/$state.json" > /dev/null; then
+              status=404
+            fi
             printf '%s' "$status" > "/tmp/$state.status"
             if [ "$status" = 200 ]; then
               jq -r '.content' "/tmp/$state.json" | tr -d '\n' | base64 --decode > "/tmp/$state.original"
@@ -350,6 +353,9 @@ jobs:
               --data-urlencode "access_token=$GITEE_TOKEN" \
               --write-out '%{http_code}' \
               "$API/contents/$path")
+            if [ "$status" = 200 ] && jq -e 'type == "array"' /tmp/gitee-content.json > /dev/null; then
+              status=404
+            fi
             if [ "$status" = 200 ]; then
               sha=$(jq -r '.sha' /tmp/gitee-content.json)
               curl --silent --show-error --fail-with-body \
@@ -388,6 +394,9 @@ jobs:
               --data-urlencode "access_token=$GITEE_TOKEN" \
               --write-out '%{http_code}' \
               "$API/contents/$path")
+            if [ "$current_status" = 200 ] && jq -e 'type == "array"' "/tmp/$state-current.json" > /dev/null; then
+              current_status=404
+            fi
             if [ "$previous_status" = 200 ]; then
               encoded=$(base64 --wrap=0 "/tmp/$state.original")
               if [ "$current_status" = 200 ]; then
