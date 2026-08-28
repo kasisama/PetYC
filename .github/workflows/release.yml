@@ -172,10 +172,12 @@ jobs:
 
           upload_attachment "dist/$WINDOWS" /tmp/gitee-windows.json
           upload_attachment "dist/$LINUX" /tmp/gitee-linux.json
-          WINDOWS_URL=$(jq -r '.browser_download_url // .download_url // empty' /tmp/gitee-windows.json)
-          LINUX_URL=$(jq -r '.browser_download_url // .download_url // empty' /tmp/gitee-linux.json)
-          test -n "$WINDOWS_URL"
-          test -n "$LINUX_URL"
+          # Gitee's attachment upload response does not consistently include a
+          # download URL. Its public release asset route is stable, so build the
+          # URLs from the already validated repository, tag, and asset names.
+          GITEE_DOWNLOAD_BASE="https://gitee.com/$GITEE_OWNER/$GITEE_REPO/releases/download/$TAG"
+          WINDOWS_URL="$GITEE_DOWNLOAD_BASE/$WINDOWS"
+          LINUX_URL="$GITEE_DOWNLOAD_BASE/$LINUX"
           {
             echo "GITEE_RELEASE_ID=$RELEASE_ID"
             echo "GITEE_WINDOWS_URL=$WINDOWS_URL"
