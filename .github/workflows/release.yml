@@ -46,6 +46,25 @@ jobs:
             --get --data-urlencode "access_token=$GITEE_TOKEN" \
             "https://gitee.com/api/v5/repos/$GITEE_OWNER/$GITEE_REPO")
           BRANCH=$(jq -r '.default_branch // empty' <<<"$REPOSITORY")
+          if [ -z "$BRANCH" ]; then
+            TEMP_REPOSITORY=$(mktemp -d)
+            AUTHORIZATION=$(printf '%s:%s' "$GITEE_OWNER" "$GITEE_TOKEN" | base64 --wrap=0)
+            echo "::add-mask::$AUTHORIZATION"
+            git -C "$TEMP_REPOSITORY" init --initial-branch=main
+            git -C "$TEMP_REPOSITORY" config user.name "PetYC Release Bot"
+            git -C "$TEMP_REPOSITORY" config user.email "actions@users.noreply.github.com"
+            printf '%s\n' '# PetYC Update Repository' '' 'PetYC release binaries and signed stable update manifests.' \
+              > "$TEMP_REPOSITORY/README.md"
+            git -C "$TEMP_REPOSITORY" add README.md
+            git -C "$TEMP_REPOSITORY" commit -m "chore: initialize update repository"
+            git -C "$TEMP_REPOSITORY" \
+              -c http.extraHeader="Authorization: Basic $AUTHORIZATION" \
+              push "https://gitee.com/$GITEE_OWNER/$GITEE_REPO.git" HEAD:refs/heads/main
+            REPOSITORY=$(curl --silent --show-error --fail-with-body \
+              --get --data-urlencode "access_token=$GITEE_TOKEN" \
+              "https://gitee.com/api/v5/repos/$GITEE_OWNER/$GITEE_REPO")
+            BRANCH=$(jq -r '.default_branch // empty' <<<"$REPOSITORY")
+          fi
           test -n "$BRANCH"
           {
             echo "GITEE_BRANCH=$BRANCH"
