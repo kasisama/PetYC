@@ -3,9 +3,13 @@ package expedition
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
+	"gorm.io/gorm"
+
+	"qq-pet-saas/gameplay"
 	"qq-pet-saas/models"
 )
 
@@ -64,12 +68,56 @@ func TestExploreCombatUnlocksZoneAndGrantsEquipment(t *testing.T) {
 	if equipment.TemplateKey != "twig-sword" {
 		t.Fatalf("unexpected equipment: %#v", equipment)
 	}
+	if len(result.Rewards) == 0 || result.Rewards[0].Name != "嫩枝短剑" {
+		t.Fatalf("装备奖励应解析为模板中文名，得到 %#v", result.Rewards)
+	}
+	if text := rewardText(result.Rewards[0]); text != "获得装备：嫩枝短剑" || strings.Contains(text, "twig-sword") || strings.Contains(text, equipment.ID) {
+		t.Fatalf("战斗结算不应展示字段名或装备编号: %q", text)
+	}
 	var pet models.PetProfile
 	if err = db.First(&pet, "account_id = ?", "adventure-player").Error; err != nil {
 		t.Fatal(err)
 	}
 	if pet.Status != "空闲" {
 		t.Fatalf("pet should be idle after victory, got %s", pet.Status)
+	}
+}
+
+func TestGrantLootResolvesEquipmentAndBlueprintDisplayNames(t *testing.T) {
+	service, db, _ := newTestService(t)
+	if err := db.Create(&models.EquipmentTemplateConfig{Key: "equipment_01", Name: "原野短杖", Slot: "weapon", Rarity: "common", RequiredLevel: 1, Enabled: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.EquipmentRecipeConfig{EquipmentKey: "equipment_01", BlueprintFragments: 5, Enabled: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+	pool := models.AdventureLootPoolConfig{Key: "mixed", Name: "混合奖励", Rolls: 0}
+	entries := []models.AdventureLootEntryConfig{
+		{PoolKey: pool.Key, RewardType: "equipment", RewardKey: "equipment_01", MinQuantity: 1, MaxQuantity: 1, Guaranteed: true},
+		{PoolKey: pool.Key, RewardType: "blueprint_fragment", RewardKey: "equipment_01", MinQuantity: 2, MaxQuantity: 2, Guaranteed: true},
+	}
+	if err := db.Create(&pool).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&entries).Error; err != nil {
+		t.Fatal(err)
+	}
+	var rewards []AdventureReward
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		var err error
+		rewards, err = service.grantLootPoolTx(tx, "player", pool.Key, "test", false)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(rewards) != 2 {
+		t.Fatalf("expected 2 rewards, got %#v", rewards)
+	}
+	if rewards[0].Type != "equipment" || rewards[0].Name != "原野短杖" {
+		t.Fatalf("装备奖励应使用模板中文名: %#v", rewards[0])
+	}
+	if rewards[1].Type != "blueprint_fragment" || rewards[1].Name != "原野短杖蓝图碎片" {
+		t.Fatalf("蓝图奖励应使用模板中文名: %#v", rewards[1])
 	}
 }
 
@@ -129,6 +177,63 @@ func TestBlueprintUnlockCraftEquipAndSalvage(t *testing.T) {
 	}
 	if dust.Quantity != 2 {
 		t.Fatalf("expected salvage dust, got %d", dust.Quantity)
+	}
+}
+
+func TestExpiredCombatPersistsInjuryAndAllowsExploreAfterTreat(t *testing.T) {
+	service, db, now := newTestService(t)
+	service.RandomIntn = func(int) (int, error) { return 0, nil }
+	seedAdventurePlayer(t, service, "expire-player", "超时光芽兽")
+	for _, row := range []any{
+		&models.AdventureMapConfig{Key: "map", Name: "地图", Region: "区域", RecommendedLevel: 1, Enabled: true},
+		&models.AdventureZoneConfig{Key: "zone", MapKey: "map", Name: "区域", RecommendedLevel: 1, DifficultyPermille: 1000, HungerCost: 1, ReadinessCost: 1, Enabled: true},
+		&models.AdventureMonsterConfig{Key: "monster", Name: "怪物", Level: 1, MaxHealth: 100, Attack: 1, Enabled: true},
+		&models.AdventureEncounterConfig{ZoneKey: "zone", EncounterKey: "encounter", EncounterType: "monster", TargetKey: "monster", Name: "怪物", Weight: 1, Enabled: true},
+	} {
+		if err := db.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := service.ExploreZone(context.Background(), "expire-player", "zone"); err != nil {
+		t.Fatal(err)
+	}
+	*now = now.Add(11 * time.Minute)
+	if _, err := service.CombatAction(context.Background(), "expire-player", "late-attack", "attack"); !errors.Is(err, ErrCombatExpired) {
+		t.Fatalf("expected expired combat, got %v", err)
+	}
+	var combat models.AdventureCombatSession
+	if err := db.First(&combat, "account_id = ?", "expire-player").Error; err != nil {
+		t.Fatal(err)
+	}
+	if combat.Status != "expired" {
+		t.Fatalf("timeout must persist combat expiry, got %#v", combat)
+	}
+	var exploration models.AdventureExplorationSession
+	if err := db.First(&exploration, "account_id = ?", "expire-player").Error; err != nil {
+		t.Fatal(err)
+	}
+	if exploration.Status != "expired" {
+		t.Fatalf("timeout must close exploration, got %#v", exploration)
+	}
+	var pet models.PetProfile
+	if err := db.First(&pet, "account_id = ?", "expire-player").Error; err != nil {
+		t.Fatal(err)
+	}
+	if pet.Status != "受伤" {
+		t.Fatalf("timeout must injure pet, got %#v", pet)
+	}
+	care := gameplay.NewCareService(db)
+	if _, err := care.Treat(context.Background(), "expire-player", gameplay.DefaultCurrencyKey, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&pet, "account_id = ?", "expire-player").Error; err != nil {
+		t.Fatal(err)
+	}
+	if pet.Status != "空闲" {
+		t.Fatalf("treatment must clear injured status, got %#v", pet)
+	}
+	if _, err := service.ExploreZone(context.Background(), "expire-player", "zone"); err != nil {
+		t.Fatalf("treated pet should be able to explore again, got %v", err)
 	}
 }
 

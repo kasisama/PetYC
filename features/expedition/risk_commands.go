@@ -8,8 +8,11 @@ import (
 	"strings"
 	"time"
 
+	"gorm.io/gorm"
+
 	"qq-pet-saas/core"
 	"qq-pet-saas/gameplay"
+	"qq-pet-saas/models"
 )
 
 func handleLottery(ctx context.Context, event core.InboundEvent, service *Service) (core.OutboundMessage, error) {
@@ -23,14 +26,14 @@ func handleLottery(ctx context.Context, event core.InboundEvent, service *Servic
 		if rulesErr != nil {
 			return riskErrorMessage(rulesErr), nil
 		}
-		return chanceRulesMessage(rules, "发送“抽奖 1”参与一次。"), nil
+		return withKeyboard(chanceRulesMessage(service.DB, rules, "发送“抽奖一次”即可抽取。"), []core.KeyboardButton{{Label: "抽取一次", Command: "抽奖一次"}}), nil
 	}
-	if argument != "1" && argument != "一次" {
-		return text("抽奖格式不正确。\n发送“抽奖”查看概率，或发送“抽奖 1”参与一次。"), nil
+	if argument != "1" && argument != "一次" && argument != "抽取一次" {
+		return text("请发送“抽奖”查看奖池，或发送“抽奖一次”参与。"), nil
 	}
 	result, playErr := service.PlayLottery(ctx, account.ID, riskSourceKey(event))
 	if playErr != nil {
-		return riskErrorMessage(playErr), nil
+		return riskErrorMessageFor(service.DB, playErr, "lottery"), nil
 	}
 	lines := []string{"🎰【幸运时刻】", "奖池的光点飞快旋转，最后在你面前停了下来——", fmt.Sprintf("获得：%s", result.Outcome.RewardName)}
 	if result.Outcome.ItemName != "" {
@@ -59,7 +62,7 @@ func handleFishingMenu(ctx context.Context, event core.InboundEvent, service *Se
 	if err != nil {
 		return riskErrorMessage(err), nil
 	}
-	return chanceRulesMessage(rules, "发送“抛竿”开始，等待后发送“收竿”。"), nil
+	return chanceRulesMessage(service.DB, rules, "发送“抛竿”开始，等待后发送“收竿”。"), nil
 }
 
 func handleCastFishing(ctx context.Context, event core.InboundEvent, service *Service) (core.OutboundMessage, error) {
@@ -69,7 +72,7 @@ func handleCastFishing(ctx context.Context, event core.InboundEvent, service *Se
 	}
 	run, attempts, limit, castErr := service.StartFishing(ctx, account.ID, riskSourceKey(event))
 	if castErr != nil {
-		return riskErrorMessage(castErr), nil
+		return riskErrorMessageFor(service.DB, castErr, "fishing"), nil
 	}
 	wait := run.ReadyAt.Sub(service.Now())
 	if wait < 0 {
@@ -89,7 +92,7 @@ func handleClaimFishing(ctx context.Context, event core.InboundEvent, service *S
 	}
 	run, claimErr := service.ClaimFishing(ctx, account.ID)
 	if claimErr != nil {
-		return riskErrorMessage(claimErr), nil
+		return riskErrorMessageFor(service.DB, claimErr, "fishing"), nil
 	}
 	lines := []string{"🐟【收竿成功】", "浮漂猛地一沉——你抓住时机收紧鱼线，把今天的收获稳稳带上了岸！", fmt.Sprintf("获得：%s ×%d", run.ItemName, run.Quantity)}
 	if run.Currency > 0 {
@@ -111,11 +114,12 @@ func handleRockPaperScissors(ctx context.Context, event core.InboundEvent, servi
 	}
 	choice := trimAnyPrefix(event.Text, "宠物猜拳", "战斗", "猜拳")
 	if choice == "" {
-		return text("【宠物猜拳】\n对手出石头、剪刀、布的概率各为 1/3。\n胜利奖励5金币，平局奖励1金币，每日最多20次。\n\n发送“猜拳 石头／剪刀／布”。"), nil
+		coin := currencyName(service.DB)
+		return text(fmt.Sprintf("【宠物猜拳】\n对手出石头、剪刀、布的概率各为 1/3。\n胜利奖励5%s，平局奖励1%s，每日最多20次。\n\n发送“猜拳 石头／剪刀／布”。", coin, coin)), nil
 	}
 	result, battleErr := service.PlayRockPaperScissors(ctx, account.ID, riskSourceKey(event), choice)
 	if battleErr != nil {
-		return riskErrorMessage(battleErr), nil
+		return riskErrorMessageFor(service.DB, battleErr, "guess"), nil
 	}
 	lines := []string{
 		"✊【猜拳结果】",
@@ -152,7 +156,8 @@ func handleTrade(ctx context.Context, event core.InboundEvent, service *Service)
 	}
 	argument := trimAnyPrefix(event.Text, "添加交易", "宠物交易", "交易")
 	if argument == "" {
-		return text("【安全交易】\n发布后物品会先进入托管；其他玩家接受时，物品与金币在同一事务交换。\n交易单24小时有效。\n\n发布：宠物交易 物品 数量 价格\n查看：交易列表\n接受：接受交易 编号\n取消：取消交易 编号"), nil
+		coin := currencyName(service.DB)
+		return text(fmt.Sprintf("【安全交易】\n发布后物品会先进入托管；其他玩家接受时，物品与%s在同一事务交换。\n交易单24小时有效。\n\n发布：宠物交易 物品 数量 价格\n查看：交易列表\n接受：接受交易 编号\n取消：取消交易 编号", coin)), nil
 	}
 	parts := strings.Fields(argument)
 	if len(parts) != 3 {
@@ -165,9 +170,9 @@ func handleTrade(ctx context.Context, event core.InboundEvent, service *Service)
 	}
 	offer, createErr := service.CreateTradeOffer(ctx, account.ID, parts[0], quantity, price)
 	if createErr != nil {
-		return riskErrorMessage(createErr), nil
+		return riskErrorMessageFor(service.DB, createErr, "trade"), nil
 	}
-	return text(fmt.Sprintf("📜【交易委托已发布】\n营地的交易员已经收好物品，并把委托挂上了公告板。\n\n编号：%s\n托管：%s ×%d\n售价：%d金币\n有效期：24小时\n\n其他玩家发送“接受交易 %s”。", offer.Code, offer.ItemName, offer.Quantity, offer.Price, offer.Code)), nil
+	return text(fmt.Sprintf("📜【交易委托已发布】\n营地的交易员已经收好物品，并把委托挂上了公告板。\n\n编号：%s\n托管：%s ×%d\n售价：%d%s\n有效期：24小时\n\n其他玩家发送“接受交易 %s”。", offer.Code, offer.ItemName, offer.Quantity, offer.Price, currencyName(service.DB), offer.Code)), nil
 }
 
 func handleTradeList(ctx context.Context, event core.InboundEvent, service *Service) (core.OutboundMessage, error) {
@@ -183,7 +188,7 @@ func handleTradeList(ctx context.Context, event core.InboundEvent, service *Serv
 	}
 	lines := []string{"【交易列表】"}
 	for _, offer := range offers {
-		lines = append(lines, fmt.Sprintf("%s｜%s ×%d｜%d金币", offer.Code, offer.ItemName, offer.Quantity, offer.Price))
+		lines = append(lines, fmt.Sprintf("%s｜%s ×%d｜%d%s", offer.Code, offer.ItemName, offer.Quantity, offer.Price, currencyName(service.DB)))
 	}
 	lines = append(lines, "", "发送“交易信息 编号”查看，或发送“接受交易 编号”。")
 	return text(strings.Join(lines, "\n")), nil
@@ -199,9 +204,9 @@ func handleTradeInfo(ctx context.Context, event core.InboundEvent, service *Serv
 	}
 	offer, err := service.GetTradeOffer(ctx, code)
 	if err != nil {
-		return riskErrorMessage(err), nil
+		return riskErrorMessageFor(service.DB, err, "trade"), nil
 	}
-	return text(fmt.Sprintf("【交易 %s】\n物品：%s ×%d\n价格：%d金币\n状态：%s\n到期：%s", offer.Code, offer.ItemName, offer.Quantity, offer.Price, tradeStatusName(offer.Status), offer.ExpiresAt.Format("01-02 15:04"))), nil
+	return text(fmt.Sprintf("【交易 %s】\n物品：%s ×%d\n价格：%d%s\n状态：%s\n到期：%s", offer.Code, offer.ItemName, offer.Quantity, offer.Price, currencyName(service.DB), tradeStatusName(offer.Status), offer.ExpiresAt.Format("01-02 15:04"))), nil
 }
 
 func handleAcceptTrade(ctx context.Context, event core.InboundEvent, service *Service) (core.OutboundMessage, error) {
@@ -215,9 +220,10 @@ func handleAcceptTrade(ctx context.Context, event core.InboundEvent, service *Se
 	}
 	offer, acceptErr := service.AcceptTradeOffer(ctx, account.ID, code)
 	if acceptErr != nil {
-		return riskErrorMessage(acceptErr), nil
+		return riskErrorMessageFor(service.DB, acceptErr, "trade"), nil
 	}
-	return text(fmt.Sprintf("🤝【交易完成】\n交易员核对双方物品后，郑重盖下了成交印章！\n\n获得：%s ×%d\n支付：%d金币\n物品与金币已经同时结算。", offer.ItemName, offer.Quantity, offer.Price)), nil
+	coin := currencyName(service.DB)
+	return text(fmt.Sprintf("🤝【交易完成】\n交易员核对双方物品后，郑重盖下了成交印章！\n\n获得：%s ×%d\n支付：%d%s\n物品与%s已经同时结算。", offer.ItemName, offer.Quantity, offer.Price, coin, coin)), nil
 }
 
 func handleCancelTrade(ctx context.Context, event core.InboundEvent, service *Service) (core.OutboundMessage, error) {
@@ -231,25 +237,122 @@ func handleCancelTrade(ctx context.Context, event core.InboundEvent, service *Se
 	}
 	offer, cancelErr := service.CancelTradeOffer(ctx, account.ID, code)
 	if cancelErr != nil {
-		return riskErrorMessage(cancelErr), nil
+		return riskErrorMessageFor(service.DB, cancelErr, "trade"), nil
 	}
 	return text(fmt.Sprintf("【交易已取消】\n公告板上的委托已经取下。\n%s ×%d 已完整退回背包。", offer.ItemName, offer.Quantity)), nil
 }
 
-func chanceRulesMessage(rules *ChanceRules, next string) core.OutboundMessage {
-	lines := []string{fmt.Sprintf("【%s规则】", rules.Game.Name), rules.Game.Rules, "", "公开概率："}
-	for _, rate := range rules.Rewards {
-		lines = append(lines, fmt.Sprintf("- %s：%s", rate.Reward.Name, FormatChanceRate(rate.Rate)))
+func chanceRulesMessage(db *gorm.DB, rules *ChanceRules, next string) core.OutboundMessage {
+	name := strings.TrimSpace(rules.Game.Name)
+	if name == "" {
+		name = "机缘"
 	}
-	lines = append(lines, "", next)
-	return text(strings.Join(lines, "\n"))
+	plain := []string{"🎲【" + name + "】"}
+	markdown := []string{"# " + name}
+	if flavor := chanceFlavor(rules.Game.GameKey); flavor != "" {
+		plain = append(plain, flavor)
+		markdown = append(markdown, "", flavor)
+	}
+	if cost := chanceCostLine(db, rules.Game); cost != "" {
+		plain = append(plain, cost)
+		markdown = append(markdown, "", cost)
+	}
+	if rules.Game.GameKey == "lottery" && strings.Contains(rules.Game.CostItem, "抽签券") {
+		line := "探索「石环牧径」及之后的区域，有机会获得抽签券。"
+		plain = append(plain, line)
+		markdown = append(markdown, line)
+	}
+	if rules.Game.DailyLimit > 0 {
+		line := fmt.Sprintf("每日最多 %d 次", rules.Game.DailyLimit)
+		plain = append(plain, line)
+		markdown = append(markdown, line)
+	}
+	if rules.Game.PityThreshold > 0 {
+		pityName := chancePityName(rules)
+		line := fmt.Sprintf("连续 %d 次未出珍稀时触发保底", rules.Game.PityThreshold)
+		if pityName != "" {
+			line = fmt.Sprintf("连续 %d 次未出珍稀时，保底获得%s", rules.Game.PityThreshold, pityName)
+		}
+		plain = append(plain, line)
+		markdown = append(markdown, line)
+	}
+	plain = append(plain, "", "奖池")
+	markdown = append(markdown, "", "**奖池**")
+	for _, rate := range rules.Rewards {
+		label := strings.TrimSpace(rate.Reward.Name)
+		if label == "" {
+			label = strings.TrimSpace(rate.Reward.ItemName)
+		}
+		if label == "" {
+			continue
+		}
+		rare := ""
+		if rate.Reward.Rare {
+			rare = " · 珍稀"
+		}
+		plain = append(plain, fmt.Sprintf("· %s  %s%s", label, FormatChanceRate(rate.Rate), rare))
+		markdown = append(markdown, fmt.Sprintf("- %s  %s%s", label, FormatChanceRate(rate.Rate), rare))
+	}
+	if strings.TrimSpace(next) != "" {
+		plain = append(plain, "", next)
+		markdown = append(markdown, "", next)
+	}
+	return menuText(strings.TrimSpace(strings.Join(plain, "\n")), strings.TrimSpace(strings.Join(markdown, "\n")))
+}
+
+func chanceFlavor(gameKey string) string {
+	switch gameKey {
+	case "lottery":
+		return "调查队把签条投入遗迹灯盏，请示今日机缘。"
+	case "fishing":
+		return "在静水边放下鱼竿，等待遗迹水域给出回应。"
+	default:
+		return ""
+	}
+}
+
+func chanceCostLine(db *gorm.DB, game models.ChanceGameConfig) string {
+	if item := strings.TrimSpace(game.CostItem); item != "" {
+		quantity := game.CostQuantity
+		if quantity <= 0 {
+			quantity = 1
+		}
+		return fmt.Sprintf("消耗 %s ×%d", item, quantity)
+	}
+	if game.CostCurrency > 0 {
+		return fmt.Sprintf("消耗 %s %d", currencyName(db), game.CostCurrency)
+	}
+	return ""
+}
+
+func chancePityName(rules *ChanceRules) string {
+	key := strings.TrimSpace(rules.Game.PityRewardKey)
+	if key == "" {
+		return ""
+	}
+	for _, rate := range rules.Rewards {
+		if rate.Reward.RewardKey == key || rate.Reward.ItemName == key || strings.HasSuffix(rate.Reward.RewardKey, key) {
+			if name := strings.TrimSpace(rate.Reward.Name); name != "" {
+				return name
+			}
+			return strings.TrimSpace(rate.Reward.ItemName)
+		}
+	}
+	return ""
 }
 
 func riskErrorMessage(err error) core.OutboundMessage {
+	return riskErrorMessageFor(nil, err, "")
+}
+
+func riskErrorMessageFor(db *gorm.DB, err error, gameKey string) core.OutboundMessage {
 	switch {
 	case errors.Is(err, gameplay.ErrInsufficientFunds):
-		return text("金币不足，先签到、打工或完成远征吧。")
+		return text(currencyName(db) + "不足，先签到、打工或完成远征吧。")
 	case errors.Is(err, gameplay.ErrInsufficientItem), errors.Is(err, ErrInsufficientItem):
+		if gameKey == "lottery" {
+			return text("还没有足够的遗迹抽签券。先去探索石环牧径碰碰运气吧。")
+		}
 		return text("背包里的物品数量不足。")
 	case errors.Is(err, ErrPetRequired):
 		return text("请先发送“领养宠物”选择伙伴。")

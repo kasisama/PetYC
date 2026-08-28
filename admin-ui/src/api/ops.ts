@@ -9,19 +9,6 @@ export interface GroupSwitch {
   is_active: boolean
 }
 
-export interface CompensationPayload {
-  group_id: number
-  user_ids: number[]
-  coins: number
-  items: string
-  notice: string
-}
-
-export interface CompensationResult {
-  message: string
-  count: number
-}
-
 export interface BulkGroupStateResult {
   updated: number
   groups: GroupSwitch[]
@@ -107,25 +94,4 @@ export async function bulkUpdateGroupState(
 export async function deleteGroup(groupId: number): Promise<string> {
   const res = await api.delete<unknown>(`/api/admin/groups/${groupId}`)
   return messageFrom(res, '群组记录已删除，将恢复默认全部开启状态')
-}
-
-/** POST /api/admin/groups/sync */
-export async function syncGroups(): Promise<string> {
-  const res = await api.post<unknown>('/api/admin/groups/sync')
-  return messageFrom(res, '群组列表同步完成')
-}
-
-/** POST /api/admin/compensation */
-export async function distributeCompensation(
-  payload: CompensationPayload,
-): Promise<CompensationResult> {
-  const res = await api.post<unknown>('/api/admin/compensation', payload)
-  if (res && typeof res === 'object') {
-    const o = res as Record<string, unknown>
-    return {
-      message: messageFrom(res, '补偿发放完成'),
-      count: asNumber(pick(o, 'count', 'Count'), 0),
-    }
-  }
-  return { message: '补偿发放完成', count: 0 }
 }

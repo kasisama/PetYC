@@ -1,6 +1,7 @@
 package updater
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -74,6 +75,95 @@ func TestApplyUpdateEndToEnd(t *testing.T) {
 }
 
 func TestShortLivedParent(t *testing.T) {}
+
+func TestApplyUpdateRestartsOldVersionAfterPreHealthFailures(t *testing.T) {
+	if os.Getenv("PETYC_ROLLBACK_TARGET") == "1" {
+		t.Skip("rollback target is handled by TestRollbackTargetProcess")
+	}
+	for _, testCase := range []struct {
+		name                   string
+		invalidSource          bool
+		makeExecutableMustFail bool
+	}{
+		{name: "new binary cannot start", invalidSource: true},
+		{name: "executable permission update fails", makeExecutableMustFail: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			testApplyUpdateRestartsOldVersion(t, testCase.invalidSource, testCase.makeExecutableMustFail)
+		})
+	}
+}
+
+func testApplyUpdateRestartsOldVersion(t *testing.T, invalidSource, makeExecutableMustFail bool) {
+	temp := t.TempDir()
+	currentTestBinary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(temp, "petyc"+filepath.Ext(currentTestBinary))
+	source := target + ".new"
+	backupDir := filepath.Join(temp, "backup")
+	if err = os.MkdirAll(backupDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err = copyFile(currentTestBinary, target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if invalidSource {
+		if err = os.WriteFile(source, []byte("not-an-executable"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	} else if err = copyFile(currentTestBinary, source, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	database := filepath.Join(temp, "pet_game.db")
+	if err = os.WriteFile(database, []byte("database-before-update"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(temp, "old-version-restarted")
+	t.Setenv("PETYC_ROLLBACK_TARGET", "1")
+	t.Setenv("PETYC_ROLLBACK_MARKER", marker)
+	if makeExecutableMustFail {
+		originalMakeExecutable := makeExecutable
+		makeExecutable = func(string) error { return errors.New("forced executable permission failure") }
+		defer func() { makeExecutable = originalMakeExecutable }()
+	}
+
+	parent := exec.Command(currentTestBinary, "-test.run=TestShortLivedParent")
+	if err = parent.Run(); err != nil {
+		t.Fatal(err)
+	}
+	config := helperConfig{
+		ParentPID: parent.ProcessState.Pid(), Target: target, Source: source,
+		Backup: filepath.Join(backupDir, filepath.Base(target)), Database: database,
+		BackupDirectory: backupDir, WorkingDir: temp, HealthURL: "http://127.0.0.1:1/healthz",
+		ExpectedVersion: "9.9.9", OriginalArgs: []string{"-test.run=TestRollbackTargetProcess"},
+		LogPath: filepath.Join(backupDir, "update.log"),
+	}
+	if err = applyUpdate(config); err == nil {
+		t.Fatal("expected invalid new executable to fail")
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, statErr := os.Stat(marker); statErr == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("old version was not restarted after rollback: %v", err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	assertFileContent(t, database, "database-before-update")
+}
+
+func TestRollbackTargetProcess(t *testing.T) {
+	if os.Getenv("PETYC_ROLLBACK_TARGET") != "1" {
+		return
+	}
+	if err := os.WriteFile(os.Getenv("PETYC_ROLLBACK_MARKER"), []byte("restarted"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestUpdateTargetProcess(t *testing.T) {
 	if os.Getenv("PETYC_UPDATE_TARGET") != "1" {

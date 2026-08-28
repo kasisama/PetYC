@@ -40,6 +40,33 @@ func (s *EvolutionService) PreviewTo(ctx context.Context, accountID, stage, targ
 	}
 	return s.previewForTx(s.DB.WithContext(ctx), *pet, stage, target)
 }
+
+func (s *EvolutionService) ListOptions(ctx context.Context, accountID, stage string) ([]EvolutionPreview, error) {
+	if s == nil || s.DB == nil {
+		return nil, ErrDatabaseUnavailable
+	}
+	pet, err := ActivePet(ctx, s.DB, accountID)
+	if err != nil {
+		return nil, err
+	}
+	tx := s.DB.WithContext(ctx)
+	matches, err := s.matchingForms(tx, *pet, stage)
+	if err != nil {
+		return nil, err
+	}
+	if len(matches) == 0 {
+		return nil, ErrEvolutionUnavailable
+	}
+	options := make([]EvolutionPreview, 0, len(matches))
+	for _, match := range matches {
+		preview, previewErr := s.buildPreview(tx, *pet, stage, match.Rule, match.Form)
+		if previewErr != nil {
+			return nil, previewErr
+		}
+		options = append(options, *preview)
+	}
+	return options, nil
+}
 func (s *EvolutionService) Evolve(ctx context.Context, accountID string) (*EvolutionPreview, error) {
 	return s.changeForm(ctx, accountID, "进化", "")
 }
@@ -85,13 +112,21 @@ func (s *EvolutionService) changeForm(ctx context.Context, accountID, stage, tar
 		if err = tx.Save(pet).Error; err != nil {
 			return err
 		}
+		if err = RefreshPetSkillsTx(tx, pet); err != nil {
+			return err
+		}
 		completed = preview
 		return nil
 	})
 	return completed, err
 }
 
-func (s *EvolutionService) previewForTx(tx *gorm.DB, pet models.PetProfile, stage, target string) (*EvolutionPreview, error) {
+type evolutionMatch struct {
+	Rule models.PetEvolutionRuleConfig
+	Form models.PetSpeciesConfig
+}
+
+func (s *EvolutionService) matchingForms(tx *gorm.DB, pet models.PetProfile, stage string) ([]evolutionMatch, error) {
 	current := strings.TrimSpace(pet.CurrentForm)
 	if current == "" {
 		current = strings.TrimSpace(pet.PetType)
@@ -100,12 +135,7 @@ func (s *EvolutionService) previewForTx(tx *gorm.DB, pet models.PetProfile, stag
 	if err := tx.Where("from_form_key = ? AND enabled = ?", current, true).Order("sort_order asc, key asc").Find(&rules).Error; err != nil {
 		return nil, err
 	}
-	if len(rules) == 0 {
-		return nil, ErrEvolutionUnavailable
-	}
-	target = strings.TrimSpace(target)
-	var rule *models.PetEvolutionRuleConfig
-	var form models.PetSpeciesConfig
+	matches := make([]evolutionMatch, 0, len(rules))
 	for i := range rules {
 		candidate := models.PetSpeciesConfig{}
 		if err := tx.First(&candidate, "key = ?", rules[i].ToFormKey).Error; err != nil {
@@ -114,13 +144,45 @@ func (s *EvolutionService) previewForTx(tx *gorm.DB, pet models.PetProfile, stag
 		if (stage == "觉醒") != (candidate.Stage == "awakened") {
 			continue
 		}
-		if target == "" || target == rules[i].Key || target == candidate.Key || target == rules[i].BranchLabel || target == candidate.Name {
-			rule, form = &rules[i], candidate
-			break
+		matches = append(matches, evolutionMatch{Rule: rules[i], Form: candidate})
+	}
+	return matches, nil
+}
+
+func (s *EvolutionService) previewForTx(tx *gorm.DB, pet models.PetProfile, stage, target string) (*EvolutionPreview, error) {
+	matches, err := s.matchingForms(tx, pet, stage)
+	if err != nil {
+		return nil, err
+	}
+	if len(matches) == 0 {
+		return nil, ErrEvolutionUnavailable
+	}
+	target = strings.TrimSpace(target)
+	var selected *evolutionMatch
+	if target == "" {
+		if stage == "觉醒" && len(matches) > 1 {
+			return nil, ErrEvolutionBranchRequired
+		}
+		selected = &matches[0]
+	} else {
+		for i := range matches {
+			rule, form := matches[i].Rule, matches[i].Form
+			if target == rule.Key || target == form.Key || target == rule.BranchLabel || target == form.Name {
+				selected = &matches[i]
+				break
+			}
 		}
 	}
-	if rule == nil {
+	if selected == nil {
 		return nil, ErrEvolutionUnavailable
+	}
+	return s.buildPreview(tx, pet, stage, selected.Rule, selected.Form)
+}
+
+func (s *EvolutionService) buildPreview(tx *gorm.DB, pet models.PetProfile, stage string, rule models.PetEvolutionRuleConfig, form models.PetSpeciesConfig) (*EvolutionPreview, error) {
+	current := strings.TrimSpace(pet.CurrentForm)
+	if current == "" {
+		current = strings.TrimSpace(pet.PetType)
 	}
 	preview := &EvolutionPreview{Stage: stage, RuleKey: rule.Key, BranchLabel: rule.BranchLabel, PetName: pet.Name, CurrentForm: current, TargetFormKey: form.Key, TargetForm: form.Name, TargetImage: form.Image, Ready: true}
 	preview.Requirements = []EvolutionRequirement{{Label: "成长", Current: pet.Growth, Needed: rule.RequiredGrowth, Met: pet.Growth >= rule.RequiredGrowth}, {Label: "好感", Current: pet.Affection, Needed: rule.RequiredAffection, Met: pet.Affection >= rule.RequiredAffection}}

@@ -86,12 +86,27 @@ func (service *Service) addAdventureXPTx(tx *gorm.DB, accountID string, amount i
 		return progress, nil
 	}
 	progress.XP += amount
+	startedLevel := progress.Level
 	for next := adventureXPForNextLevelTx(tx, progress.Level); next > 0 && progress.XP >= next; next = adventureXPForNextLevelTx(tx, progress.Level) {
 		progress.XP -= next
 		progress.Level++
 	}
 	progress.UpdatedAt = service.Now()
-	return progress, tx.Save(&progress).Error
+	if err := tx.Save(&progress).Error; err != nil {
+		return progress, err
+	}
+	if progress.Level > startedLevel {
+		var pets []models.PetProfile
+		if err := tx.Where("account_id = ?", accountID).Find(&pets).Error; err != nil {
+			return progress, err
+		}
+		for i := range pets {
+			if err := gameplay.RefreshPetSkillsTx(tx, &pets[i]); err != nil {
+				return progress, err
+			}
+		}
+	}
+	return progress, nil
 }
 
 func (service *Service) ListAdventureMaps(ctx context.Context, accountID string) ([]AdventureMapView, error) {
@@ -136,7 +151,7 @@ func (service *Service) zoneAccessibleTx(tx *gorm.DB, accountID, zoneKey string)
 			return false, nil, lookup.Error
 		}
 		if lookup.RowsAffected == 0 {
-			missing = append(missing, prerequisite.PrerequisiteZoneKey)
+			missing = append(missing, zoneDisplayNameTx(tx, prerequisite.PrerequisiteZoneKey))
 		}
 	}
 	return len(missing) == 0, missing, nil
@@ -378,6 +393,7 @@ func (service *Service) recomputeZoneProgressTx(tx *gorm.DB, accountID string, z
 
 func (service *Service) CombatAction(ctx context.Context, accountID, actionKey, action string) (*AdventureCombatResult, error) {
 	var result AdventureCombatResult
+	expired := false
 	err := gameplay.WithTransactionRetry(ctx, service.DB, func(tx *gorm.DB) error {
 		var combat models.AdventureCombatSession
 		if err := tx.Where("account_id = ? AND status = ?", accountID, "active").Order("started_at desc").First(&combat).Error; err != nil {
@@ -398,10 +414,14 @@ func (service *Service) CombatAction(ctx context.Context, accountID, actionKey, 
 			if err := service.finishCombatTx(tx, &combat, "expired"); err != nil {
 				return err
 			}
-			return ErrCombatExpired
+			expired = true
+			return nil
 		}
 		petRow, err := gameplay.PetByIDTx(tx, accountID, combat.PetID)
 		if err != nil {
+			return err
+		}
+		if err = gameplay.RefreshPetSkillsTx(tx, petRow); err != nil {
 			return err
 		}
 		pet := *petRow
@@ -561,7 +581,13 @@ func (service *Service) CombatAction(ctx context.Context, accountID, actionKey, 
 		result.Session, result.Turn = combat, turn
 		return nil
 	})
-	return &result, err
+	if err != nil {
+		return nil, err
+	}
+	if expired {
+		return nil, ErrCombatExpired
+	}
+	return &result, nil
 }
 
 func (service *Service) chooseMonsterActionTx(tx *gorm.DB, monster models.AdventureMonsterConfig) (string, int, int, int, error) {
@@ -684,6 +710,9 @@ func (service *Service) finishCombatTx(tx *gorm.DB, combat *models.AdventureComb
 		pet.Status = "空闲"
 	}
 	if err := tx.Save(&pet).Error; err != nil {
+		return err
+	}
+	if err := tx.Save(combat).Error; err != nil {
 		return err
 	}
 	if combat.ExplorationID != "" {

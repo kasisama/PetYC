@@ -107,7 +107,7 @@ func (service *Service) StartAdventureBossChallenge(ctx context.Context, account
 	var combat models.AdventureCombatSession
 	err := gameplay.WithTransactionRetry(ctx, service.DB, func(tx *gorm.DB) error {
 		var config models.AdventureBossConfig
-		if err := tx.First(&config, "key = ? AND enabled = ?", bossKey, true).Error; err != nil {
+		if err := tx.Where("enabled = ? AND (key = ? OR name = ?)", true, bossKey, bossKey).First(&config).Error; err != nil {
 			return ErrBossUnavailable
 		}
 		instance, err := service.adventureBossInstanceTx(tx, config, communityID, service.Now())

@@ -38,11 +38,11 @@
     },
     {
       "Key": "Core.RenameCost",
-      "Value": "1000"
+      "Value": "120"
     },
     {
       "Key": "Core.TreatCost",
-      "Value": "500"
+      "Value": "80"
     },
     {
       "Key": "Core.TxFee",
@@ -833,6 +833,15 @@
       "sort_order": 30
     },
     {
+      "func_name": "today_todo",
+      "command": "今日待办",
+      "display_name": "今日待办",
+      "category": "基础",
+      "description": "根据当前状态推荐今天优先进行的事情",
+      "enabled": true,
+      "sort_order": 31
+    },
+    {
       "func_name": "inventory",
       "command": "我的背包",
       "display_name": "我的背包",
@@ -1071,7 +1080,7 @@
       "command": "抛竿",
       "display_name": "抛竿",
       "category": "扩展",
-      "description": "消耗金币开始一次垂钓",
+      "description": "消耗星砂开始一次垂钓",
       "enabled": true,
       "sort_order": 231
     },
@@ -1107,7 +1116,7 @@
       "command": "宠物交易",
       "display_name": "安全交易",
       "category": "扩展",
-      "description": "发布物品与金币的托管交易",
+      "description": "发布物品与星砂的托管交易",
       "enabled": true,
       "sort_order": 260
     },
@@ -3646,7 +3655,7 @@
       "Effect": "",
       "Time": 0,
       "Image": "",
-      "Description": "遗迹抽签券，自然遗迹调查队的标准物资。",
+      "Description": "探索石环牧径及之后的区域，有机会获得的遗迹抽签券。",
       "SellPrice": 2
     },
     {
@@ -4827,7 +4836,7 @@
       "pity_threshold": 10,
       "pity_reward_key": "star_core",
       "duration_second": 0,
-      "rules": "不售卖抽签券，第10次保底星辉晶核。"
+      "rules": "消耗遗迹抽签券抽取一次，每日3次，第10次保底星辉晶核。"
     }
   ],
   "chance_rewards": [

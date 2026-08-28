@@ -134,6 +134,7 @@ func migrationModels() []interface{} {
 		&models.AdventureLevelConfig{},
 		&models.ItemConfig{},
 		&models.ShopItemConfig{},
+		&models.ShopPurchaseLog{},
 		&models.CheckinRewardConfig{},
 		&models.WorkSettingConfig{},
 		&models.MenuConfig{},

@@ -218,6 +218,8 @@ export interface ShopItemConfigRow {
   Stock: number
   RestockTarget: number
   Price: number
+  DailyLimit: number
+  WeeklyLimit: number
   Description: string
 }
 
@@ -477,6 +479,8 @@ export function normalizeShopItem(raw: unknown): ShopItemConfigRow {
     Stock: stock,
     RestockTarget: asNumber(pick(o, 'RestockTarget', 'restock_target'), stock),
     Price: asNumber(pick(o, 'Price', 'price')),
+    DailyLimit: asNumber(pick(o, 'DailyLimit', 'daily_limit')),
+    WeeklyLimit: asNumber(pick(o, 'WeeklyLimit', 'weekly_limit')),
     Description: asString(pick(o, 'Description', 'description')),
   }
 }
@@ -895,6 +899,8 @@ export function emptyShopItem(shopType = 'shop_normal'): ShopItemConfigRow {
     Stock: -1,
     RestockTarget: 0,
     Price: 0,
+    DailyLimit: 0,
+    WeeklyLimit: 0,
     Description: '',
   }
 }

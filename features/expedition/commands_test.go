@@ -68,10 +68,10 @@ func TestMenuUsesConfiguredSceneReplyAndImage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if message.Text != "欢迎来到图文菜单" || message.Image != "https://cdn.example.com/menu.webp" {
+	if !strings.Contains(message.Text, "欢迎来到图文菜单") || !strings.Contains(message.Text, "今日待办") || message.Image != "https://cdn.example.com/menu.webp" {
 		t.Fatalf("菜单场景未返回配置图文: %#v", message)
 	}
-	if message.Markdown == nil || message.Markdown.Content != "# 欢迎来到图文菜单" {
+	if message.Markdown == nil || !strings.Contains(message.Markdown.Content, "# 欢迎来到图文菜单") || !strings.Contains(message.Markdown.Content, "今日待办") {
 		t.Fatalf("菜单场景未返回独立 Markdown: %#v", message.Markdown)
 	}
 }
@@ -101,7 +101,7 @@ func TestMenuEmptyOrInvalidImageStillSendsText(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if message.Text != "纯文字菜单" || message.Image != "" {
+			if !strings.Contains(message.Text, "纯文字菜单") || !strings.Contains(message.Text, "今日待办") || message.Image != "" {
 				t.Fatalf("无效配图应降级为纯文字: %#v", message)
 			}
 			if message.Markdown != nil {
@@ -235,6 +235,9 @@ func TestFamiliarPetCommandsRemainPrimaryAndDiscoverable(t *testing.T) {
 
 func TestFamiliarShopJourneyUsesUnifiedPetWalletAndInventory(t *testing.T) {
 	service, db, _ := newTestService(t)
+	if err := db.Save(&models.SystemConfig{Key: "Core.InitialCoin", Value: "100"}).Error; err != nil {
+		t.Fatal(err)
+	}
 	upsertTestSpecies(t, db, models.PetSpeciesConfig{
 		Name: "光芽兽", Hunger: 100, HungerMax: 100, FavoriteFood: "小饼干",
 	})
@@ -298,6 +301,9 @@ func TestFamiliarShopJourneyUsesUnifiedPetWalletAndInventory(t *testing.T) {
 	message, handled, err = router.Route(context.Background(), event)
 	if err != nil || !handled || !strings.Contains(message.Text, "出售成功") || !strings.Contains(message.Text, "余额：84") {
 		t.Fatalf("sale failed: handled=%v text=%q err=%v", handled, message.Text, err)
+	}
+	if err = gameplay.NewWalletService(db).Credit(context.Background(), account.AccountID, gameplay.DefaultCurrencyKey, 36); err != nil {
+		t.Fatal(err)
 	}
 	event.Text = "改名 星星"
 	message, handled, err = router.Route(context.Background(), event)
@@ -710,9 +716,203 @@ func TestRoleCommandShowsDeterministicThreeSkillLoadout(t *testing.T) {
 	_, _, _ = router.Route(context.Background(), event)
 	event.Text = "定位 守护者"
 	message, handled, err := router.Route(context.Background(), event)
-	if err != nil || !handled || !strings.Contains(message.Text, "护盾、警戒、稳固") {
+	if err != nil || !handled {
 		t.Fatalf("unexpected role response: handled=%v err=%v text=%q", handled, err, message.Text)
 	}
+	if !strings.Contains(message.Text, "成长定位已更新") || !strings.Contains(message.Text, "守护者") {
+		t.Fatalf("role response should confirm the growth badge: %q", message.Text)
+	}
+	if strings.Contains(message.Text, "护盾") || strings.Contains(message.Text, "寻路") {
+		t.Fatalf("role must not copy growth-flavor skill names into combat skills: %q", message.Text)
+	}
+}
+
+func TestSkillsCommandListsUnlockedAdventureSkillNames(t *testing.T) {
+	service, db, _ := newTestService(t)
+	if err := db.Create(&models.AdventureSkillConfig{Key: "pet_skill_01", Name: "芽光连击", Enabled: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.PetSkillUnlockConfig{FormKey: "光芽兽", SkillKey: "pet_skill_01", UnlockLevel: 1, SortOrder: 10}).Error; err != nil {
+		t.Fatal(err)
+	}
+	router := core.NewCommandRouter()
+	if err := RegisterCommands(router.Register, func() *Service { return service }); err != nil {
+		t.Fatal(err)
+	}
+	event := oneBotEvent("100", "42", "领养 光芽兽")
+	_, _, _ = router.Route(context.Background(), event)
+	event.Text = "技能"
+	message, handled, err := router.Route(context.Background(), event)
+	if err != nil || !handled || !strings.Contains(message.Text, "战斗技能") || !strings.Contains(message.Text, "芽光连击") {
+		t.Fatalf("skills command should list configured combat names: handled=%v err=%v text=%q", handled, err, message.Text)
+	}
+	if strings.Contains(message.Text, "寻路") || strings.Contains(message.Text, "pet_skill_01") {
+		t.Fatalf("skills command leaked internal keys or growth flavor: %q", message.Text)
+	}
+}
+
+func TestStatusShowsSpeciesChineseName(t *testing.T) {
+	service, db, _ := newTestService(t)
+	if err := db.Create(&models.PetSpeciesConfig{Key: "galeear_base", Name: "风耳狐", FamilyKey: "galeear", Stage: "base", Adoptable: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+	event := oneBotEvent("100", "form-name", "领养 光芽兽")
+	if _, err := handleAdopt(context.Background(), event, service); err != nil {
+		t.Fatal(err)
+	}
+	accountID := accountIDForTest(t, service, event)
+	if err := db.Model(&models.PetProfile{}).Where("account_id = ?", accountID).Updates(map[string]any{"current_form": "galeear_base", "pet_type": "galeear_base"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	event.Text = "我的宠物"
+	message, err := handleStatus(context.Background(), event, service)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(message.Text, "风耳狐") {
+		t.Fatalf("状态页应显示物种中文名: %q", message.Text)
+	}
+	if strings.Contains(message.Text, "galeear_base") {
+		t.Fatalf("状态页不应展示形态字段名: %q", message.Text)
+	}
+}
+
+func TestPetListHidesFormKey(t *testing.T) {
+	service, db, _ := newTestService(t)
+	if err := db.Save(&models.SystemConfig{Key: gameplay.MaxPetSlotsConfigKey, Value: "2"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.PetSpeciesConfig{Key: "galeear_base", Name: "风耳狐", FamilyKey: "galeear", Stage: "base", Adoptable: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+	event := oneBotEvent("100", "list-form", "领养 光芽兽")
+	if _, err := handleAdopt(context.Background(), event, service); err != nil {
+		t.Fatal(err)
+	}
+	accountID := accountIDForTest(t, service, event)
+	if err := db.Model(&models.PetProfile{}).Where("account_id = ?", accountID).Updates(map[string]any{"current_form": "galeear_base"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	event.Text = "宠物列表"
+	message, err := handlePetList(context.Background(), event, service)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(message.Text, "galeear_base") {
+		t.Fatalf("宠物列表不应展示形态字段名: %q", message.Text)
+	}
+	if !strings.Contains(message.Text, "风耳狐") {
+		t.Fatalf("宠物列表应显示中文形态: %q", message.Text)
+	}
+}
+
+func TestCodexHidesEntryKey(t *testing.T) {
+	service, db, _ := newTestService(t)
+	event := oneBotEvent("100", "codex-name", "领养 光芽兽")
+	if _, err := handleAdopt(context.Background(), event, service); err != nil {
+		t.Fatal(err)
+	}
+	accountID := accountIDForTest(t, service, event)
+	if err := db.Create(&models.AdventureZoneConfig{Key: "sunlit_steppe_z1", Name: "萤草坡", MapKey: "sunlit", Enabled: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.CodexCatalogConfig{Category: "区域生态", EntryKey: "sunlit_steppe_z1", Region: "栖光原野", Description: "萤草坡调查记录", SourceType: "zone", SourceKey: "sunlit_steppe_z1", Enabled: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.CodexEntry{AccountID: accountID, Category: "区域生态", EntryKey: "sunlit_steppe_z1", Progress: 40}).Error; err != nil {
+		t.Fatal(err)
+	}
+	event.Text = "图鉴"
+	message, err := handleCodex(context.Background(), event, service)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(message.Text, "sunlit_steppe_z1") {
+		t.Fatalf("图鉴不应展示条目字段名: %q", message.Text)
+	}
+	if !strings.Contains(message.Text, "萤草坡") {
+		t.Fatalf("图鉴应显示区域中文名: %q", message.Text)
+	}
+}
+
+func TestSeasonTitleOmitsEventKey(t *testing.T) {
+	service, _, _ := newTestService(t)
+	event := oneBotEvent("100", "season-title", "赛季")
+	message, err := handleSeason(context.Background(), event, service)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(message.Text, "test-season") {
+		t.Fatalf("赛季标题不应展示活动字段名: %q", message.Text)
+	}
+	if !strings.Contains(message.Text, "测试活动") {
+		t.Fatalf("赛季标题应显示活动中文名: %q", message.Text)
+	}
+}
+
+func TestAwakenCommandRequiresExplicitBranchWhenMultipleRoutesExist(t *testing.T) {
+	service, db, _ := newTestService(t)
+	if err := db.Create(&[]models.PetSpeciesConfig{
+		{Key: "lumisprout_evolved", Name: "曜叶兽", FamilyKey: "lumisprout", Stage: "evolved"},
+		{Key: "lumisprout_awaken_a", Name: "曦冠灵", FamilyKey: "lumisprout", Stage: "awakened", PreviousFormKey: "lumisprout_evolved", Image: "宠物/曦冠灵.png"},
+		{Key: "lumisprout_awaken_b", Name: "月冕灵", FamilyKey: "lumisprout", Stage: "awakened", PreviousFormKey: "lumisprout_evolved", Image: "宠物/月冕灵.png"},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&[]models.PetEvolutionRuleConfig{
+		{Key: "lumisprout_awaken_a_rule", FromFormKey: "lumisprout_evolved", ToFormKey: "lumisprout_awaken_a", RequiredGrowth: 1, RequiredAffection: 1, BranchLabel: "曦光路线", Enabled: true, SortOrder: 20},
+		{Key: "lumisprout_awaken_b_rule", FromFormKey: "lumisprout_evolved", ToFormKey: "lumisprout_awaken_b", RequiredGrowth: 1, RequiredAffection: 1, BranchLabel: "月影路线", Enabled: true, SortOrder: 30},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	router := core.NewCommandRouter()
+	if err := RegisterCommands(router.Register, func() *Service { return service }); err != nil {
+		t.Fatal(err)
+	}
+	event := oneBotEvent("100", "awaken-choice", "领养 光芽兽")
+	_, _, _ = router.Route(context.Background(), event)
+	if err := db.Model(&models.PetProfile{}).Where("account_id = ?", accountIDForTest(t, service, event)).Updates(map[string]any{"current_form": "lumisprout_evolved", "growth": 20, "affection": 10}).Error; err != nil {
+		t.Fatal(err)
+	}
+	event.Text = "觉醒"
+	message, handled, err := router.Route(context.Background(), event)
+	if err != nil || !handled || !strings.Contains(message.Text, "曦光路线") || !strings.Contains(message.Text, "月影路线") {
+		t.Fatalf("awaken without a branch should list both routes: handled=%v err=%v text=%q", handled, err, message.Text)
+	}
+	if strings.Contains(message.Text, "确认觉醒") && !strings.Contains(message.Text, "发送“觉醒") {
+		t.Fatalf("awaken without a branch must not confirm a locked route: %q", message.Text)
+	}
+	event.Text = "确认觉醒"
+	message, handled, err = router.Route(context.Background(), event)
+	if err != nil || !handled || !strings.Contains(message.Text, "选择") {
+		t.Fatalf("confirm awaken without a branch must ask the player to choose: handled=%v err=%v text=%q", handled, err, message.Text)
+	}
+	event.Text = "觉醒 月影路线"
+	message, handled, err = router.Route(context.Background(), event)
+	if err != nil || !handled || !strings.Contains(message.Text, "月冕灵") || !strings.Contains(message.Text, "确认觉醒 月影路线") {
+		t.Fatalf("selected branch preview mismatch: handled=%v err=%v text=%q", handled, err, message.Text)
+	}
+	event.Text = "确认觉醒 月影路线"
+	message, handled, err = router.Route(context.Background(), event)
+	if err != nil || !handled || !strings.Contains(message.Text, "月冕灵") {
+		t.Fatalf("confirming the chosen branch failed: handled=%v err=%v text=%q", handled, err, message.Text)
+	}
+	var pet models.PetProfile
+	if err = db.First(&pet, "account_id = ?", accountIDForTest(t, service, event)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if pet.CurrentForm != "lumisprout_awaken_b" {
+		t.Fatalf("player-chosen awaken branch was not persisted: %#v", pet)
+	}
+}
+
+func accountIDForTest(t *testing.T, service *Service, event core.InboundEvent) string {
+	t.Helper()
+	account, err := service.ResolveAccount(context.Background(), event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return account.ID
 }
 
 func TestInvalidTacticalInputReturnsActionableText(t *testing.T) {
@@ -736,7 +936,7 @@ func TestPlayerMenuSnapshotAndBannedTerms(t *testing.T) {
 		t.Fatal(err)
 	}
 	expected := "🐾【宠物菜单】\n\n" +
-		"🌟 开始陪伴\n宠物菜单 · 领养宠物 · 我的宠物 · 宠物列表 · 切换宠物 · 签到 · 我的背包 · 改名 · 治疗 · 找回 · 放生 · 帮助\n\n" +
+		"🌟 开始陪伴\n宠物菜单 · 领养宠物 · 我的宠物 · 宠物列表 · 切换宠物 · 签到 · 今日待办 · 我的背包 · 改名 · 治疗 · 找回 · 放生 · 帮助\n\n" +
 		"🛍️ 背包与商店\n商店 · 好感商店 · 查看商品 · 查看物品 · 使用\n\n" +
 		"🍖 日常陪伴\n喂养 · 摸头 · 散步 · 送礼 · 洗澡\n\n" +
 		"📚 成长计划\n学习 · 锻炼 · 健身 · 打工 · 进化 · 觉醒 · 定位 · 编队 · 技能 · 图鉴\n\n" +
@@ -744,7 +944,7 @@ func TestPlayerMenuSnapshotAndBannedTerms(t *testing.T) {
 		"🎲 休闲玩法\n钓鱼 · 抛竿 · 收竿 · 抽奖 · 猜拳 · 宠物交易 · 交易列表 · 接受交易 · 交易信息 · 取消交易\n\n" +
 		"🏕️ 社群协作\n营地 · 共建 · 小队 · 活动 · 赛季 · 设施 · 求助 · 求助列表 · 支援\n\n" +
 		"🔐 账号与隐私\n生成绑定码 · 绑定 · 我的数据\n\n" +
-		"💡 直接发送上面的命令即可使用\n例如：签到 / 我的宠物 / 远征"
+		"💡 直接发送上面的命令即可使用\n例如：签到 / 我的宠物 / 远征\n不知道做什么？发送“今日待办”。"
 	if message.Text != expected {
 		t.Fatalf("menu snapshot changed:\n%s", message.Text)
 	}
@@ -782,13 +982,58 @@ func TestBindCommandAssignsStableMessageKey(t *testing.T) {
 	}
 }
 
+func TestLotteryRulesUsePlayerFacingCopy(t *testing.T) {
+	service, db, _ := newTestService(t)
+	if err := db.Create(&models.ChanceGameConfig{
+		GameKey: "lottery", Name: "遗迹抽签", Enabled: true, CostItem: "遗迹抽签券", CostQuantity: 1,
+		DailyLimit: 3, PityThreshold: 10, PityRewardKey: "star_core", Rules: "不售卖抽签券，第10次保底星辉晶核。",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&[]models.ChanceRewardConfig{
+		{GameKey: "lottery", RewardKey: "lottery_meadow_fiber", Name: "原野纤维", Weight: 60, ItemName: "原野纤维", Quantity: 1, Enabled: true, SortOrder: 10},
+		{GameKey: "lottery", RewardKey: "lottery_star_core", Name: "星辉晶核", Weight: 2, ItemName: "星辉晶核", Quantity: 1, Rare: true, Enabled: true, SortOrder: 40},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	message, err := handleLottery(context.Background(), oneBotEvent("100", "lottery-copy", "抽奖"), service)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(message.Text, "不售卖") || strings.Contains(message.Text, "抽奖 1") {
+		t.Fatalf("抽奖规则泄漏了内部备注或生硬指令: %q", message.Text)
+	}
+	if !strings.Contains(message.Text, "遗迹抽签券") || !strings.Contains(message.Text, "奖池") || !strings.Contains(message.Text, "原野纤维") || !strings.Contains(message.Text, "星辉晶核") {
+		t.Fatalf("抽奖规则应说明消耗、奖池和保底: %q", message.Text)
+	}
+	if !strings.Contains(message.Text, "抽奖一次") {
+		t.Fatalf("无 Markdown 的机器人也必须能靠纯文本指令抽奖: %q", message.Text)
+	}
+	assertPlainTextCompatible(t, message)
+	if message.Keyboard == nil || len(message.Keyboard.Rows) == 0 || message.Keyboard.Rows[0][0].Command != "抽奖一次" {
+		t.Fatalf("抽奖规则应提供抽取按钮: %#v", message.Keyboard)
+	}
+	plain := message.Render(false, false)
+	if plain.Markdown != nil || plain.Keyboard != nil || !strings.Contains(plain.Text, "抽奖一次") {
+		t.Fatalf("关闭 Markdown/键盘后应只保留纯文本指令: %#v", plain)
+	}
+}
+
+func assertPlainTextCompatible(t *testing.T, message core.OutboundMessage) {
+	t.Helper()
+	text := message.Text
+	if strings.Contains(text, "**") || strings.Contains(text, "```") || strings.Contains(text, "`") || strings.Contains(text, "\n# ") || strings.HasPrefix(strings.TrimSpace(text), "#") {
+		t.Fatalf("纯文本通道不应包含 Markdown 语法: %q", text)
+	}
+}
+
 func TestRestoredRiskyCommandsExposeRulesAndSafeFlows(t *testing.T) {
 	service, _, _ := newTestService(t)
 	router := core.NewCommandRouter()
 	if err := RegisterCommands(router.Register, func() *Service { return service }); err != nil {
 		t.Fatal(err)
 	}
-	expectations := map[string]string{"钓鱼": "公开概率", "抽奖": "公开概率", "宠物交易": "托管"}
+	expectations := map[string]string{"钓鱼": "奖池", "抽奖": "奖池", "宠物交易": "托管"}
 	for command, expected := range expectations {
 		message, handled, err := router.Route(context.Background(), oneBotEvent("100", "42", command))
 		if err != nil || !handled || !strings.Contains(message.Text, expected) {

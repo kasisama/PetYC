@@ -163,7 +163,20 @@ type ShopItemConfig struct {
 	Stock         int64  `gorm:"comment:库存(-1为无限)"`
 	RestockTarget int64  `gorm:"not null;default:0;comment:一键补货目标库存"`
 	Price         int64  `gorm:"comment:价格"`
+	DailyLimit    int64  `gorm:"not null;default:0;comment:每日限购(0为不限)"`
+	WeeklyLimit   int64  `gorm:"not null;default:0;comment:每周限购(0为不限)"`
 	Description   string `gorm:"type:text;comment:商品描述"`
+}
+
+// ShopPurchaseLog records care-shop buys so daily and weekly limits can be
+// enforced per player without depending on shared stock.
+type ShopPurchaseLog struct {
+	ID         uint      `gorm:"primaryKey"`
+	AccountID  string    `gorm:"size:36;index;not null"`
+	ShopItemID uint      `gorm:"index;not null"`
+	ItemName   string    `gorm:"size:64;not null"`
+	Quantity   int64     `gorm:"not null"`
+	CreatedAt  time.Time `gorm:"index"`
 }
 
 // CheckinRewardConfig 签到奖励配置表

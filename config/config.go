@@ -512,8 +512,8 @@ func seedImageConfig(tx *gorm.DB) {
 
 func seedChanceGameConfig(tx *gorm.DB) {
 	games := []models.ChanceGameConfig{
-		{GameKey: "lottery", Name: "幸运抽奖", Enabled: true, CostCurrency: 20, DailyLimit: 10, PityThreshold: 10, PityRewardKey: "light-stone", Rules: "每抽消耗20金币；每日10次；连续9次未获得珍稀奖励时，第10次必得光之石。"},
-		{GameKey: "fishing", Name: "水域垂钓", Enabled: true, CostCurrency: 5, DailyLimit: 20, PityThreshold: 5, PityRewardKey: "water-sample", DurationSecond: 60, Rules: "每次抛竿消耗5金币；每日20次；连续4次未获得珍稀收获时，第5次必得水域样本。"},
+		{GameKey: "lottery", Name: "幸运抽奖", Enabled: true, CostCurrency: 20, DailyLimit: 10, PityThreshold: 10, PityRewardKey: "light-stone", Rules: "每抽消耗20星砂；每日10次；连续9次未获得珍稀奖励时，第10次必得光之石。"},
+		{GameKey: "fishing", Name: "水域垂钓", Enabled: true, CostCurrency: 5, DailyLimit: 20, PityThreshold: 5, PityRewardKey: "water-sample", DurationSecond: 60, Rules: "每次抛竿消耗5星砂；每日20次；连续4次未获得珍稀收获时，第5次必得水域样本。"},
 	}
 	for index := range games {
 		tx.Where("game_key = ?", games[index].GameKey).FirstOrCreate(&games[index])
@@ -587,10 +587,10 @@ func LoadAllConfigsFromDB(db *gorm.DB) error {
 	Core = CoreConfig{
 		InitialPets:         SplitConfigList(readStr("Core.InitialPets", "光芽兽")),
 		CoinName:            readStr("Core.CoinName", "星砂"),
-		InitialCoin:         readInt64("Core.InitialCoin", 100),
-		RenameCost:          readInt64("Core.RenameCost", 1000),
+		InitialCoin:         readInt64("Core.InitialCoin", 240),
+		RenameCost:          readInt64("Core.RenameCost", 120),
 		RenameBlocklist:     SplitConfigList(readStr("Core.RenameBlocklist", "")),
-		TreatCost:           readInt64("Core.TreatCost", 500),
+		TreatCost:           readInt64("Core.TreatCost", 80),
 		DyingSaveTime:       readInt64("Core.DyingSaveTime", 2000),
 		DyingProtectTime:    readInt64("Core.DyingProtectTime", 60),
 		EscapeFindTime:      readInt64("Core.EscapeFindTime", 2000),

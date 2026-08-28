@@ -64,6 +64,7 @@ export interface PlayerDetail {
   active_pet_id?: string
   pet_image: string
   inventory: Array<Record<string, unknown>>
+  wallets?: Array<Record<string, unknown>>
   codex: Array<Record<string, unknown>>
   identities: Array<{ id: number; platform: string; scene_type: string; app_id: string; scope_id: string; subject_id: string; created_at: string }>
   expeditions: Array<Record<string, unknown>>
@@ -163,6 +164,7 @@ export function normalizePlayerDetail(raw: unknown): PlayerDetail {
     active_pet_id: typeof value.active_pet_id === 'string' ? value.active_pet_id : '',
     pet_image: typeof value.pet_image === 'string' ? value.pet_image : '',
     inventory: arrayOrEmpty<Record<string, unknown>>(value.inventory),
+    wallets: arrayOrEmpty<Record<string, unknown>>(value.wallets),
     codex: arrayOrEmpty<Record<string, unknown>>(value.codex),
     identities: arrayOrEmpty<PlayerDetail['identities'][number]>(value.identities),
     expeditions: arrayOrEmpty<Record<string, unknown>>(value.expeditions),
@@ -180,6 +182,9 @@ export function getOverview(range: '7d' | '30d') { return api.get<Overview>(`/ap
 export async function getPlayers(query: URLSearchParams) { return normalizePlayerPage(await api.get<unknown>(`/api/admin/players?${query}`)) }
 export async function getPlayer(accountId: string) { return normalizePlayerDetail(await api.get<unknown>(`/api/admin/players/${accountId}`)) }
 export function grantItem(accountId: string, body: { item_name: string; quantity: number; reason: string; idempotency_key: string }) { return api.post(`/api/admin/players/${accountId}/grants`, body) }
+export function grantCurrency(accountId: string, body: { currency_key: string; amount: number; direction: 'grant' | 'debit'; reason: string; idempotency_key: string }) {
+  return api.post(`/api/admin/players/${accountId}/currency`, body)
+}
 export function setActivePet(accountId: string, petId: string, reason: string) { return api.post(`/api/admin/players/${accountId}/active_pet`, { pet_id: petId, reason }) }
 export function resetSeason(eventKey: string, body: { reason: string; confirmation: string; season_key?: string }) {
   return api.post(`/api/admin/seasons/${encodeURIComponent(eventKey)}/reset`, body)

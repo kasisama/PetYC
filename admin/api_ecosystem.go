@@ -24,6 +24,7 @@ func RegisterEcosystemRoutes(group *gin.RouterGroup, db *gorm.DB) {
 	group.GET("/players", api.Players)
 	group.GET("/players/:account_id", api.PlayerDetail)
 	group.POST("/players/:account_id/grants", api.GrantItem)
+	group.POST("/players/:account_id/currency", api.AdjustCurrency)
 	group.POST("/players/:account_id/active_pet", api.SetActivePet)
 	group.PUT("/players/:account_id/notifications", api.SetPlayerNotifications)
 	group.DELETE("/players/:account_id/identities/:identity_id", api.DeleteIdentity)
@@ -372,6 +373,8 @@ func (api *EcosystemAPI) PlayerDetail(c *gin.Context) {
 	api.DB.Where("account_id = ?", accountID).Order("equipment_key").Find(&blueprints)
 	api.DB.Where("account_id = ? AND currency_key = ?", accountID, "journey_badge").Order("created_at desc").Limit(100).Find(&journeyLedger)
 	api.DB.Limit(1).Find(&journeyWallet, "account_id = ? AND currency_key = ?", accountID, "journey_badge")
+	wallets := make([]models.PlayerWallet, 0)
+	api.DB.Where("account_id = ?", accountID).Order("currency_key").Find(&wallets)
 	api.DB.Where("account_id = ?", accountID).Order("category, entry_key").Find(&codex)
 	api.DB.Where("account_id = ?", accountID).Order("started_at DESC").Limit(100).Find(&expeditions)
 	api.DB.Where("account_id = ?", accountID).Order("joined_at DESC").Find(&memberships)
@@ -382,7 +385,7 @@ func (api *EcosystemAPI) PlayerDetail(c *gin.Context) {
 	}
 	preference := models.NotificationPreference{AccountID: accountID, Enabled: true}
 	api.DB.First(&preference, "account_id = ?", accountID)
-	Success(c, gin.H{"account": account, "pet": pet, "pets": pets, "active_pet_id": account.ActivePetID, "pet_image": petImage, "inventory": inventory, "adventure_inventory": inventory, "adventure_equipment": equipment, "adventure_blueprints": blueprints, "adventure_wallet": journeyWallet, "adventure_ledger": journeyLedger, "codex": codex, "identities": masked, "expeditions": expeditions, "communities": memberships, "notifications": preference})
+	Success(c, gin.H{"account": account, "pet": pet, "pets": pets, "active_pet_id": account.ActivePetID, "pet_image": petImage, "inventory": inventory, "wallets": wallets, "adventure_inventory": inventory, "adventure_equipment": equipment, "adventure_blueprints": blueprints, "adventure_wallet": journeyWallet, "adventure_ledger": journeyLedger, "codex": codex, "identities": masked, "expeditions": expeditions, "communities": memberships, "notifications": preference})
 }
 
 type communitySummary struct {

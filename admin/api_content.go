@@ -283,6 +283,7 @@ var gameSettingCatalog = []gameSettingMeta{
 	{Key: "Core.CoinName", Label: "货币名称", Group: "基础设置", Type: "text", Description: "聊天回复和商店中展示的货币称呼。"},
 	{Key: "Core.InitialCoin", Label: "初始货币", Group: "基础设置", Type: "number", Unit: "枚", Description: "新玩家建立存档时获得的基础货币。"},
 	{Key: "Core.RenameCost", Label: "宠物改名费用", Group: "基础设置", Type: "number", Unit: "枚", Description: "玩家修改宠物名称时扣除的货币。"},
+	{Key: "Core.TreatCost", Label: "治疗费用", Group: "基础设置", Type: "number", Unit: "枚", Description: "治疗宠物时扣除的货币数量。"},
 	{Key: "Core.ImageHost", Label: "图片服务地址", Group: "高级对接", Type: "text", Description: "OneBot 访问图片时使用的公网地址，留空使用本地文件。"},
 	{Key: "Core.CheckinLike", Label: "每日陪伴点赞", Group: "通知能力", Type: "boolean", Description: "每日陪伴完成后是否请求平台点赞能力。"},
 	{Key: "Interaction.WashGrowth", Label: "洗澡成长", Group: "陪伴互动", Type: "number", Unit: "点", Description: "完成洗澡互动获得的成长值。"},

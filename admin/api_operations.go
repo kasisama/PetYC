@@ -182,6 +182,127 @@ func (api *EcosystemAPI) GrantItem(c *gin.Context) {
 	})
 }
 
+type currencyAdjustRequest struct {
+	CurrencyKey    string `json:"currency_key"`
+	Amount         int64  `json:"amount"`
+	Direction      string `json:"direction"`
+	Reason         string `json:"reason"`
+	IdempotencyKey string `json:"idempotency_key"`
+}
+
+func (api *EcosystemAPI) AdjustCurrency(c *gin.Context) {
+	accountID := c.Param("account_id")
+	var request currencyAdjustRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		Error(c, 4000, "请求格式错误")
+		return
+	}
+	request.CurrencyKey = strings.TrimSpace(request.CurrencyKey)
+	request.Direction = strings.ToLower(strings.TrimSpace(request.Direction))
+	request.IdempotencyKey = strings.TrimSpace(request.IdempotencyKey)
+	if request.CurrencyKey == "" || request.Amount < 1 || request.Amount > 1000000 {
+		Error(c, 4000, "货币键不能为空，数量必须为 1 到 1000000")
+		return
+	}
+	if request.Direction != "grant" && request.Direction != "debit" {
+		Error(c, 4000, "direction 只能是 grant 或 debit")
+		return
+	}
+	if len(request.IdempotencyKey) < 8 || len(request.IdempotencyKey) > 128 {
+		Error(c, 4000, "幂等键长度必须为 8 到 128")
+		return
+	}
+	action := "grant_currency"
+	if request.Direction == "debit" {
+		action = "debit_currency"
+	}
+	var account models.PlayerAccount
+	if err := api.DB.First(&account, "id = ?", accountID).Error; err != nil {
+		Error(c, 4040, "玩家不存在")
+		return
+	}
+	if !currencyKeyAllowed(api.DB, request.CurrencyKey) {
+		Error(c, 4000, "未知或未启用的货币")
+		return
+	}
+	var existing models.AdminOperationKey
+	if err := api.DB.First(&existing, "key = ?", request.IdempotencyKey).Error; err == nil {
+		if existing.Action != action || existing.TargetID != accountID {
+			Error(c, 4090, "幂等键已被其他操作使用")
+			return
+		}
+		var wallet models.PlayerWallet
+		api.DB.Limit(1).Find(&wallet, "account_id = ? AND currency_key = ?", accountID, request.CurrencyKey)
+		Success(c, gin.H{"wallet": wallet, "replayed": true})
+		return
+	}
+	before := gin.H{"currency_key": request.CurrencyKey, "amount": request.Amount, "direction": request.Direction}
+	api.auditedMutation(c, action, "player", accountID, request.Reason, before, func(tx *gorm.DB) (interface{}, error) {
+		if err := tx.Create(&models.AdminOperationKey{Key: request.IdempotencyKey, Action: action, TargetID: accountID, CreatedAt: time.Now()}).Error; err != nil {
+			return nil, errors.New("幂等键冲突，请刷新结果")
+		}
+		if err := adjustWalletTx(tx, accountID, request.CurrencyKey, request.Amount, request.Direction == "debit", action, request.IdempotencyKey); err != nil {
+			return nil, err
+		}
+		var wallet models.PlayerWallet
+		if err := tx.First(&wallet, "account_id = ? AND currency_key = ?", accountID, request.CurrencyKey).Error; err != nil {
+			return nil, err
+		}
+		return gin.H{"wallet": wallet, "replayed": false}, nil
+	})
+}
+
+func currencyKeyAllowed(db *gorm.DB, currencyKey string) bool {
+	switch currencyKey {
+	case "primary_coin", "journey_badge", "season_token":
+		return true
+	}
+	if db == nil || !db.Migrator().HasTable(&models.CurrencyConfig{}) {
+		return false
+	}
+	var configured models.CurrencyConfig
+	result := db.Limit(1).Find(&configured, "key = ? AND enabled = ?", currencyKey, true)
+	return result.Error == nil && result.RowsAffected > 0
+}
+
+func adjustWalletTx(tx *gorm.DB, accountID, currencyKey string, amount int64, debit bool, reason, referenceKey string) error {
+	now := time.Now()
+	if debit {
+		result := tx.Model(&models.PlayerWallet{}).
+			Where("account_id = ? AND currency_key = ? AND balance >= ?", accountID, currencyKey, amount).
+			Updates(map[string]interface{}{"balance": gorm.Expr("balance - ?", amount), "updated_at": now})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return errors.New("余额不足，无法扣减")
+		}
+	} else {
+		wallet := models.PlayerWallet{AccountID: accountID, CurrencyKey: currencyKey, Balance: amount, UpdatedAt: now}
+		if err := tx.Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "account_id"}, {Name: "currency_key"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"balance":    gorm.Expr("balance + ?", amount),
+				"updated_at": now,
+			}),
+		}).Create(&wallet).Error; err != nil {
+			return err
+		}
+	}
+	var wallet models.PlayerWallet
+	if err := tx.First(&wallet, "account_id = ? AND currency_key = ?", accountID, currencyKey).Error; err != nil {
+		return err
+	}
+	delta := amount
+	if debit {
+		delta = -amount
+	}
+	return tx.Create(&models.WalletLedger{
+		ID: uuid.NewString(), AccountID: accountID, CurrencyKey: currencyKey, Delta: delta,
+		BalanceAfter: wallet.Balance, Reason: reason, ReferenceKey: referenceKey, CreatedAt: now,
+	}).Error
+}
+
 func (api *EcosystemAPI) SetActivePet(c *gin.Context) {
 	accountID := c.Param("account_id")
 	var request struct {

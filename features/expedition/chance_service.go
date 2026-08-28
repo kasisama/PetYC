@@ -23,8 +23,8 @@ var (
 )
 
 var defaultChanceGames = map[string]models.ChanceGameConfig{
-	"lottery": {GameKey: "lottery", Name: "幸运抽奖", Enabled: true, CostCurrency: 20, DailyLimit: 10, PityThreshold: 10, PityRewardKey: "light-stone", Rules: "每抽消耗20金币；每日10次；连续9次未获得珍稀奖励时，第10次必得光之石。"},
-	"fishing": {GameKey: "fishing", Name: "水域垂钓", Enabled: true, CostCurrency: 5, DailyLimit: 20, PityThreshold: 5, PityRewardKey: "water-sample", DurationSecond: 60, Rules: "每次抛竿消耗5金币；每日20次；连续4次未获得珍稀收获时，第5次必得水域样本。"},
+	"lottery": {GameKey: "lottery", Name: "幸运抽奖", Enabled: true, CostCurrency: 20, DailyLimit: 10, PityThreshold: 10, PityRewardKey: "light-stone", Rules: "每抽消耗20星砂；每日10次；连续9次未获得珍稀奖励时，第10次必得光之石。"},
+	"fishing": {GameKey: "fishing", Name: "水域垂钓", Enabled: true, CostCurrency: 5, DailyLimit: 20, PityThreshold: 5, PityRewardKey: "water-sample", DurationSecond: 60, Rules: "每次抛竿消耗5星砂；每日20次；连续4次未获得珍稀收获时，第5次必得水域样本。"},
 }
 
 var defaultChanceRewards = map[string][]models.ChanceRewardConfig{

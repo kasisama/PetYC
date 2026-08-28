@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { buildPortHandoffURL, grantItem, reconnectQQ, savePlatformConfig, syncQQDiscovery } from './ecosystem'
+import { buildPortHandoffURL, grantCurrency, grantItem, reconnectQQ, savePlatformConfig, syncQQDiscovery } from './ecosystem'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -10,6 +10,14 @@ describe('ecosystem operations', () => {
     await grantItem('account-1', { item_name: '调查记录', quantity: 10, reason: '异常补偿', idempotency_key: 'grant-123456' })
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/admin/players/account-1/grants')
+  })
+
+  it('sends a currency grant as one idempotent request', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ code: 0, msg: 'success', data: { replayed: false } }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    await grantCurrency('account-1', { currency_key: 'primary_coin', amount: 88, direction: 'grant', reason: '补偿漏发签到', idempotency_key: 'currency-123456' })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/admin/players/account-1/currency')
   })
 
   it('sends gateway reconnect once with an audit reason', async () => {

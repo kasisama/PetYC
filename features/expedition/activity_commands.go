@@ -20,6 +20,17 @@ func handleStartActivity(ctx context.Context, event core.InboundEvent, service *
 		return core.OutboundMessage{}, err
 	}
 	kind := startActivityKind(event.Text)
+	argument := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(event.Text), kind))
+	if argument == "" {
+		itemType := map[string]string{
+			gameplay.ActivityStudy:   "智慧",
+			gameplay.ActivityTrain:   "力量",
+			gameplay.ActivityFitness: "防御",
+		}[kind]
+		if itemType != "" {
+			return inventoryItemChoices(ctx, service.DB, account.ID, kind, itemType)
+		}
+	}
 	request, listMessage, err := activityStartRequest(service.DB, event.Text, kind)
 	if err != nil {
 		return activityBusinessError(err)

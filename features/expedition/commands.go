@@ -2,6 +2,7 @@ package expedition
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -33,11 +34,11 @@ func handleCompanion(ctx context.Context, event core.InboundEvent, service *Serv
 		var ok bool
 		itemName, quantity, ok = parseItemQuantity(argument, action)
 		if !ok {
-			example := "喂养 小饼干*1"
+			itemTypes := []string{"饱食"}
 			if action == gameplay.ActionGift {
-				example = "送礼 小铃铛*1"
+				itemTypes = []string{"好感"}
 			}
-			return text(fmt.Sprintf("请选择背包中的物品。\n例如：%s\n\n发送“我的背包”查看已有物品。", example)), nil
+			return inventoryItemChoices(ctx, service.DB, account.ID, action, itemTypes...)
 		}
 	}
 	companion := gameplay.NewCompanionService(service.DB)
@@ -77,6 +78,43 @@ func handleCompanion(ctx context.Context, event core.InboundEvent, service *Serv
 	message := text(strings.Join(lines, "\n"))
 	message.Image = result.Image
 	return message, nil
+}
+
+func inventoryItemChoices(ctx context.Context, db *gorm.DB, accountID, command string, itemTypes ...string) (core.OutboundMessage, error) {
+	items, err := gameplay.NewInventoryService(db).List(ctx, accountID, 200)
+	if err != nil {
+		return core.OutboundMessage{}, err
+	}
+	typeSet := make(map[string]bool, len(itemTypes))
+	for _, itemType := range itemTypes {
+		typeSet[strings.TrimSpace(itemType)] = true
+	}
+	lines := []string{fmt.Sprintf("【可用于%s的物品】", command)}
+	buttons := make([]core.KeyboardButton, 0, 6)
+	for _, inventory := range items {
+		var item models.ItemConfig
+		lookup := db.WithContext(ctx).Limit(1).Find(&item, "key = ? OR name = ?", inventory.ItemKey, inventory.ItemName)
+		if lookup.Error != nil {
+			return core.OutboundMessage{}, lookup.Error
+		}
+		if lookup.RowsAffected == 0 || !typeSet[strings.TrimSpace(item.Type)] || (item.Status != "" && item.Status != "active") {
+			continue
+		}
+		effect, parseErr := strconv.ParseInt(strings.TrimSpace(item.Effect), 10, 64)
+		if parseErr != nil || effect <= 0 {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("· %s ×%d", item.Name, inventory.Quantity))
+		buttons = append(buttons, core.KeyboardButton{Label: command + " " + item.Name, Command: command + " " + item.Name})
+		if len(buttons) >= 6 {
+			break
+		}
+	}
+	if len(buttons) == 0 {
+		return text(fmt.Sprintf("背包里还没有可用于%s的物品。\n发送“商店”看看当前商品，或发送“我的背包”查看已有物品。", command)), nil
+	}
+	lines = append(lines, "", fmt.Sprintf("发送“%s 物品名”即可使用。", command))
+	return withKeyboardButtons(text(strings.Join(lines, "\n")), buttons, 2), nil
 }
 
 func companionReaction(action, petName string, favorite bool, pet *models.PetProfile) string {
@@ -220,6 +258,31 @@ func withKeyboard(message core.OutboundMessage, rows ...[]core.KeyboardButton) c
 	return message
 }
 
+func chunkKeyboardButtons(buttons []core.KeyboardButton, perRow int) [][]core.KeyboardButton {
+	if len(buttons) == 0 {
+		return nil
+	}
+	if perRow < 1 {
+		perRow = 2
+	}
+	rows := make([][]core.KeyboardButton, 0, (len(buttons)+perRow-1)/perRow)
+	for i := 0; i < len(buttons); i += perRow {
+		end := i + perRow
+		if end > len(buttons) {
+			end = len(buttons)
+		}
+		rows = append(rows, append([]core.KeyboardButton(nil), buttons[i:end]...))
+	}
+	return rows
+}
+
+func withKeyboardButtons(message core.OutboundMessage, buttons []core.KeyboardButton, perRow int) core.OutboundMessage {
+	if len(buttons) == 0 {
+		return message
+	}
+	return withKeyboard(message, chunkKeyboardButtons(buttons, perRow)...)
+}
+
 func friendlyError(err error) (core.OutboundMessage, error) {
 	if err == nil {
 		return core.OutboundMessage{}, nil
@@ -331,9 +394,9 @@ func handleAdopt(ctx context.Context, event core.InboundEvent, service *Service)
 	if petType == "" {
 		return text("请选择要领养的伙伴。\n发送“领养宠物”查看可选伙伴。"), nil
 	}
-	starterBalance := config.LiveInt64(service.DB, "Core.InitialCoin", 100)
+	starterBalance := config.LiveInt64(service.DB, "Core.InitialCoin", 240)
 	if starterBalance <= 0 {
-		starterBalance = 100
+		starterBalance = 240
 	}
 	if _, err = service.AdoptWithStarter(ctx, account.ID, petType, petType, gameplay.DefaultCurrencyKey, starterBalance); err != nil {
 		if errors.Is(err, gameplay.ErrPetAlreadyExists) {
@@ -371,6 +434,63 @@ func handleAdopt(ctx context.Context, event core.InboundEvent, service *Service)
 
 func currencyName(db *gorm.DB) string {
 	return currencyLabel(db, gameplay.DefaultCurrencyKey)
+}
+
+func speciesDisplayName(db *gorm.DB, keyOrName string) string {
+	keyOrName = strings.TrimSpace(keyOrName)
+	if keyOrName == "" || db == nil || !db.Migrator().HasTable(&models.PetSpeciesConfig{}) {
+		return keyOrName
+	}
+	var species models.PetSpeciesConfig
+	if err := db.Select("name").Limit(1).Find(&species, "key = ? OR name = ?", keyOrName, keyOrName).Error; err != nil || strings.TrimSpace(species.Name) == "" {
+		return keyOrName
+	}
+	return species.Name
+}
+
+func codexEntryDisplayName(db *gorm.DB, category, entryKey string) string {
+	entryKey = strings.TrimSpace(entryKey)
+	if entryKey == "" {
+		return entryKey
+	}
+	if db != nil && db.Migrator().HasTable(&models.CodexCatalogConfig{}) {
+		var catalog models.CodexCatalogConfig
+		if err := db.Limit(1).Find(&catalog, "category = ? AND entry_key = ?", category, entryKey).Error; err == nil && catalog.ID != 0 {
+			if catalog.SourceType == "zone" && catalog.SourceKey != "" {
+				if name := zoneDisplayName(db, catalog.SourceKey); name != "" && name != catalog.SourceKey {
+					return name
+				}
+			}
+			if catalog.SourceType == "item" && catalog.SourceKey != "" {
+				var item models.ItemConfig
+				if err := db.Select("name").Limit(1).Find(&item, "key = ? OR name = ?", catalog.SourceKey, catalog.SourceKey).Error; err == nil && strings.TrimSpace(item.Name) != "" {
+					return item.Name
+				}
+			}
+			if desc := strings.TrimSpace(catalog.Description); desc != "" {
+				desc = strings.TrimSuffix(desc, "调查记录")
+				if desc = strings.TrimSpace(desc); desc != "" {
+					return desc
+				}
+			}
+		}
+	}
+	if name := zoneDisplayName(db, entryKey); name != "" && name != entryKey {
+		return name
+	}
+	return entryKey
+}
+
+func zoneDisplayName(db *gorm.DB, key string) string {
+	key = strings.TrimSpace(key)
+	if key == "" || db == nil || !db.Migrator().HasTable(&models.AdventureZoneConfig{}) {
+		return key
+	}
+	var zone models.AdventureZoneConfig
+	if err := db.Select("name").Limit(1).Find(&zone, "key = ? OR name = ?", key, key).Error; err != nil || strings.TrimSpace(zone.Name) == "" {
+		return key
+	}
+	return zone.Name
 }
 
 func currencyLabel(db *gorm.DB, key string) string {
@@ -418,7 +538,7 @@ func handlePetList(ctx context.Context, event core.InboundEvent, service *Servic
 		if active != nil && pet.ID == active.ID {
 			mark = "★"
 		}
-		lines = append(lines, fmt.Sprintf("%s %s（%s） %s", mark, pet.Name, pet.CurrentForm, pet.Status))
+		lines = append(lines, fmt.Sprintf("%s %s（%s） %s", mark, pet.Name, speciesDisplayName(service.DB.WithContext(ctx), pet.CurrentForm), pet.Status))
 	}
 	lines = append(lines, "", "发送“切换宠物 名称”更换当前伙伴。")
 	return text(strings.Join(lines, "\n")), nil
@@ -474,8 +594,10 @@ func handleStatus(ctx context.Context, event core.InboundEvent, service *Service
 		activity = "正在安心休养；想再次同行时，发送“找回”。"
 	} else if pet.Status == "逃跑" {
 		activity = "暂时走失；发送“找回”迎接它回来。"
-	} else if pet.Status == "濒死" {
+	} else if pet.Status == "濒死" || pet.Status == "受伤" {
 		activity = "现在需要照料；发送“治疗”帮助它恢复体力。"
+	} else if pet.Status == "探索" || pet.Status == "探索战斗" {
+		activity = "正在探索中。如果战斗已经超时，发送“治疗”后即可继续。"
 	} else if run, runErr := gameplay.NewActivityService(service.DB).Active(ctx, account.ID); runErr == nil && run != nil {
 		if service.Now().Before(run.EndsAt) {
 			activity = fmt.Sprintf("正在%s，预计 %s 完成；届时发送“完成%s”。", run.Kind, run.EndsAt.Format("15:04"), run.Kind)
@@ -493,12 +615,13 @@ func handleStatus(ctx context.Context, event core.InboundEvent, service *Service
 	if trait == "" {
 		trait = "尚在形成"
 	}
-	form := pet.CurrentForm
-	if form == "" {
-		form = pet.PetType
+	formKey := pet.CurrentForm
+	if formKey == "" {
+		formKey = pet.PetType
 	}
+	form := speciesDisplayName(service.DB.WithContext(ctx), formKey)
 	var species models.PetSpeciesConfig
-	speciesResult := service.DB.WithContext(ctx).Limit(1).Find(&species, "key = ? OR name = ?", form, form)
+	speciesResult := service.DB.WithContext(ctx).Limit(1).Find(&species, "key = ? OR name = ?", formKey, formKey)
 	wisdomMax, strengthMax, defenseMax := int64(100), int64(100), int64(100)
 	if speciesResult.Error == nil && speciesResult.RowsAffected > 0 {
 		wisdomMax = statusMaximum(species.WisdomMax, wisdomMax)
@@ -569,6 +692,135 @@ func handleDaily(ctx context.Context, event core.InboundEvent, service *Service)
 		return message, nil
 	}
 	return text(fmt.Sprintf("☀️【今日已经见过面啦】\n宠物还记得你今天的问候，正安心做着自己的事情。\n最近 7 天，你陪伴了它 %d 天。\n\n发送“我的宠物”看看它，或一起去“远征”。", checkin.RecentDays)), nil
+}
+
+type todaySuggestion struct {
+	Text    string
+	Command string
+}
+
+func handleTodayTodo(ctx context.Context, event core.InboundEvent, service *Service) (core.OutboundMessage, error) {
+	account, err := resolve(ctx, service, event)
+	if err != nil {
+		return core.OutboundMessage{}, err
+	}
+	pet, err := gameplay.NewPetService(service.DB).Get(ctx, account.ID)
+	if errors.Is(err, gameplay.ErrPetRequired) {
+		message := text("📋【今日待办】\n\n建议优先\n· 先领养第一位伙伴，发送“领养宠物”查看选择。\n\n完整功能发送“宠物菜单”。")
+		return withKeyboard(message, []core.KeyboardButton{{Label: "领养宠物", Command: "领养宠物"}}), nil
+	}
+	if err != nil {
+		return core.OutboundMessage{}, err
+	}
+	suggestions := make([]todaySuggestion, 0, 8)
+	add := func(message, command string) {
+		for _, suggestion := range suggestions {
+			if suggestion.Command == command {
+				return
+			}
+		}
+		suggestions = append(suggestions, todaySuggestion{Text: message, Command: command})
+	}
+	if pet.Status == "受伤" || pet.Status == "濒死" {
+		add("宠物需要恢复，发送“治疗”让它重新振作。", "治疗")
+	}
+	var checkedIn int64
+	if err := service.DB.WithContext(ctx).Model(&models.CompanionJournal{}).
+		Where("account_id = ? AND pet_id = ? AND day = ? AND action = ?", account.ID, pet.ID, service.Now().Format("2006-01-02"), "签到").
+		Count(&checkedIn).Error; err != nil {
+		return core.OutboundMessage{}, err
+	}
+	if checkedIn == 0 {
+		add("今天还没签到，发送“签到”领取陪伴奖励。", "签到")
+	}
+	if pet.Hunger <= 30 {
+		add("饱食偏低，发送“喂养”选择背包里的食物。", "喂养")
+	}
+	var claimable int64
+	if service.DB.Migrator().HasTable(&models.AdventureExpeditionRun{}) {
+		if err := service.DB.WithContext(ctx).Model(&models.AdventureExpeditionRun{}).
+			Where("account_id = ? AND status = ? AND claimed_at IS NULL AND ends_at <= ?", account.ID, "running", service.Now()).Count(&claimable).Error; err != nil {
+			return core.OutboundMessage{}, err
+		}
+	}
+	if claimable > 0 {
+		add("有远征已经返回，发送“领取”结算奖励。", "领取")
+	}
+	petAvailable := gameplay.CheckPetAvailableTx(service.DB.WithContext(ctx), account.ID, pet.ID) == nil && gameplay.CheckAccountRunCapacityTx(service.DB.WithContext(ctx), account.ID) == nil
+	if petAvailable {
+		maps, mapErr := service.ListAdventureMaps(ctx, account.ID)
+		if mapErr != nil {
+			return core.OutboundMessage{}, mapErr
+		}
+		var expeditionConfigs []models.AdventureExpeditionConfig
+		if err := service.DB.WithContext(ctx).Where("enabled = ?", true).Find(&expeditionConfigs).Error; err != nil {
+			return core.OutboundMessage{}, err
+		}
+		expeditionZones := make(map[string]bool, len(expeditionConfigs))
+		for _, configured := range expeditionConfigs {
+			expeditionZones[configured.ZoneKey] = true
+		}
+		var exploreName, expeditionName string
+		for _, adventureMap := range maps {
+			for _, zone := range adventureMap.Zones {
+				if exploreName == "" && zone.Unlocked {
+					exploreName = zone.Zone.Name
+				}
+				if expeditionName == "" && zone.ExpeditionUnlocked && expeditionZones[zone.Zone.Key] {
+					expeditionName = zone.Zone.Name
+				}
+			}
+		}
+		if exploreName != "" {
+			add("继续调查“"+exploreName+"”，发送“探索 "+exploreName+"”。", "探索 "+exploreName)
+		}
+		if expeditionName != "" {
+			add("可以派遣区域远征，发送“远征 "+expeditionName+"”。", "远征 "+expeditionName)
+		}
+	}
+	items, err := gameplay.NewInventoryService(service.DB).List(ctx, account.ID, 200)
+	if err != nil {
+		return core.OutboundMessage{}, err
+	}
+	lotteryCostItem := ""
+	if service.DB.Migrator().HasTable(&models.ChanceGameConfig{}) {
+		var lottery models.ChanceGameConfig
+		lookup := service.DB.WithContext(ctx).Select("cost_item").Limit(1).Find(&lottery, "game_key = ? AND enabled = ?", "lottery", true)
+		if lookup.Error != nil {
+			return core.OutboundMessage{}, lookup.Error
+		}
+		if lookup.RowsAffected > 0 {
+			lotteryCostItem = strings.TrimSpace(lottery.CostItem)
+		}
+	}
+	var lotteryItem models.ItemConfig
+	if lotteryCostItem != "" {
+		_ = service.DB.WithContext(ctx).Select("key, name").Limit(1).Find(&lotteryItem, "key = ? OR name = ?", lotteryCostItem, lotteryCostItem).Error
+	}
+	for _, item := range items {
+		if lotteryCostItem != "" && (item.ItemName == lotteryCostItem || item.ItemKey == lotteryCostItem || item.ItemName == lotteryItem.Name || item.ItemKey == lotteryItem.Key) {
+			add("背包里有遗迹抽签券，发送“抽奖”查看奖池。", "抽奖")
+			break
+		}
+	}
+	add("发送“摸头”陪陪今天的伙伴。", "摸头")
+	add("发送“商店”看看今天上架了什么。", "商店")
+	if len(suggestions) > 3 {
+		suggestions = suggestions[:3]
+	}
+	lines := []string{"📋【今日待办】", "", "建议优先", "· " + suggestions[0].Text}
+	if len(suggestions) > 1 {
+		lines = append(lines, "", "还可以")
+		for _, suggestion := range suggestions[1:] {
+			lines = append(lines, "· "+suggestion.Text)
+		}
+	}
+	lines = append(lines, "", "完整功能发送“宠物菜单”。")
+	buttons := make([]core.KeyboardButton, 0, len(suggestions))
+	for _, suggestion := range suggestions {
+		buttons = append(buttons, core.KeyboardButton{Label: suggestion.Command, Command: suggestion.Command})
+	}
+	return withKeyboardButtons(text(strings.Join(lines, "\n")), buttons, 2), nil
 }
 
 func handleExpedition(ctx context.Context, event core.InboundEvent, service *Service) (core.OutboundMessage, error) {
@@ -814,7 +1066,12 @@ func handleRole(ctx context.Context, event core.InboundEvent, service *Service) 
 		}
 		return businessText("role_unavailable", "没有这个定位。\n可选："+chineseOptions(names)+"。\n发送“定位”查看详细说明。"), nil
 	}
-	return text(fmt.Sprintf("🌟【成长定位已更新】\n宠物郑重接下新的成长徽章，未来的训练方向从这一刻改变。\n\n定位：%s\n技能：%s\n\n发送“技能”查看这条成长路线的详细能力。", pet.Role, pet.Skills)), nil
+	skillNames := adventureSkillNames(service.DB.WithContext(ctx), pet.Skills)
+	skillLine := "尚未解锁战斗技能"
+	if len(skillNames) > 0 {
+		skillLine = strings.Join(skillNames, "、")
+	}
+	return text(fmt.Sprintf("🌟【成长定位已更新】\n宠物郑重接下新的成长徽章，未来的训练方向从这一刻改变。\n\n定位：%s\n战斗技能：%s\n\n发送“技能”查看详细能力。", pet.Role, skillLine)), nil
 }
 
 func handleSkills(ctx context.Context, event core.InboundEvent, service *Service) (core.OutboundMessage, error) {
@@ -822,17 +1079,43 @@ func handleSkills(ctx context.Context, event core.InboundEvent, service *Service
 	if err != nil {
 		return core.OutboundMessage{}, err
 	}
-	var pet models.PetProfile
-	if err = service.DB.WithContext(ctx).First(&pet, "account_id = ?", account.ID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return friendlyError(ErrPetRequired)
-		}
+	pet, err := gameplay.NewPetService(service.DB).Get(ctx, account.ID)
+	if err != nil {
+		return friendlyError(err)
+	}
+	if err = gameplay.RefreshPetSkillsTx(service.DB.WithContext(ctx), pet); err != nil {
 		return core.OutboundMessage{}, err
 	}
-	if pet.Skills == "" {
-		return text("当前尚未配置技能组。\n发送“定位”选择职业定位。"), nil
+	names := adventureSkillNames(service.DB.WithContext(ctx), pet.Skills)
+	if len(names) == 0 {
+		return text("还没有解锁战斗技能。\n完成探索提升调查等级后会学会新技能。"), nil
 	}
-	return text(fmt.Sprintf("✨【%s技能组】\n经过一路学习，宠物已经掌握了这些拿手本领：\n%s\n\n技能由成长定位决定，可发送“定位”查看其他路线。", pet.Role, pet.Skills)), nil
+	return text(fmt.Sprintf("✨【%s的战斗技能】\n%s 已经掌握这些调查战技：\n%s\n\n探索提升等级或进化后会解锁更多技能。", pet.Name, pet.Name, strings.Join(names, "、"))), nil
+}
+
+func adventureSkillNames(db *gorm.DB, raw string) []string {
+	var values []string
+	if json.Unmarshal([]byte(raw), &values) != nil {
+		values = strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == '，' || r == '#' || r == '/' })
+	}
+	names := make([]string, 0, len(values))
+	for _, key := range values {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		name := key
+		if db != nil && db.Migrator().HasTable(&models.AdventureSkillConfig{}) {
+			var skill models.AdventureSkillConfig
+			if result := db.Limit(1).Find(&skill, "key = ?", key); result.Error == nil && result.RowsAffected > 0 {
+				if strings.TrimSpace(skill.Name) != "" {
+					name = skill.Name
+				}
+			}
+		}
+		names = append(names, name)
+	}
+	return names
 }
 
 func handleInventory(ctx context.Context, event core.InboundEvent, service *Service) (core.OutboundMessage, error) {
@@ -869,7 +1152,7 @@ func handleCodex(ctx context.Context, event core.InboundEvent, service *Service)
 	}
 	lines := []string{"📖【生态图鉴】", "你和宠物一路收集的发现，已经整理成了珍贵的探索记录：", ""}
 	for _, entry := range entries {
-		lines = append(lines, fmt.Sprintf("- %s｜%s %d%%", entry.Category, entry.EntryKey, entry.Progress))
+		lines = append(lines, fmt.Sprintf("- %s｜%s %d%%", entry.Category, codexEntryDisplayName(service.DB.WithContext(ctx), entry.Category, entry.EntryKey), entry.Progress))
 	}
 	lines = append(lines, "", "继续远征，可以逐步补全这些神秘记录。")
 	return text(strings.Join(lines, "\n")), nil
@@ -1023,7 +1306,7 @@ func handleSeason(ctx context.Context, event core.InboundEvent, service *Service
 	if influenceErr != nil {
 		return text("赛季信息暂时无法读取，请稍后再试。"), nil
 	}
-	lines := []string{fmt.Sprintf("【%s｜%s】", season.Key, season.Name), "区域：" + season.Region, "结束时间：" + season.EndsAt.Format("2006-01-02"), "", "社区故事选择："}
+	lines := []string{fmt.Sprintf("【%s】", season.Name), "区域：" + season.Region, "结束时间：" + season.EndsAt.Format("2006-01-02"), "", "社区故事选择："}
 	for index, choice := range season.Choices {
 		votes := int64(0)
 		if index < len(influence.Votes) {
@@ -1240,7 +1523,15 @@ func handleMenu(_ context.Context, _ core.InboundEvent, service *Service) (core.
 		var scene models.MenuConfig
 		result := service.DB.Where("name IN ?", []string{"主菜单", "宠物菜单"}).Order("CASE name WHEN '主菜单' THEN 0 ELSE 1 END").First(&scene)
 		if result.Error == nil && strings.TrimSpace(scene.Reply) != "" {
-			message := menuText(strings.TrimSpace(scene.Reply), scene.Markdown)
+			plain := strings.TrimSpace(scene.Reply)
+			markdown := strings.TrimSpace(scene.Markdown)
+			if !strings.Contains(plain, "今日待办") {
+				plain += "\n\n不知道做什么？发送“今日待办”。"
+			}
+			if markdown != "" && !strings.Contains(markdown, "今日待办") {
+				markdown += "\n\n不知道做什么？发送 `今日待办`。"
+			}
+			message := menuText(plain, markdown)
 			message.Image = core.ExistingImageSource(scene.Image)
 			message.MessageKey = "menu.main"
 			return message, nil
@@ -1269,8 +1560,8 @@ func handleMenu(_ context.Context, _ core.InboundEvent, service *Service) (core.
 		lines = append(lines, categoryTitle[category], strings.Join(commands, " · "), "")
 		markdownLines = append(markdownLines, "**"+categoryTitle[category]+"**", strings.Join(commands, " · "), "")
 	}
-	lines = append(lines, "💡 直接发送上面的命令即可使用", "例如：签到 / 我的宠物 / 远征")
-	markdownLines = append(markdownLines, "**💡 直接发送上面的命令即可使用**", "例如：签到 / 我的宠物 / 远征")
+	lines = append(lines, "💡 直接发送上面的命令即可使用", "例如：签到 / 我的宠物 / 远征", "不知道做什么？发送“今日待办”。")
+	markdownLines = append(markdownLines, "**💡 直接发送上面的命令即可使用**", "例如：签到 / 我的宠物 / 远征", "不知道做什么？发送 `今日待办`。")
 	return menuText(strings.Join(lines, "\n"), strings.Join(markdownLines, "\n")), nil
 }
 
@@ -1348,7 +1639,7 @@ func handleTreatPet(ctx context.Context, event core.InboundEvent, service *Servi
 	}
 	care := gameplay.NewCareService(service.DB)
 	care.Wallet.Now = service.Now
-	result, err := care.Treat(ctx, account.ID, gameplay.DefaultCurrencyKey, config.LiveInt64(service.DB, "Core.TreatCost", 500))
+	result, err := care.Treat(ctx, account.ID, gameplay.DefaultCurrencyKey, config.LiveInt64(service.DB, "Core.TreatCost", 80))
 	if err != nil {
 		return careBusinessError(err)
 	}

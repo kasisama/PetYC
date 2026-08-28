@@ -15,6 +15,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Reject committed runtime databases
+        shell: bash
+        run: |
+          if git ls-files | grep -E '(^|/)pet_game[^/]*\.db([.-].*)?$'; then
+            echo 'Runtime databases and their backups must not be committed.' >&2
+            exit 1
+          fi
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:

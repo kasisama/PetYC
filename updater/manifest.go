@@ -19,9 +19,10 @@ const manifestSchema = 1
 var strictVersionPattern = regexp.MustCompile(`^(?:v)?(\d+)\.(\d+)\.(\d+)$`)
 
 type Artifact struct {
-	URL    string `json:"url"`
-	SHA256 string `json:"sha256"`
-	Size   int64  `json:"size"`
+	URL     string   `json:"url"`
+	Mirrors []string `json:"mirrors,omitempty"`
+	SHA256  string   `json:"sha256"`
+	Size    int64    `json:"size"`
 }
 
 type Manifest struct {
@@ -78,9 +79,12 @@ func (manifest Manifest) Validate() error {
 }
 
 func (artifact Artifact) Validate() error {
-	parsed, err := url.Parse(artifact.URL)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
-		return errors.New("下载地址必须是有效 HTTPS URL")
+	addresses := append([]string{artifact.URL}, artifact.Mirrors...)
+	for _, address := range addresses {
+		parsed, err := url.Parse(address)
+		if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+			return errors.New("下载地址必须是有效 HTTPS URL")
+		}
 	}
 	checksum, err := hex.DecodeString(strings.TrimSpace(artifact.SHA256))
 	if err != nil || len(checksum) != sha256.Size {
@@ -90,6 +94,23 @@ func (artifact Artifact) Validate() error {
 		return errors.New("文件大小必须大于 0")
 	}
 	return nil
+}
+
+func (artifact Artifact) downloadURLs() []string {
+	addresses := make([]string, 0, 1+len(artifact.Mirrors))
+	seen := make(map[string]struct{}, 1+len(artifact.Mirrors))
+	for _, address := range append([]string{artifact.URL}, artifact.Mirrors...) {
+		address = strings.TrimSpace(address)
+		if address == "" {
+			continue
+		}
+		if _, exists := seen[address]; exists {
+			continue
+		}
+		seen[address] = struct{}{}
+		addresses = append(addresses, address)
+	}
+	return addresses
 }
 
 type semanticVersion [3]int

@@ -11,6 +11,8 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+var makeExecutable = func(string) error { return nil }
+
 func configureDetached(command *exec.Cmd) {
 	command.SysProcAttr = &syscall.SysProcAttr{
 		CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.DETACHED_PROCESS,

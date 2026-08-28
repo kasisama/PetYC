@@ -1152,28 +1152,33 @@ func recordBehaviorTx(tx *gorm.DB, accountID, behavior string, amount int64, now
 
 func (service *Service) SetRole(ctx context.Context, accountID, role string) (*models.PetProfile, error) {
 	available := make([]string, 0)
-	skills := ""
+	matched := false
 	for _, configured := range gameplayrules.EnabledRoles(service.DB.WithContext(ctx)) {
 		available = append(available, configured.Name)
 		if configured.Name == role {
-			skills = gameplayrules.Skills(configured)
+			matched = true
 		}
 	}
-	if skills == "" {
+	if !matched {
 		return nil, fmt.Errorf("定位只能是%s", humanList(available))
 	}
-	pet, err := gameplay.ActivePet(ctx, service.DB, accountID)
-	if err != nil {
-		return nil, err
-	}
-	result := service.DB.WithContext(ctx).Model(&models.PetProfile{}).Where("id = ?", pet.ID).Updates(map[string]interface{}{"role": role, "skills": skills})
-	if result.Error != nil {
-		return nil, result.Error
-	}
-	if result.RowsAffected == 0 {
-		return nil, ErrPetRequired
-	}
-	return gameplay.ActivePet(ctx, service.DB, accountID)
+	var updated *models.PetProfile
+	err := gameplay.WithTransactionRetry(ctx, service.DB, func(tx *gorm.DB) error {
+		pet, err := gameplay.ActivePetTx(tx, accountID)
+		if err != nil {
+			return err
+		}
+		if err = tx.Model(&models.PetProfile{}).Where("id = ?", pet.ID).Update("role", role).Error; err != nil {
+			return err
+		}
+		pet.Role = role
+		if err = gameplay.RefreshPetSkillsTx(tx, pet); err != nil {
+			return err
+		}
+		updated = pet
+		return nil
+	})
+	return updated, err
 }
 
 func humanList(values []string) string {

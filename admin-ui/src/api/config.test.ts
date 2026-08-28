@@ -104,9 +104,11 @@ describe('内容工作台数据兼容', () => {
       Status: 'limited',
     })
     expect(normalizeItem({ Name: '木材' })).toMatchObject({ Status: 'active' })
-    expect(normalizeShopItem({ id: 7, name: '绷带', restock_target: 50 })).toMatchObject({
+    expect(normalizeShopItem({ id: 7, name: '绷带', restock_target: 50, daily_limit: 2, weekly_limit: 5 })).toMatchObject({
       ID: 7,
       RestockTarget: 50,
+      DailyLimit: 2,
+      WeeklyLimit: 5,
     })
   })
 

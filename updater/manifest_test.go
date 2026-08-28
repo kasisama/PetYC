@@ -48,6 +48,35 @@ func TestParseAndVerifyManifest(t *testing.T) {
 	}
 }
 
+func TestArtifactAcceptsOptionalHTTPSMirrors(t *testing.T) {
+	artifact := Artifact{
+		URL:     "https://gitee.com/example/petyc.exe",
+		Mirrors: []string{"https://github.com/example/petyc.exe"},
+		SHA256:  strings.Repeat("a", 64), Size: 42,
+	}
+	if err := artifact.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	artifact.Mirrors = append(artifact.Mirrors, "http://unsafe.example/petyc.exe")
+	if err := artifact.Validate(); err == nil {
+		t.Fatal("non-HTTPS mirror should fail validation")
+	}
+}
+
+func TestArtifactWithoutMirrorsRemainsCompatible(t *testing.T) {
+	var artifact Artifact
+	if err := json.Unmarshal([]byte(`{"url":"https://example.com/petyc.exe","sha256":"`+strings.Repeat("a", 64)+`","size":42}`), &artifact); err != nil {
+		t.Fatal(err)
+	}
+	if err := artifact.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	addresses := artifact.downloadURLs()
+	if len(addresses) != 1 || addresses[0] != artifact.URL {
+		t.Fatalf("unexpected download URLs: %#v", addresses)
+	}
+}
+
 func TestNewerVersion(t *testing.T) {
 	tests := []struct {
 		candidate, current string

@@ -86,6 +86,9 @@ func (service *PetService) AdoptWithStarter(ctx context.Context, accountID, petT
 		if err := tx.Create(&pet).Error; err != nil {
 			return err
 		}
+		if err := RefreshPetSkillsTx(tx, &pet); err != nil {
+			return err
+		}
 		if err := tx.Model(&models.PlayerAccount{}).Where("id = ? AND (active_pet_id = '' OR active_pet_id IS NULL)", accountID).Update("active_pet_id", pet.ID).Error; err != nil {
 			return err
 		}

@@ -23,7 +23,14 @@ type ShopListing struct {
 	Image       string
 	Stock       int64
 	Price       int64
+	DailyLimit  int64
+	WeeklyLimit int64
 	Description string
+}
+
+type ShopLimitRemaining struct {
+	Daily  int64
+	Weekly int64
 }
 
 type ShopPage struct {
@@ -127,6 +134,9 @@ func (service *ShopService) Purchase(ctx context.Context, accountID, itemName st
 		if err != nil {
 			return err
 		}
+		if err = service.enforcePurchaseLimitsTx(tx, accountID, listing, quantity); err != nil {
+			return err
+		}
 		item, err := getItem(tx, listing.Name)
 		if err != nil {
 			return err
@@ -164,8 +174,12 @@ func (service *ShopService) Purchase(ctx context.Context, accountID, itemName st
 		currencyKey := DefaultCurrencyKey
 		if listing.ShopType == ShopTypeAffection {
 			currencyKey = "好感"
+			activePet, petErr := ActivePetTx(tx, accountID)
+			if petErr != nil {
+				return petErr
+			}
 			payment := tx.Model(&models.PetProfile{}).
-				Where("account_id = ? AND affection >= ?", accountID, cost).
+				Where("id = ? AND affection >= ?", activePet.ID, cost).
 				Update("affection", gorm.Expr("affection - ?", cost))
 			if payment.Error != nil {
 				return payment.Error
@@ -179,6 +193,12 @@ func (service *ShopService) Purchase(ctx context.Context, accountID, itemName st
 			}
 		}
 		if err = service.inventory().CreditTx(tx, accountID, item.Name, quantity); err != nil {
+			return err
+		}
+		if err = tx.Create(&models.ShopPurchaseLog{
+			AccountID: accountID, ShopItemID: listing.ID, ItemName: listing.Name,
+			Quantity: quantity, CreatedAt: service.now(),
+		}).Error; err != nil {
 			return err
 		}
 		result.Listing = *listing
@@ -302,14 +322,88 @@ func getItem(db *gorm.DB, name string) (*models.ItemConfig, error) {
 }
 
 func requirePet(db *gorm.DB, accountID string) error {
-	var count int64
-	if err := db.Model(&models.PetProfile{}).Where("account_id = ?", accountID).Count(&count).Error; err != nil {
+	_, err := ActivePetTx(db, accountID)
+	return err
+}
+
+func (service *ShopService) RemainingLimits(ctx context.Context, accountID string, listing *ShopListing) (ShopLimitRemaining, error) {
+	if service == nil || service.DB == nil {
+		return ShopLimitRemaining{}, ErrDatabaseUnavailable
+	}
+	if listing == nil {
+		return ShopLimitRemaining{}, ErrShopItemNotFound
+	}
+	return remainingLimitsTx(service.DB.WithContext(ctx), accountID, listing, service.now())
+}
+
+func (service *ShopService) enforcePurchaseLimitsTx(tx *gorm.DB, accountID string, listing *ShopListing, quantity int64) error {
+	remaining, err := remainingLimitsTx(tx, accountID, listing, service.now())
+	if err != nil {
 		return err
 	}
-	if count != 1 {
-		return ErrPetRequired
+	if listing.DailyLimit > 0 && quantity > remaining.Daily {
+		return ErrPurchaseLimit
+	}
+	if listing.WeeklyLimit > 0 && quantity > remaining.Weekly {
+		return ErrPurchaseLimit
 	}
 	return nil
+}
+
+func remainingLimitsTx(tx *gorm.DB, accountID string, listing *ShopListing, now time.Time) (ShopLimitRemaining, error) {
+	remaining := ShopLimitRemaining{Daily: -1, Weekly: -1}
+	if listing == nil {
+		return remaining, ErrShopItemNotFound
+	}
+	if listing.DailyLimit > 0 {
+		used, err := purchasedSinceTx(tx, accountID, listing.ID, shopWindowStart(now, "daily"))
+		if err != nil {
+			return remaining, err
+		}
+		remaining.Daily = listing.DailyLimit - used
+		if remaining.Daily < 0 {
+			remaining.Daily = 0
+		}
+	}
+	if listing.WeeklyLimit > 0 {
+		used, err := purchasedSinceTx(tx, accountID, listing.ID, shopWindowStart(now, "weekly"))
+		if err != nil {
+			return remaining, err
+		}
+		remaining.Weekly = listing.WeeklyLimit - used
+		if remaining.Weekly < 0 {
+			remaining.Weekly = 0
+		}
+	}
+	return remaining, nil
+}
+
+func purchasedSinceTx(tx *gorm.DB, accountID string, shopItemID uint, since time.Time) (int64, error) {
+	var used int64
+	err := tx.Model(&models.ShopPurchaseLog{}).
+		Where("account_id = ? AND shop_item_id = ? AND created_at >= ?", accountID, shopItemID, since).
+		Select("COALESCE(SUM(quantity), 0)").Scan(&used).Error
+	return used, err
+}
+
+func shopWindowStart(now time.Time, kind string) time.Time {
+	year, month, day := now.Date()
+	start := time.Date(year, month, day, 0, 0, 0, 0, now.Location())
+	if kind == "weekly" {
+		weekday := int(start.Weekday())
+		if weekday == 0 {
+			weekday = 7
+		}
+		start = start.AddDate(0, 0, 1-weekday)
+	}
+	return start
+}
+
+func (service *ShopService) now() time.Time {
+	if service != nil && service.Now != nil {
+		return service.Now()
+	}
+	return time.Now()
 }
 
 func itemCanBeObtained(status string) bool {
@@ -328,6 +422,7 @@ func listingFromModel(row models.ShopItemConfig) ShopListing {
 	return ShopListing{
 		ID: row.ID, ShopType: row.ShopType, Name: row.Name, Image: row.Image,
 		Stock: row.Stock, Price: row.Price, Description: row.Description,
+		DailyLimit: row.DailyLimit, WeeklyLimit: row.WeeklyLimit,
 	}
 }
 

@@ -155,14 +155,26 @@ func applyUpdate(config helperConfig) error {
 	}
 	logLine("数据库备份完成")
 	if err := swapExecutable(config.Target, config.Source, config.Backup); err != nil {
+		logLine("程序文件替换失败: %v，重新启动旧版本", err)
+		if restartErr := restartApplication(config, logFile); restartErr != nil {
+			return fmt.Errorf("%v；旧版本重新启动失败: %w", err, restartErr)
+		}
+		logLine("旧版本已重新启动")
 		return err
 	}
 	logLine("程序文件替换完成")
 
 	process, err := startApplication(config.Target, config.OriginalArgs, config.WorkingDir, logFile)
 	if err != nil {
-		_ = rollbackFiles(config)
-		return fmt.Errorf("启动新版本: %w", err)
+		logLine("新版本启动失败: %v，开始回滚", err)
+		if rollbackErr := rollbackFiles(config); rollbackErr != nil {
+			return fmt.Errorf("启动新版本失败: %v；回滚失败: %w", err, rollbackErr)
+		}
+		if restartErr := restartApplication(config, logFile); restartErr != nil {
+			return fmt.Errorf("启动新版本失败: %v；旧版本恢复后启动失败: %w", err, restartErr)
+		}
+		logLine("旧版本已恢复并重新启动")
+		return fmt.Errorf("新版本启动失败，已恢复旧版本: %w", err)
 	}
 	logLine("新版本已启动 pid=%d", process.Pid)
 	if err := waitForHealth(config.HealthURL, config.ExpectedVersion, 60*time.Second); err == nil {
@@ -176,11 +188,9 @@ func applyUpdate(config helperConfig) error {
 		if rollbackErr := rollbackFiles(config); rollbackErr != nil {
 			return fmt.Errorf("健康检查失败: %v；回滚失败: %w", err, rollbackErr)
 		}
-		oldProcess, startErr := startApplication(config.Target, config.OriginalArgs, config.WorkingDir, logFile)
-		if startErr != nil {
-			return fmt.Errorf("健康检查失败: %v；旧版本恢复后启动失败: %w", err, startErr)
+		if restartErr := restartApplication(config, logFile); restartErr != nil {
+			return fmt.Errorf("健康检查失败: %v；旧版本恢复后启动失败: %w", err, restartErr)
 		}
-		_ = oldProcess.Release()
 		logLine("旧版本已恢复并重新启动")
 		return fmt.Errorf("新版本健康检查失败，已恢复旧版本: %w", err)
 	}
@@ -194,13 +204,17 @@ func swapExecutable(target, source, backup string) error {
 		return fmt.Errorf("备份旧程序: %w", err)
 	}
 	if err := renameWithRetry(source, target, 15*time.Second); err != nil {
-		_ = renameWithRetry(backup, target, 5*time.Second)
+		if restoreErr := renameWithRetry(backup, target, 5*time.Second); restoreErr != nil {
+			return fmt.Errorf("安装新程序: %v；恢复旧程序: %w", err, restoreErr)
+		}
 		return fmt.Errorf("安装新程序: %w", err)
 	}
-	if filepath.Ext(target) != ".exe" {
-		if err := os.Chmod(target, 0o755); err != nil {
-			return err
+	if err := makeExecutable(target); err != nil {
+		_ = os.Remove(target)
+		if restoreErr := renameWithRetry(backup, target, 5*time.Second); restoreErr != nil {
+			return fmt.Errorf("设置新程序权限: %v；恢复旧程序: %w", err, restoreErr)
 		}
+		return fmt.Errorf("设置新程序权限: %w", err)
 	}
 	return nil
 }
@@ -332,6 +346,14 @@ func startApplication(target string, args []string, workingDir string, logFile *
 		return nil, err
 	}
 	return command.Process, nil
+}
+
+func restartApplication(config helperConfig, logFile *os.File) error {
+	process, err := startApplication(config.Target, config.OriginalArgs, config.WorkingDir, logFile)
+	if err != nil {
+		return err
+	}
+	return process.Release()
 }
 
 func waitForHealth(address, expectedVersion string, timeout time.Duration) error {

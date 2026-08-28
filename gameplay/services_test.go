@@ -23,7 +23,7 @@ func newGameplayDB(t *testing.T, dsn string) *gorm.DB {
 	if err = db.AutoMigrate(
 		&models.PlayerAccount{}, &models.PlayerIdentity{}, &models.PetProfile{},
 		&models.PetSpeciesConfig{}, &models.PetEvolutionRuleConfig{}, &models.PetEvolutionCostConfig{}, &models.PetSkillUnlockConfig{}, &models.GlobalInventoryItem{}, &models.PlayerWallet{}, &models.WalletLedger{},
-		&models.ItemConfig{}, &models.ShopItemConfig{},
+		&models.ItemConfig{}, &models.ShopItemConfig{}, &models.ShopPurchaseLog{},
 		&models.CompanionJournal{}, &models.CompanionActionDaily{}, &models.CheckinRewardConfig{}, &models.PetBehaviorProfile{},
 		&models.ActivityRun{}, &models.ItemUseRecord{}, &models.ExpeditionRun{},
 		&models.PersonalityRuleConfig{}, &models.GrowthRoleConfig{}, &models.GrowthStanceConfig{},
@@ -180,6 +180,28 @@ func TestCareServiceKeepsRestRecoverAndTreatmentOnOnePetAndWallet(t *testing.T) 
 	}
 	if pet.Health != 100 || pet.Status != "空闲" {
 		t.Fatalf("treatment did not restore pet state: %#v", pet)
+	}
+}
+
+func TestCareTreatmentClearsInjuredStatus(t *testing.T) {
+	db := newGameplayDB(t, ":memory:")
+	if err := db.Create(&models.PetProfile{
+		AccountID: "account-1", PetType: "光芽兽", Name: "风耳狐", CurrentForm: "光芽兽",
+		Role: "探索者", Stance: "探索", Status: "受伤", Mood: "一般", MoodPoints: 50,
+		Readiness: 100, Health: 88, HealthMax: 156, Hunger: 100, HungerMax: 100,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	care := NewCareService(db)
+	if _, err := care.Treat(context.Background(), "account-1", DefaultCurrencyKey, 0); err != nil {
+		t.Fatal(err)
+	}
+	var pet models.PetProfile
+	if err := db.First(&pet, "account_id = ?", "account-1").Error; err != nil {
+		t.Fatal(err)
+	}
+	if pet.Health != 156 || pet.Status != "空闲" {
+		t.Fatalf("treatment must restore injured pet to idle: %#v", pet)
 	}
 }
 
@@ -449,6 +471,70 @@ func TestAwakeningFailureDoesNotChangeFormOrPartiallyConsumeItems(t *testing.T) 
 	}
 }
 
+func seedAwakenBranches(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	if err := db.Create(&[]models.PetSpeciesConfig{
+		{Key: "lumisprout_evolved", Name: "曜叶兽", FamilyKey: "lumisprout", Stage: "evolved"},
+		{Key: "lumisprout_awaken_a", Name: "曦冠灵", FamilyKey: "lumisprout", Stage: "awakened", PreviousFormKey: "lumisprout_evolved"},
+		{Key: "lumisprout_awaken_b", Name: "月冕灵", FamilyKey: "lumisprout", Stage: "awakened", PreviousFormKey: "lumisprout_evolved"},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&[]models.PetEvolutionRuleConfig{
+		{Key: "lumisprout_awaken_a_rule", FromFormKey: "lumisprout_evolved", ToFormKey: "lumisprout_awaken_a", RequiredGrowth: 20, RequiredAffection: 10, BranchLabel: "曦光路线", Enabled: true, SortOrder: 20},
+		{Key: "lumisprout_awaken_b_rule", FromFormKey: "lumisprout_evolved", ToFormKey: "lumisprout_awaken_b", RequiredGrowth: 20, RequiredAffection: 10, BranchLabel: "月影路线", Enabled: true, SortOrder: 30},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.PetProfile{
+		AccountID: "account-1", PetType: "lumisprout", Name: "光芽兽", CurrentForm: "lumisprout_evolved",
+		Role: "探索者", Stance: "探索", Status: "空闲", Mood: "一般", Growth: 20, Affection: 10,
+		Readiness: 100, Health: 100, HealthMax: 100, Hunger: 100, HungerMax: 100,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAwakenWithoutBranchChoiceFailsWhenMultipleRoutesExist(t *testing.T) {
+	db := newGameplayDB(t, ":memory:")
+	seedAwakenBranches(t, db)
+	evolution := NewEvolutionService(db)
+	if _, err := evolution.Awaken(context.Background(), "account-1"); !errors.Is(err, ErrEvolutionBranchRequired) {
+		t.Fatalf("multiple awaken routes must require an explicit choice, got %v", err)
+	}
+	if _, err := evolution.Preview(context.Background(), "account-1", "觉醒"); !errors.Is(err, ErrEvolutionBranchRequired) {
+		t.Fatalf("preview without a branch must not lock the first route, got %v", err)
+	}
+	options, err := evolution.ListOptions(context.Background(), "account-1", "觉醒")
+	if err != nil || len(options) != 2 || options[0].BranchLabel != "曦光路线" || options[1].BranchLabel != "月影路线" {
+		t.Fatalf("expected both awaken branches, got %#v err=%v", options, err)
+	}
+	var pet models.PetProfile
+	db.First(&pet, "account_id = ?", "account-1")
+	if pet.CurrentForm != "lumisprout_evolved" {
+		t.Fatalf("refusing a missing branch choice must not change form: %#v", pet)
+	}
+}
+
+func TestAwakenToSelectedBranchPersistsChosenForm(t *testing.T) {
+	db := newGameplayDB(t, ":memory:")
+	seedAwakenBranches(t, db)
+	evolution := NewEvolutionService(db)
+	preview, err := evolution.PreviewTo(context.Background(), "account-1", "觉醒", "月影路线")
+	if err != nil || preview.TargetForm != "月冕灵" || preview.BranchLabel != "月影路线" || !preview.Ready {
+		t.Fatalf("selected branch preview mismatch: %#v err=%v", preview, err)
+	}
+	completed, err := evolution.EvolveTo(context.Background(), "account-1", "月影路线")
+	if err != nil || completed.TargetForm != "月冕灵" {
+		t.Fatalf("chosen awaken branch failed: %#v err=%v", completed, err)
+	}
+	var pet models.PetProfile
+	db.First(&pet, "account_id = ?", "account-1")
+	if pet.CurrentForm != "lumisprout_awaken_b" {
+		t.Fatalf("awakened form was not the player-chosen branch: %#v", pet)
+	}
+}
+
 func TestItemEffectUseIsAuditableAndIdempotent(t *testing.T) {
 	db := newGameplayDB(t, ":memory:")
 	if err := db.Create(&models.PetProfile{
@@ -617,6 +703,88 @@ func TestAffectionShopDebitsPetAffection(t *testing.T) {
 	db.First(&pet, "account_id = ?", "account-1")
 	if pet.Affection != 10 {
 		t.Fatalf("affection balance mismatch: %d", pet.Affection)
+	}
+}
+
+func TestAffectionShopDebitsActivePetOnly(t *testing.T) {
+	db := newGameplayDB(t, ":memory:")
+	if err := db.Create(&models.PlayerAccount{ID: "account-1", ActivePetID: "pet-active"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&[]models.PetProfile{
+		{ID: "pet-other", AccountID: "account-1", PetType: "烬爪兽", Name: "备用", CurrentForm: "烬爪兽", Role: "探索者", Stance: "探索", Status: "空闲", Mood: "一般", Affection: 200, Readiness: 100, Health: 100, HealthMax: 100, Hunger: 100, HungerMax: 100},
+		{ID: "pet-active", AccountID: "account-1", PetType: "光芽兽", Name: "当前", CurrentForm: "光芽兽", Role: "探索者", Stance: "探索", Status: "空闲", Mood: "一般", Affection: 50, Readiness: 100, Health: 100, HealthMax: 100, Hunger: 100, HungerMax: 100},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.ItemConfig{Name: "纪念花束", Status: "active", Type: "纪念"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.ShopItemConfig{ShopType: ShopTypeAffection, Name: "纪念花束", Stock: -1, Price: 20}).Error; err != nil {
+		t.Fatal(err)
+	}
+	result, err := NewShopService(db).Purchase(context.Background(), "account-1", "纪念花束", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.RemainingBalance != 10 {
+		t.Fatalf("active pet remaining affection mismatch: %#v", result)
+	}
+	var pets []models.PetProfile
+	db.Where("account_id = ?", "account-1").Order("id").Find(&pets)
+	balances := map[string]int64{}
+	for _, pet := range pets {
+		balances[pet.ID] = pet.Affection
+	}
+	if balances["pet-active"] != 10 || balances["pet-other"] != 200 {
+		t.Fatalf("affection must debit the active pet only: %#v", balances)
+	}
+}
+
+func TestShopPurchaseRespectsDailyAndWeeklyLimits(t *testing.T) {
+	db := newGameplayDB(t, ":memory:")
+	if err := db.Create(&models.PetProfile{
+		AccountID: "account-1", PetType: "光芽兽", Name: "光芽兽", CurrentForm: "光芽兽",
+		Role: "探索者", Stance: "探索", Status: "空闲", Mood: "一般",
+		Readiness: 100, Health: 100, HealthMax: 100, Hunger: 100, HungerMax: 100,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.ItemConfig{Name: "小饼干", Status: "active", Type: "饱食", Effect: "15"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.ShopItemConfig{ShopType: ShopTypeNormal, Name: "小饼干", Stock: -1, Price: 1, DailyLimit: 2, WeeklyLimit: 3}).Error; err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 24, 10, 0, 0, 0, time.Local) // Monday
+	shop := NewShopService(db)
+	shop.Now = func() time.Time { return now }
+	wallet := NewWalletService(db)
+	wallet.Now = shop.Now
+	shop.Wallet = wallet
+	if err := wallet.Credit(context.Background(), "account-1", DefaultCurrencyKey, 100); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shop.Purchase(context.Background(), "account-1", "小饼干", 2); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shop.Purchase(context.Background(), "account-1", "小饼干", 1); !errors.Is(err, ErrPurchaseLimit) {
+		t.Fatalf("daily limit should reject the third unit, got %v", err)
+	}
+	now = now.Add(24 * time.Hour)
+	if _, err := shop.Purchase(context.Background(), "account-1", "小饼干", 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shop.Purchase(context.Background(), "account-1", "小饼干", 1); !errors.Is(err, ErrPurchaseLimit) {
+		t.Fatalf("weekly limit should reject the fourth unit, got %v", err)
+	}
+	listing, err := shop.GetListing(context.Background(), "小饼干")
+	if err != nil {
+		t.Fatal(err)
+	}
+	remaining, err := shop.RemainingLimits(context.Background(), "account-1", listing)
+	if err != nil || remaining.Daily != 1 || remaining.Weekly != 0 {
+		t.Fatalf("remaining limits mismatch: %#v err=%v", remaining, err)
 	}
 }
 

@@ -72,6 +72,35 @@ func (service *Service) createEquipmentTx(tx *gorm.DB, accountID, templateKey, s
 	return &item, nil
 }
 
+func equipmentTemplateNameTx(tx *gorm.DB, key string) string {
+	var template models.EquipmentTemplateConfig
+	if err := tx.Select("name").Limit(1).Find(&template, "key = ?", key).Error; err != nil || template.Name == "" {
+		return key
+	}
+	return template.Name
+}
+
+func zoneDisplayNameTx(tx *gorm.DB, key string) string {
+	var zone models.AdventureZoneConfig
+	if err := tx.Select("name").Limit(1).Find(&zone, "key = ?", key).Error; err != nil || zone.Name == "" {
+		return key
+	}
+	return zone.Name
+}
+
+func equipmentSlotLabel(slot string) string {
+	switch slot {
+	case "weapon":
+		return "武器"
+	case "armor":
+		return "防具"
+	case "treasure":
+		return "秘宝"
+	default:
+		return slot
+	}
+}
+
 func (service *Service) rollEquipmentAffixesTx(tx *gorm.DB, template models.EquipmentTemplateConfig) ([]EquipmentAffixRoll, error) {
 	if template.MaxAffixes <= 0 || template.AffixPoolKey == "" {
 		return []EquipmentAffixRoll{}, nil
@@ -429,7 +458,7 @@ func (service *Service) grantLootSnapshotTx(tx *gorm.DB, accountID string, pool 
 				return nil, err
 			}
 			var item models.ItemConfig
-			if err := tx.First(&item, "key = ?", entry.RewardKey).Error; err == nil {
+			if err := tx.First(&item, "key = ?", entry.RewardKey).Error; err == nil && item.Name != "" {
 				reward.Name = item.Name
 			}
 		case "currency":
@@ -449,10 +478,12 @@ func (service *Service) grantLootSnapshotTx(tx *gorm.DB, accountID string, pool 
 				return nil, err
 			}
 			reward.Equipment = equipment
+			reward.Name = equipmentTemplateNameTx(tx, entry.RewardKey)
 		case "blueprint_fragment":
 			if err := service.grantBlueprintFragmentsTx(tx, accountID, entry.RewardKey, quantity); err != nil {
 				return nil, err
 			}
+			reward.Name = equipmentTemplateNameTx(tx, entry.RewardKey) + "蓝图碎片"
 		default:
 			return nil, ErrInvalidLootPool
 		}

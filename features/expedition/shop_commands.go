@@ -24,7 +24,7 @@ func handleRenamePet(ctx context.Context, event core.InboundEvent, service *Serv
 	if err = gameplay.ValidatePetName(name); err != nil {
 		return text("这个名字暂时不能使用。\n名字需要 2～12 个字符，且不能包含链接或联系方式。"), nil
 	}
-	renameCost := config.LiveInt64(service.DB, "Core.RenameCost", 0)
+	renameCost := config.LiveInt64(service.DB, "Core.RenameCost", 120)
 	pet, err := service.RenamePet(ctx, account.ID, name, gameplay.DefaultCurrencyKey, renameCost)
 	if err != nil {
 		switch {
@@ -84,6 +84,11 @@ func handleShopPage(ctx context.Context, event core.InboundEvent, service *Servi
 		if listing.Stock >= 0 {
 			stock = fmt.Sprintf("库存 %d", listing.Stock)
 		}
+		limitText := shopLimitText(ctx, shop, account.ID, listing)
+		if limitText != "" {
+			lines = append(lines, fmt.Sprintf("• %s｜%d %s｜%s｜%s", listing.Name, listing.Price, currency, stock, limitText))
+			continue
+		}
 		lines = append(lines, fmt.Sprintf("• %s｜%d %s｜%s", listing.Name, listing.Price, currency, stock))
 	}
 	lines = append(lines, "", "发送“查看商品 商品名”查看图片和详情。", "购买示例：购买 小饼干*2")
@@ -118,7 +123,12 @@ func handleShopItem(ctx context.Context, event core.InboundEvent, service *Servi
 	if description == "" {
 		description = "这件商品还没有填写介绍。"
 	}
-	message := text(fmt.Sprintf("【%s】\n价格：%d %s\n库存：%s\n%s\n\n购买示例：购买 %s*1", listing.Name, listing.Price, currency, stock, description, listing.Name))
+	limitText := shopLimitText(ctx, gameplay.NewShopService(service.DB), account.ID, *listing)
+	detail := fmt.Sprintf("【%s】\n价格：%d %s\n库存：%s\n%s\n\n购买示例：购买 %s*1", listing.Name, listing.Price, currency, stock, description, listing.Name)
+	if limitText != "" {
+		detail = fmt.Sprintf("【%s】\n价格：%d %s\n库存：%s\n限购：%s\n%s\n\n购买示例：购买 %s*1", listing.Name, listing.Price, currency, stock, limitText, description, listing.Name)
+	}
+	message := text(detail)
 	message.Image = listing.Image
 	return message, nil
 }
@@ -160,7 +170,7 @@ func handleBuy(ctx context.Context, event core.InboundEvent, service *Service) (
 	}
 	name, quantity, ok := parseItemQuantity(event.Text, "购买")
 	if !ok {
-		return text("请按“购买 商品名*数量”的格式发送。\n例如：购买 小饼干*2"), nil
+		return purchaseChoices(ctx, service, account.ID)
 	}
 	shop := gameplay.NewShopService(service.DB)
 	shop.Now = service.Now
@@ -171,6 +181,32 @@ func handleBuy(ctx context.Context, event core.InboundEvent, service *Service) (
 	message := text(fmt.Sprintf("🛍️【购买成功】\n店员把「%s」仔细包好，已经放进你的背包啦！\n\n获得：%s ×%d\n消耗：%s ×%d\n余额：%d %s\n\n发送“我的背包”查看，或继续逛逛“商店”。", result.Listing.Name, result.Listing.Name, result.Quantity, currencyLabel(service.DB, result.CurrencyKey), result.Cost, result.RemainingBalance, currencyLabel(service.DB, result.CurrencyKey)))
 	message.Image = result.Listing.Image
 	return message, nil
+}
+
+func purchaseChoices(ctx context.Context, service *Service, accountID string) (core.OutboundMessage, error) {
+	shop := gameplay.NewShopService(service.DB)
+	shop.Now = service.Now
+	result, err := shop.List(ctx, gameplay.ShopTypeNormal, 1, 6)
+	if err != nil {
+		return core.OutboundMessage{}, err
+	}
+	if result.Total == 0 {
+		return text("宠物商店今天还没有商品上架，晚些时候再来看看吧。"), nil
+	}
+	lines := []string{"🛍️【选择要购买的商品】"}
+	buttons := make([]core.KeyboardButton, 0, len(result.Items))
+	for _, listing := range result.Items {
+		if listing.Stock == 0 {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("· %s｜%d %s", listing.Name, listing.Price, currencyName(service.DB)))
+		buttons = append(buttons, core.KeyboardButton{Label: "购买 " + listing.Name, Command: "购买 " + listing.Name})
+	}
+	if len(buttons) == 0 {
+		return text("宠物商店当前商品都已售罄，晚些时候再来看看吧。"), nil
+	}
+	lines = append(lines, "", "发送“购买 商品名”购买 1 件，也可以写成“购买 商品名*数量”。")
+	return withKeyboardButtons(text(strings.Join(lines, "\n")), buttons, 2), nil
 }
 
 func handleSell(ctx context.Context, event core.InboundEvent, service *Service) (core.OutboundMessage, error) {
@@ -224,6 +260,8 @@ func shopBusinessError(err error) (core.OutboundMessage, error) {
 		return text("这个物品暂时无法获得，换一件看看吧。"), nil
 	case errors.Is(err, gameplay.ErrOutOfStock):
 		return text("这件商品的库存不够了，可以减少数量后再试。"), nil
+	case errors.Is(err, gameplay.ErrPurchaseLimit):
+		return text("这件商品的个人限购已经用完。\n发送“商店”查看剩余可买数量。"), nil
 	case errors.Is(err, gameplay.ErrInsufficientFunds):
 		return text("余额还不够，可以先完成签到或远征。"), nil
 	case errors.Is(err, gameplay.ErrInsufficientItem):
@@ -237,6 +275,24 @@ func shopBusinessError(err error) (core.OutboundMessage, error) {
 	default:
 		return core.OutboundMessage{}, err
 	}
+}
+
+func shopLimitText(ctx context.Context, shop *gameplay.ShopService, accountID string, listing gameplay.ShopListing) string {
+	if listing.DailyLimit <= 0 && listing.WeeklyLimit <= 0 {
+		return ""
+	}
+	remaining, err := shop.RemainingLimits(ctx, accountID, &listing)
+	if err != nil {
+		return ""
+	}
+	parts := make([]string, 0, 2)
+	if listing.DailyLimit > 0 {
+		parts = append(parts, fmt.Sprintf("今日剩余 %d", remaining.Daily))
+	}
+	if listing.WeeklyLimit > 0 {
+		parts = append(parts, fmt.Sprintf("本周剩余 %d", remaining.Weekly))
+	}
+	return strings.Join(parts, "｜")
 }
 
 func displayItemType(itemType string) string {

@@ -60,9 +60,6 @@ func main() {
 		Addr: listenAddress,
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {
-			case "/api/admin/auth/session":
-				w.Header().Set("Content-Type", "application/json")
-				_ = json.NewEncoder(w).Encode(map[string]interface{}{"authenticated": true, "username": "integration-admin"})
 			case "/api/admin/config/status":
 				writeTestResponse(w, map[string]interface{}{"db_revision": 1, "loaded_revision": 1, "pending_reload": false})
 			case "/api/admin/audit-logs":

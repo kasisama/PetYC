@@ -58,6 +58,40 @@ func TestServiceCheckRejectsInvalidSignature(t *testing.T) {
 	}
 }
 
+func TestServiceCheckFallsBackToSecondManifestSource(t *testing.T) {
+	manifest := validManifest()
+	manifest.Version = "1.1.0"
+	raw, signature, publicKey := signedManifest(t, manifest)
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	}))
+	defer primary.Close()
+	secondary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if filepath.Ext(r.URL.Path) == ".sig" {
+			_, _ = w.Write(signature)
+			return
+		}
+		_, _ = w.Write(raw)
+	}))
+	defer secondary.Close()
+
+	service := NewService(Config{
+		CurrentVersion: "1.0.0", PublicKey: publicKey,
+		ManifestSources: []ManifestSource{
+			{ManifestURL: primary.URL + "/manifest"},
+			{ManifestURL: secondary.URL + "/manifest"},
+		},
+		RuntimeOS: "darwin", RuntimeArch: "arm64",
+	})
+	info, err := service.Check(t.Context(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.Available || info.LatestVersion != "1.1.0" {
+		t.Fatalf("unexpected info: %+v", info)
+	}
+}
+
 func TestDownloadRejectsChecksumMismatch(t *testing.T) {
 	payload := []byte("new binary")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(payload) }))
@@ -70,6 +104,35 @@ func TestDownloadRejectsChecksumMismatch(t *testing.T) {
 	}
 	if _, statErr := os.Stat(destination); !os.IsNotExist(statErr) {
 		t.Fatalf("destination should not exist: %v", statErr)
+	}
+}
+
+func TestDownloadFallsBackAfterPrimaryChecksumMismatch(t *testing.T) {
+	payload := []byte("verified binary")
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("tampered binary"))
+	}))
+	defer bad.Close()
+	good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(payload)
+	}))
+	defer good.Close()
+	checksum := sha256.Sum256(payload)
+	service := NewService(Config{CurrentVersion: "1.0.0"})
+	destination := filepath.Join(t.TempDir(), "petyc.new")
+	artifact := Artifact{
+		URL: bad.URL, Mirrors: []string{good.URL},
+		SHA256: hex.EncodeToString(checksum[:]), Size: int64(len(payload)),
+	}
+	if err := service.download(t.Context(), artifact, destination); err != nil {
+		t.Fatal(err)
+	}
+	actual, err := os.ReadFile(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(actual) != string(payload) {
+		t.Fatalf("downloaded %q, want %q", actual, payload)
 	}
 }
 

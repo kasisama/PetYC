@@ -383,7 +383,7 @@ func buildEconomy(s *config.ConfigSnapshot) {
 	for _, zone := range s.AdventureZones {
 		s.LiveEventSources = append(s.LiveEventSources, models.LiveEventExpeditionSourceConfig{EventKey: "season_01_nature_ruins", ZoneKey: zone.Key})
 	}
-	s.ChanceGames = []models.ChanceGameConfig{{GameKey: "fishing", Name: "生态垂钓", Enabled: true, CostCurrency: 10, DailyLimit: 5, PityThreshold: 5, PityRewardKey: "echo_shell", DurationSecond: 60, Rules: "公开概率，第5次保底收藏品。"}, {GameKey: "lottery", Name: "遗迹抽签", Enabled: true, CostItem: "遗迹抽签券", CostQuantity: 1, DailyLimit: 3, PityThreshold: 10, PityRewardKey: "star_core", Rules: "不售卖抽签券，第10次保底星辉晶核。"}}
+	s.ChanceGames = []models.ChanceGameConfig{{GameKey: "fishing", Name: "生态垂钓", Enabled: true, CostCurrency: 10, DailyLimit: 5, PityThreshold: 5, PityRewardKey: "echo_shell", DurationSecond: 60, Rules: "公开概率，第5次保底收藏品。"}, {GameKey: "lottery", Name: "遗迹抽签", Enabled: true, CostItem: "遗迹抽签券", CostQuantity: 1, DailyLimit: 3, PityThreshold: 10, PityRewardKey: "star_core", Rules: "消耗遗迹抽签券抽取一次，每日3次，第10次保底星辉晶核。"}}
 	for _, game := range s.ChanceGames {
 		for i, key := range []string{"meadow_fiber", "survey_ink", "pressed_flower", "star_core"} {
 			s.ChanceRewards = append(s.ChanceRewards, models.ChanceRewardConfig{GameKey: game.GameKey, RewardKey: game.GameKey + "_" + key, Name: itemName(s.Items, key), Weight: []int{60, 28, 10, 2}[i], ItemName: itemName(s.Items, key), Quantity: 1, Rare: i >= 2, Enabled: true, SortOrder: i * 10})

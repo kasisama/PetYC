@@ -2,6 +2,7 @@ package gameplay
 
 import (
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 	"qq-pet-saas/models"
@@ -87,4 +88,18 @@ func ReservePetRunTx(tx *gorm.DB, accountID, petID string) error {
 		return err
 	}
 	return CheckAccountRunCapacityTx(tx, accountID)
+}
+
+func ReleasePetAdventureOccupancyTx(tx *gorm.DB, accountID, petID string, now time.Time) error {
+	if tx.Migrator().HasTable(&models.AdventureCombatSession{}) {
+		if err := tx.Model(&models.AdventureCombatSession{}).Where("account_id = ? AND pet_id = ? AND status = ?", accountID, petID, "active").Updates(map[string]any{"status": "expired", "finished_at": now}).Error; err != nil {
+			return err
+		}
+	}
+	if tx.Migrator().HasTable(&models.AdventureExplorationSession{}) {
+		if err := tx.Model(&models.AdventureExplorationSession{}).Where("account_id = ? AND pet_id = ? AND status = ?", accountID, petID, "active").Updates(map[string]any{"status": "expired", "finished_at": now}).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }

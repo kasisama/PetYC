@@ -48,7 +48,7 @@ func newTestService(t *testing.T) (*Service, *gorm.DB, *time.Time) {
 		&models.PersonalityRuleConfig{}, &models.CodexCatalogConfig{},
 		&models.PetSpeciesConfig{}, &models.CheckinRewardConfig{},
 		&models.PetEvolutionRuleConfig{}, &models.PetEvolutionCostConfig{}, &models.PetSkillUnlockConfig{}, &models.AdventureLevelConfig{},
-		&models.ItemConfig{}, &models.ShopItemConfig{},
+		&models.ItemConfig{}, &models.ShopItemConfig{}, &models.ShopPurchaseLog{},
 		&models.AdventureMapConfig{}, &models.AdventureZoneConfig{}, &models.AdventureZonePrerequisiteConfig{},
 		&models.AdventureObjectiveConfig{}, &models.AdventureMonsterConfig{}, &models.AdventureSkillConfig{},
 		&models.AdventureMonsterSkillConfig{}, &models.AdventureEncounterConfig{}, &models.AdventureEncounterEffectConfig{}, &models.AdventureLootPoolConfig{},
@@ -277,8 +277,11 @@ func TestConfiguredGrowthRulesDriveRoleStanceAndPersonality(t *testing.T) {
 	account, _ := service.ResolveAccount(context.Background(), event)
 	_, _ = service.Adopt(context.Background(), account.ID, "光芽兽", "配置测试宠物")
 	pet, err := service.SetRole(context.Background(), account.ID, "采集者")
-	if err != nil || pet.Skills != "辨识、采样、整理" {
-		t.Fatalf("configured role did not drive loadout: pet=%+v err=%v", pet, err)
+	if err != nil || pet.Role != "采集者" {
+		t.Fatalf("configured role was not applied: pet=%+v err=%v", pet, err)
+	}
+	if pet.Skills == "辨识、采样、整理" || strings.Contains(pet.Skills, "辨识") {
+		t.Fatalf("growth role flavor names must not overwrite combat skills: pet=%+v", pet)
 	}
 	if err = service.SetStance(context.Background(), account.ID, "潜行"); err != nil {
 		t.Fatalf("configured stance was rejected: %v", err)
@@ -593,8 +596,11 @@ func TestSetRoleAssignsDeterministicSkillLoadout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pet.Role != "守护者" || !strings.Contains(pet.Skills, "护盾") {
-		t.Fatalf("unexpected role loadout: %#v", pet)
+	if pet.Role != "守护者" {
+		t.Fatalf("unexpected role: %#v", pet)
+	}
+	if strings.Contains(pet.Skills, "护盾") || strings.Contains(pet.Skills, "寻路") {
+		t.Fatalf("role must not overwrite combat skill keys with flavor names: %#v", pet)
 	}
 }
 

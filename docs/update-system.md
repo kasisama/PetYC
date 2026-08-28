@@ -22,6 +22,18 @@
 UPDATE_SIGNING_PRIVATE_KEY
 ```
 
+国内更新源还需要配置以下 GitHub Actions Secrets：
+
+```text
+GITEE_TOKEN
+GITEE_OWNER
+GITEE_REPO
+```
+
+`GITEE_REPO` 应指向一个已初始化的公开 Gitee 更新仓库。Release 工作流会自动读取默认分支、创建同版本 Gitee Release、上传二进制，并将最新清单发布到固定的 `stable/update-manifest.json` 和 `stable/update-manifest.json.sig`。
+
+正式构建优先从 Gitee 检查并下载更新，失败后回退 GitHub。Gitee Token 只在发布工作流中使用，不会写入程序。
+
 其值是 base64 编码的 64 字节 Ed25519 私钥。可以使用项目内工具生成密钥：
 
 ```powershell
@@ -43,7 +55,7 @@ update-manifest.json
 update-manifest.json.sig
 ```
 
-签名覆盖 `update-manifest.json` 的原始字节；清单内部的 SHA-256 和大小用于验证下载后的平台二进制。
+签名覆盖 `update-manifest.json` 的原始字节；清单内部的 SHA-256 和大小用于验证下载后的平台二进制。清单中的 `url` 是 Gitee 主下载地址，可选的 `mirrors` 保存 GitHub 备用地址；旧客户端会忽略 `mirrors`，新客户端会按顺序自动重试。
 
 ## 恢复
 
@@ -54,4 +66,3 @@ update-manifest.json.sig
 ```
 
 新版本在 60 秒内未以期望版本通过 `/healthz` 时，辅助进程会终止新进程、恢复程序和数据库并重新启动旧版本。发布包含数据库结构变更的版本前，仍必须验证旧版本能够读取迁移后的数据库；破坏性迁移应拆成独立的后置清理版本。
-

@@ -4,10 +4,15 @@ package updater
 
 import (
 	"errors"
+	"os"
 	"os/exec"
 	"syscall"
 	"time"
 )
+
+var makeExecutable = func(path string) error {
+	return os.Chmod(path, 0o755)
+}
 
 func configureDetached(command *exec.Cmd) {
 	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}

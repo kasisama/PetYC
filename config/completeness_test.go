@@ -1,10 +1,36 @@
 package config
 
 import (
+	"encoding/json"
+	"os"
 	"testing"
 
 	"qq-pet-saas/models"
 )
+
+func TestDefaultSnapshotsUseNewbieFriendlyCareCosts(t *testing.T) {
+	official, err := LoadOfficialSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseRaw, err := os.ReadFile("defaults/base_surface.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var base ConfigSnapshot
+	if err = json.Unmarshal(baseRaw, &base); err != nil {
+		t.Fatal(err)
+	}
+	for name, snapshot := range map[string]ConfigSnapshot{"official": official, "base": base} {
+		values := map[string]string{}
+		for _, row := range snapshot.System {
+			values[row.Key] = row.Value
+		}
+		if values["Core.InitialCoin"] != "240" || values["Core.TreatCost"] != "80" || values["Core.RenameCost"] != "120" {
+			t.Fatalf("%s 默认新手数值不一致: %#v", name, values)
+		}
+	}
+}
 
 func TestOfficialSnapshotMeetsLaunchReadiness(t *testing.T) {
 	snapshot, err := LoadOfficialSnapshot()

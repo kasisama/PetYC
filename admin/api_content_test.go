@@ -94,6 +94,38 @@ func TestGameSettingsParseHashSeparatedStarterPets(t *testing.T) {
 	}
 }
 
+func TestGameSettingsExposeTreatCost(t *testing.T) {
+	router, db := newContentTestRouter(t)
+	db.Create(&models.SystemConfig{Key: "Core.TreatCost", Value: "500"})
+	response := doConfigRequest(t, router, http.MethodGet, "/api/admin/settings/game", nil)
+	if response.Code != 0 {
+		t.Fatalf("读取游戏参数失败: %s", response.Msg)
+	}
+	var rows []struct {
+		Key   string      `json:"key"`
+		Label string      `json:"label"`
+		Group string      `json:"group"`
+		Type  string      `json:"type"`
+		Value interface{} `json:"value"`
+	}
+	if err := json.Unmarshal(response.Data, &rows); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, row := range rows {
+		if row.Key != "Core.TreatCost" {
+			continue
+		}
+		found = true
+		if row.Label != "治疗费用" || row.Type != "number" || row.Value != float64(500) {
+			t.Fatalf("治疗费用参数不正确: %+v", row)
+		}
+	}
+	if !found {
+		t.Fatalf("后台游戏参数应包含治疗费用，实际返回 %s", response.Data)
+	}
+}
+
 func TestGameSettingsUseChineseStructuredFieldsAndHideRetiredKeys(t *testing.T) {
 	router, db := newContentTestRouter(t)
 	db.Create(&models.SystemConfig{Key: "Core.CoinName", Value: "星砂"})

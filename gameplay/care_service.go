@@ -3,6 +3,7 @@ package gameplay
 import (
 	"context"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 	"qq-pet-saas/models"
@@ -101,7 +102,8 @@ func (service *CareService) Treat(ctx context.Context, accountID, currencyKey st
 		if healthMax <= 0 {
 			healthMax = 100
 		}
-		if pet.Health >= healthMax && pet.Status != "濒死" {
+		needsTreat := pet.Health < healthMax || pet.Status == "濒死" || pet.Status == "受伤" || pet.Status == "探索" || pet.Status == "探索战斗"
+		if !needsTreat {
 			return ErrTreatmentNotNeeded
 		}
 		if cost > 0 {
@@ -114,8 +116,12 @@ func (service *CareService) Treat(ctx context.Context, accountID, currencyKey st
 		result.HealthAfter = healthMax
 		pet.Health = healthMax
 		pet.HealthMax = healthMax
-		if pet.Status == "濒死" {
+		switch pet.Status {
+		case "濒死", "受伤", "探索", "探索战斗":
 			pet.Status = "空闲"
+		}
+		if err := ReleasePetAdventureOccupancyTx(tx, accountID, pet.ID, time.Now()); err != nil {
+			return err
 		}
 		if err := tx.Save(&pet).Error; err != nil {
 			return err

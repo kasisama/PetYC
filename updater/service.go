@@ -17,10 +17,17 @@ import (
 )
 
 const (
-	defaultManifestURL = "https://github.com/kasisama/PetYC/releases/latest/download/update-manifest.json"
-	defaultReleaseURL  = "https://github.com/kasisama/PetYC/releases/latest"
-	maxManifestBytes   = 2 << 20
-	maxArtifactBytes   = 512 << 20
+	defaultGitHubManifestURL = "https://github.com/kasisama/PetYC/releases/latest/download/update-manifest.json"
+	defaultGitHubReleaseURL  = "https://github.com/kasisama/PetYC/releases/latest"
+	maxManifestBytes         = 2 << 20
+	maxArtifactBytes         = 512 << 20
+)
+
+// These values are injected by the release workflow. They are public URLs,
+// never credentials. Empty values keep development builds on GitHub only.
+var (
+	defaultGiteeManifestURL string
+	defaultGiteeReleaseURL  string
 )
 
 type CheckInfo struct {
@@ -46,17 +53,23 @@ type Status struct {
 }
 
 type Config struct {
-	CurrentVersion string
-	ManifestURL    string
-	SignatureURL   string
-	PublicKey      string
-	ReleaseURL     string
-	HTTPClient     *http.Client
-	ExecutablePath func() (string, error)
-	RuntimeOS      string
-	RuntimeArch    string
-	Environment    func(string) string
-	FileExists     func(string) bool
+	CurrentVersion  string
+	ManifestSources []ManifestSource
+	ManifestURL     string
+	SignatureURL    string
+	PublicKey       string
+	ReleaseURL      string
+	HTTPClient      *http.Client
+	ExecutablePath  func() (string, error)
+	RuntimeOS       string
+	RuntimeArch     string
+	Environment     func(string) string
+	FileExists      func(string) bool
+}
+
+type ManifestSource struct {
+	ManifestURL  string
+	SignatureURL string
 }
 
 type Service struct {
@@ -74,17 +87,15 @@ type Service struct {
 }
 
 func NewService(config Config) *Service {
-	if config.ManifestURL == "" {
-		config.ManifestURL = defaultManifestURL
-	}
-	if config.SignatureURL == "" {
-		config.SignatureURL = config.ManifestURL + ".sig"
-	}
+	config.ManifestSources = normalizeManifestSources(config)
 	if config.PublicKey == "" {
 		config.PublicKey = DefaultPublicKey
 	}
 	if config.ReleaseURL == "" {
-		config.ReleaseURL = defaultReleaseURL
+		config.ReleaseURL = strings.TrimSpace(defaultGiteeReleaseURL)
+		if config.ReleaseURL == "" {
+			config.ReleaseURL = defaultGitHubReleaseURL
+		}
 	}
 	if config.HTTPClient == nil {
 		config.HTTPClient = &http.Client{Timeout: 30 * time.Second}
@@ -108,6 +119,44 @@ func NewService(config Config) *Service {
 		}
 	}
 	return &Service{config: config, status: Status{State: "idle", CurrentVersion: config.CurrentVersion}}
+}
+
+func normalizeManifestSources(config Config) []ManifestSource {
+	if len(config.ManifestSources) > 0 {
+		return completeManifestSources(config.ManifestSources)
+	}
+	if strings.TrimSpace(config.ManifestURL) != "" {
+		return completeManifestSources([]ManifestSource{{
+			ManifestURL: config.ManifestURL, SignatureURL: config.SignatureURL,
+		}})
+	}
+	sources := make([]ManifestSource, 0, 2)
+	if address := strings.TrimSpace(defaultGiteeManifestURL); address != "" {
+		sources = append(sources, ManifestSource{ManifestURL: address})
+	}
+	sources = append(sources, ManifestSource{ManifestURL: defaultGitHubManifestURL})
+	return completeManifestSources(sources)
+}
+
+func completeManifestSources(sources []ManifestSource) []ManifestSource {
+	result := make([]ManifestSource, 0, len(sources))
+	seen := make(map[string]struct{}, len(sources))
+	for _, source := range sources {
+		source.ManifestURL = strings.TrimSpace(source.ManifestURL)
+		if source.ManifestURL == "" {
+			continue
+		}
+		if _, exists := seen[source.ManifestURL]; exists {
+			continue
+		}
+		seen[source.ManifestURL] = struct{}{}
+		source.SignatureURL = strings.TrimSpace(source.SignatureURL)
+		if source.SignatureURL == "" {
+			source.SignatureURL = source.ManifestURL + ".sig"
+		}
+		result = append(result, source)
+	}
+	return result
 }
 
 func (service *Service) SetRuntime(healthURL string, shutdown func()) {
@@ -275,15 +324,7 @@ func (service *Service) fetchUpdate(ctx context.Context) (Manifest, Artifact, Ch
 	if _, err := parseVersion(service.config.CurrentVersion); err != nil {
 		return Manifest{}, Artifact{}, CheckInfo{}, fmt.Errorf("当前版本无效: %w", err)
 	}
-	raw, err := service.fetchSmall(ctx, service.config.ManifestURL)
-	if err != nil {
-		return Manifest{}, Artifact{}, CheckInfo{}, fmt.Errorf("获取更新清单: %w", err)
-	}
-	signature, err := service.fetchSmall(ctx, service.config.SignatureURL)
-	if err != nil {
-		return Manifest{}, Artifact{}, CheckInfo{}, fmt.Errorf("获取更新签名: %w", err)
-	}
-	manifest, err := ParseAndVerifyManifest(raw, signature, service.config.PublicKey)
+	manifest, err := service.fetchVerifiedManifest(ctx)
 	if err != nil {
 		return Manifest{}, Artifact{}, CheckInfo{}, err
 	}
@@ -304,6 +345,32 @@ func (service *Service) fetchUpdate(ctx context.Context) (Manifest, Artifact, Ch
 		result.InstallMode = "portable"
 	}
 	return manifest, artifact, result, nil
+}
+
+func (service *Service) fetchVerifiedManifest(ctx context.Context) (Manifest, error) {
+	errorsBySource := make([]error, 0, len(service.config.ManifestSources))
+	for _, source := range service.config.ManifestSources {
+		raw, err := service.fetchSmall(ctx, source.ManifestURL)
+		if err != nil {
+			errorsBySource = append(errorsBySource, fmt.Errorf("%s: 获取清单: %w", source.ManifestURL, err))
+			continue
+		}
+		signature, err := service.fetchSmall(ctx, source.SignatureURL)
+		if err != nil {
+			errorsBySource = append(errorsBySource, fmt.Errorf("%s: 获取签名: %w", source.ManifestURL, err))
+			continue
+		}
+		manifest, err := ParseAndVerifyManifest(raw, signature, service.config.PublicKey)
+		if err != nil {
+			errorsBySource = append(errorsBySource, fmt.Errorf("%s: %w", source.ManifestURL, err))
+			continue
+		}
+		return manifest, nil
+	}
+	if len(errorsBySource) == 0 {
+		return Manifest{}, errors.New("没有可用的更新清单源")
+	}
+	return Manifest{}, fmt.Errorf("所有更新清单源均不可用: %w", errors.Join(errorsBySource...))
 }
 
 func (service *Service) fetchSmall(ctx context.Context, address string) ([]byte, error) {
@@ -359,7 +426,22 @@ func (service *Service) autoUpdateCapability() (bool, string) {
 }
 
 func (service *Service) download(ctx context.Context, artifact Artifact, destination string) error {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, artifact.URL, nil)
+	errorsBySource := make([]error, 0, 1+len(artifact.Mirrors))
+	for _, address := range artifact.downloadURLs() {
+		if err := service.downloadFrom(ctx, artifact, address, destination); err == nil {
+			return nil
+		} else {
+			errorsBySource = append(errorsBySource, fmt.Errorf("%s: %w", address, err))
+		}
+	}
+	if len(errorsBySource) == 0 {
+		return errors.New("更新包没有可用下载地址")
+	}
+	return fmt.Errorf("所有更新包下载源均不可用: %w", errors.Join(errorsBySource...))
+}
+
+func (service *Service) downloadFrom(ctx context.Context, artifact Artifact, address, destination string) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 	if err != nil {
 		return err
 	}
@@ -377,6 +459,10 @@ func (service *Service) download(ctx context.Context, artifact Artifact, destina
 	}
 	temporary := destination + ".download"
 	_ = os.Remove(temporary)
+	service.mu.Lock()
+	service.status.Downloaded = 0
+	service.status.Progress = 0
+	service.mu.Unlock()
 	file, err := os.OpenFile(temporary, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return fmt.Errorf("创建更新临时文件: %w", err)

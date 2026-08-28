@@ -126,6 +126,66 @@ func TestGrantItemRejectsUnavailableConfiguredItem(t *testing.T) {
 	}
 }
 
+func TestGrantCurrencyIsIdempotentAndAudited(t *testing.T) {
+	router, db := newEcosystemTestRouter(t)
+	accountID := "00000000-0000-0000-0000-000000123458"
+	if err := db.Create(&models.PlayerAccount{ID: accountID}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.CurrencyConfig{Key: "primary_coin", Name: "星砂", Enabled: true, Builtin: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{"currency_key":"primary_coin","amount":88,"direction":"grant","reason":"补偿漏发签到","idempotency_key":"currency-grant-123456"}`)
+	for range 2 {
+		response := doConfigRequest(t, router, http.MethodPost, "/api/admin/players/"+accountID+"/currency", body)
+		if response.Code != 0 {
+			t.Fatalf("currency grant failed: %s", response.Msg)
+		}
+	}
+	var wallet models.PlayerWallet
+	if err := db.First(&wallet, "account_id = ? AND currency_key = ?", accountID, "primary_coin").Error; err != nil || wallet.Balance != 88 {
+		t.Fatalf("expected idempotent balance 88, got %+v err=%v", wallet, err)
+	}
+	var auditCount int64
+	db.Model(&models.AdminAuditLog{}).Where("action = ? AND success = ?", "grant_currency", true).Count(&auditCount)
+	if auditCount != 1 {
+		t.Fatalf("expected one successful currency grant audit, got %d", auditCount)
+	}
+}
+
+func TestDebitCurrencyRejectsInsufficientBalance(t *testing.T) {
+	router, db := newEcosystemTestRouter(t)
+	accountID := "00000000-0000-0000-0000-000000123459"
+	if err := db.Create(&models.PlayerAccount{ID: accountID}).Error; err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{"currency_key":"primary_coin","amount":10,"direction":"debit","reason":"回滚误发","idempotency_key":"currency-debit-123456"}`)
+	response := doConfigRequest(t, router, http.MethodPost, "/api/admin/players/"+accountID+"/currency", body)
+	if response.Code == 0 {
+		t.Fatal("expected insufficient debit to be rejected")
+	}
+	var wallet models.PlayerWallet
+	lookup := db.Limit(1).Find(&wallet, "account_id = ? AND currency_key = ?", accountID, "primary_coin")
+	if lookup.Error != nil {
+		t.Fatal(lookup.Error)
+	}
+	if lookup.RowsAffected == 1 && wallet.Balance != 0 {
+		t.Fatalf("failed debit must not change balance: %+v", wallet)
+	}
+}
+
+func TestGrantCurrencyRejectsUnknownKey(t *testing.T) {
+	router, db := newEcosystemTestRouter(t)
+	accountID := "00000000-0000-0000-0000-000000123460"
+	if err := db.Create(&models.PlayerAccount{ID: accountID}).Error; err != nil {
+		t.Fatal(err)
+	}
+	response := doConfigRequest(t, router, http.MethodPost, "/api/admin/players/"+accountID+"/currency", []byte(`{"currency_key":"not_a_wallet","amount":1,"direction":"grant","reason":"验证未知货币","idempotency_key":"currency-unknown-123"}`))
+	if response.Code == 0 {
+		t.Fatal("unknown currency key must be rejected")
+	}
+}
+
 func TestCannotDeleteLastIdentityAndFailureIsAudited(t *testing.T) {
 	router, db := newEcosystemTestRouter(t)
 	accountID := "00000000-0000-0000-0000-000000654321"
