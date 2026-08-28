@@ -102,6 +102,24 @@ jobs:
           ! grep -E -i 'app_secret|onebot.*token|masterqq|notifyqq|player_account|wallet_ledger' config/defaults/config_v0.1.0.json
           "./dist/petyc_${VERSION}_linux_amd64" --version | grep -Fx "$VERSION"
 
+      - name: Publish GitHub binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          WINDOWS="dist/petyc_${VERSION}_windows_amd64.exe"
+          LINUX="dist/petyc_${VERSION}_linux_amd64"
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$WINDOWS" "$LINUX" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "$WINDOWS" "$LINUX" \
+              --verify-tag \
+              --generate-notes \
+              --title "$GITHUB_REF_NAME" \
+              --latest
+          fi
+
       - name: Publish binaries to Gitee prerelease
         env:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
@@ -173,6 +191,7 @@ jobs:
             local output="$2"
             remove_existing "$(basename "$path")"
             curl --silent --show-error --fail-with-body \
+              --connect-timeout 20 --max-time 600 \
               --form "access_token=$GITEE_TOKEN" \
               --form "file=@$path" \
               "$API/releases/$RELEASE_ID/attach_files" > "$output"
