@@ -3,6 +3,12 @@ name: Release
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to retry
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -10,10 +16,13 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ inputs.tag || github.ref }}
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -27,7 +36,7 @@ jobs:
       - name: Verify release metadata
         shell: bash
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_TAG#v}"
           test "$(node -p "require('./admin-ui/package.json').version")" = "$VERSION"
           grep -F "## v$VERSION（" CHANGELOG.md | grep -v '开发中'
           grep -F "当前已发布版本：\`v$VERSION\`" README.md
@@ -88,7 +97,7 @@ jobs:
         env:
           CGO_ENABLED: '0'
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_TAG#v}"
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           mkdir -p dist
           LDFLAGS="-s -w -X main.version=$VERSION -X qq-pet-saas/updater.defaultGiteeManifestURL=$GITEE_MANIFEST_URL -X qq-pet-saas/updater.defaultGiteeReleaseURL=$GITEE_RELEASE_URL"
@@ -97,7 +106,7 @@ jobs:
 
       - name: Check release contents
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_TAG#v}"
           ! strings "dist/petyc_${VERSION}_linux_amd64" | grep -F '初始数据/'
           ! grep -E -i 'app_secret|onebot.*token|masterqq|notifyqq|player_account|wallet_ledger' config/defaults/config_v0.1.0.json
           "./dist/petyc_${VERSION}_linux_amd64" --version | grep -Fx "$VERSION"
@@ -107,16 +116,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_TAG#v}"
           WINDOWS="dist/petyc_${VERSION}_windows_amd64.exe"
           LINUX="dist/petyc_${VERSION}_linux_amd64"
-          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" "$WINDOWS" "$LINUX" --clobber
+          if gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "$WINDOWS" "$LINUX" --clobber
           else
-            gh release create "$GITHUB_REF_NAME" "$WINDOWS" "$LINUX" \
+            gh release create "$RELEASE_TAG" "$WINDOWS" "$LINUX" \
               --verify-tag \
               --generate-notes \
-              --title "$GITHUB_REF_NAME" \
+              --title "$RELEASE_TAG" \
               --latest
           fi
 
@@ -129,7 +138,7 @@ jobs:
           set -euo pipefail
           test -n "$GITEE_TOKEN"
           API="https://gitee.com/api/v5/repos/$GITEE_OWNER/$GITEE_REPO"
-          TAG="$GITHUB_REF_NAME"
+          TAG="$RELEASE_TAG"
           VERSION="${TAG#v}"
           WINDOWS="petyc_${VERSION}_windows_amd64.exe"
           LINUX="petyc_${VERSION}_linux_amd64"
@@ -216,8 +225,8 @@ jobs:
           UPDATE_SIGNING_PRIVATE_KEY: ${{ secrets.UPDATE_SIGNING_PRIVATE_KEY }}
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
-          TAG="$GITHUB_REF_NAME"
+          VERSION="${RELEASE_TAG#v}"
+          TAG="$RELEASE_TAG"
           WINDOWS="petyc_${VERSION}_windows_amd64.exe"
           LINUX="petyc_${VERSION}_linux_amd64"
           WINDOWS_SHA=$(sha256sum "dist/$WINDOWS" | cut -d ' ' -f1)
@@ -283,13 +292,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          if gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" dist/* --clobber
           else
-            gh release create "$GITHUB_REF_NAME" dist/* \
+            gh release create "$RELEASE_TAG" dist/* \
               --verify-tag \
               --generate-notes \
-              --title "$GITHUB_REF_NAME" \
+              --title "$RELEASE_TAG" \
               --draft
           fi
 
@@ -343,7 +352,7 @@ jobs:
                 --form "access_token=$GITEE_TOKEN" \
                 --form "content=$encoded" \
                 --form "sha=$sha" \
-                --form "message=release: update $path for $GITHUB_REF_NAME" \
+                --form "message=release: update $path for $RELEASE_TAG" \
                 --form "branch=$GITEE_BRANCH" \
                 "$API/contents/$path" > /dev/null
             elif [ "$status" = 404 ]; then
@@ -351,7 +360,7 @@ jobs:
                 --request POST \
                 --form "access_token=$GITEE_TOKEN" \
                 --form "content=$encoded" \
-                --form "message=release: create $path for $GITHUB_REF_NAME" \
+                --form "message=release: create $path for $RELEASE_TAG" \
                 --form "branch=$GITEE_BRANCH" \
                 "$API/contents/$path" > /dev/null
             else
@@ -383,7 +392,7 @@ jobs:
                   --form "access_token=$GITEE_TOKEN" \
                   --form "content=$encoded" \
                   --form "sha=$current_sha" \
-                  --form "message=release: roll back $path after failed $GITHUB_REF_NAME publish" \
+                  --form "message=release: roll back $path after failed $RELEASE_TAG publish" \
                   --form "branch=$GITEE_BRANCH" \
                   "$API/contents/$path" > /dev/null
               elif [ "$current_status" = 404 ]; then
@@ -391,7 +400,7 @@ jobs:
                   --request POST \
                   --form "access_token=$GITEE_TOKEN" \
                   --form "content=$encoded" \
-                  --form "message=release: restore $path after failed $GITHUB_REF_NAME publish" \
+                  --form "message=release: restore $path after failed $RELEASE_TAG publish" \
                   --form "branch=$GITEE_BRANCH" \
                   "$API/contents/$path" > /dev/null
               else
@@ -404,7 +413,7 @@ jobs:
                 --request DELETE \
                 --form "access_token=$GITEE_TOKEN" \
                 --form "sha=$current_sha" \
-                --form "message=release: remove $path after failed $GITHUB_REF_NAME publish" \
+                --form "message=release: remove $path after failed $RELEASE_TAG publish" \
                 --form "branch=$GITEE_BRANCH" \
                 "$API/contents/$path" > /dev/null
             elif [ "$previous_status" != 404 ] || [ "$current_status" != 404 ]; then
@@ -452,7 +461,7 @@ jobs:
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release edit "$GITHUB_REF_NAME" --draft=false
+        run: gh release edit "$RELEASE_TAG" --draft=false
 
       - name: Activate Gitee release
         env:
@@ -465,8 +474,8 @@ jobs:
           curl --silent --show-error --fail-with-body \
             --request PATCH \
             --form "access_token=$GITEE_TOKEN" \
-            --form "tag_name=$GITHUB_REF_NAME" \
-            --form "name=$GITHUB_REF_NAME" \
-            --form "body=PetYC $GITHUB_REF_NAME 自动更新发行版" \
+            --form "tag_name=$RELEASE_TAG" \
+            --form "name=$RELEASE_TAG" \
+            --form "body=PetYC $RELEASE_TAG 自动更新发行版" \
             --form "prerelease=false" \
             "$API/releases/$GITEE_RELEASE_ID" > /dev/null
