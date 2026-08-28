@@ -175,7 +175,6 @@ jobs:
             --form "access_token=$GITEE_TOKEN" \
             --form "tag_name=$TAG" \
             --form "name=$TAG" \
-            --form "body=PetYC $TAG 自动更新发行版" \
             --form "prerelease=true" \
             "$API/releases/$RELEASE_ID" > /dev/null
 
@@ -198,7 +197,21 @@ jobs:
           upload_attachment() {
             local path="$1"
             local output="$2"
-            remove_existing "$(basename "$path")"
+            local name
+            local expected_size
+            local existing_size
+            name=$(basename "$path")
+            expected_size=$(stat -c %s "$path")
+            existing_size=$(jq -r --arg name "$name" \
+              '.[] | select(.name == $name) | .size' \
+              /tmp/gitee-attachments.json | head -n 1)
+            if [ "$existing_size" = "$expected_size" ]; then
+              jq --arg name "$name" \
+                '.[] | select(.name == $name)' \
+                /tmp/gitee-attachments.json > "$output"
+              return
+            fi
+            remove_existing "$name"
             curl --silent --show-error --fail-with-body \
               --connect-timeout 20 --max-time 600 \
               --form "access_token=$GITEE_TOKEN" \
@@ -476,6 +489,5 @@ jobs:
             --form "access_token=$GITEE_TOKEN" \
             --form "tag_name=$RELEASE_TAG" \
             --form "name=$RELEASE_TAG" \
-            --form "body=PetYC $RELEASE_TAG 自动更新发行版" \
             --form "prerelease=false" \
             "$API/releases/$GITEE_RELEASE_ID" > /dev/null
