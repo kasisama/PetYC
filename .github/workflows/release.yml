@@ -119,7 +119,14 @@ jobs:
           STATUS=$(curl --silent --show-error --output /tmp/gitee-release.json \
             --get --data-urlencode "access_token=$GITEE_TOKEN" \
             --write-out '%{http_code}' "$API/releases/tags/$TAG")
-          if [ "$STATUS" = 404 ]; then
+          if [ "$STATUS" != 200 ] && [ "$STATUS" != 404 ]; then
+            cat /tmp/gitee-release.json
+            exit 1
+          fi
+          RELEASE_ID=$(jq -r '.id // empty' /tmp/gitee-release.json)
+          # Gitee currently returns HTTP 200 with a JSON null body when a tag
+          # has no release, so an empty id must be treated like a 404.
+          if [ -z "$RELEASE_ID" ]; then
             curl --silent --show-error --fail-with-body \
               --form "access_token=$GITEE_TOKEN" \
               --form "tag_name=$TAG" \
@@ -128,12 +135,13 @@ jobs:
               --form "target_commitish=$GITEE_BRANCH" \
               --form "prerelease=true" \
               "$API/releases" > /tmp/gitee-release.json
-          elif [ "$STATUS" != 200 ]; then
-            cat /tmp/gitee-release.json
+            RELEASE_ID=$(jq -r '.id // empty' /tmp/gitee-release.json)
+          fi
+          if [ -z "$RELEASE_ID" ]; then
+            echo "Gitee release response did not include an id" >&2
+            jq '{message, error}' /tmp/gitee-release.json >&2 || true
             exit 1
           fi
-          RELEASE_ID=$(jq -r '.id // empty' /tmp/gitee-release.json)
-          test -n "$RELEASE_ID"
 
           curl --silent --show-error --fail-with-body \
             --request PATCH \
