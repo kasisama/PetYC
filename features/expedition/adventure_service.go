@@ -26,12 +26,26 @@ var (
 	ErrInvalidCombatAction = errors.New("无效的战斗行动")
 )
 
+// CombatSkillCooldownError keeps a player-facing reason when a valid skill is
+// temporarily unavailable. The remaining turns are counted after the current
+// round has been resolved.
+type CombatSkillCooldownError struct {
+	SkillName      string
+	RemainingTurns int
+}
+
+func (err *CombatSkillCooldownError) Error() string {
+	return fmt.Sprintf("技能 %s 仍在冷却，还需等待 %d 回合", err.SkillName, err.RemainingTurns)
+}
+
 type AdventureZoneView struct {
 	Zone                 models.AdventureZoneConfig `json:"zone"`
 	Unlocked             bool                       `json:"unlocked"`
 	ExplorationPercent   int                        `json:"exploration_percent"`
 	ExpeditionUnlocked   bool                       `json:"expedition_unlocked"`
 	MissingPrerequisites []string                   `json:"missing_prerequisites"`
+	StageName            string                     `json:"stage_name,omitempty"`
+	CurrentGoal          string                     `json:"current_goal,omitempty"`
 }
 
 type AdventureMapView struct {
@@ -44,6 +58,9 @@ type ExplorationResult struct {
 	Encounter models.AdventureEncounterConfig    `json:"encounter"`
 	Combat    *models.AdventureCombatSession     `json:"combat,omitempty"`
 	Progress  models.PlayerZoneProgress          `json:"progress"`
+	Event     *AdventureStoryEventView           `json:"event,omitempty"`
+	StageName string                             `json:"stage_name,omitempty"`
+	Goal      string                             `json:"goal,omitempty"`
 }
 
 type AdventureCombatResult struct {
@@ -131,7 +148,14 @@ func (service *Service) ListAdventureMaps(ctx context.Context, accountID string)
 			if lookup.Error != nil {
 				return nil, lookup.Error
 			}
-			view.Zones = append(view.Zones, AdventureZoneView{Zone: zone, Unlocked: unlocked, MissingPrerequisites: missing, ExplorationPercent: progress.ExplorationPercent, ExpeditionUnlocked: progress.ExpeditionUnlocked})
+			stageName, currentGoal := "", ""
+			if nodeMode(zone) {
+				progress, stageName, currentGoal, err = service.nodeProgressForZone(ctx, accountID, zone)
+				if err != nil {
+					return nil, err
+				}
+			}
+			view.Zones = append(view.Zones, AdventureZoneView{Zone: zone, Unlocked: unlocked, MissingPrerequisites: missing, ExplorationPercent: progress.ExplorationPercent, ExpeditionUnlocked: progress.ExpeditionUnlocked, StageName: stageName, CurrentGoal: currentGoal})
 		}
 		result = append(result, view)
 	}
@@ -162,6 +186,13 @@ func (service *Service) ExploreZone(ctx context.Context, accountID, zoneKey stri
 }
 
 func (service *Service) ExploreZoneInCommunity(ctx context.Context, accountID, communityID, zoneKey string) (*ExplorationResult, error) {
+	var configuredZone models.AdventureZoneConfig
+	if err := service.DB.WithContext(ctx).First(&configuredZone, "key = ? AND enabled = ?", zoneKey, true).Error; err != nil {
+		return nil, ErrZoneLocked
+	}
+	if nodeMode(configuredZone) {
+		return service.exploreNodeZoneInCommunity(ctx, accountID, communityID, configuredZone)
+	}
 	var result ExplorationResult
 	err := gameplay.WithTransactionRetry(ctx, service.DB, func(tx *gorm.DB) error {
 		var zone models.AdventureZoneConfig
@@ -486,7 +517,7 @@ func (service *Service) CombatAction(ctx context.Context, accountID, actionKey, 
 			cooldowns := map[string]int{}
 			_ = json.Unmarshal([]byte(combat.CooldownsJSON), &cooldowns)
 			if cooldowns[skillKey] > 0 {
-				return fmt.Errorf("技能 %s 仍在冷却", skill.Name)
+				return &CombatSkillCooldownError{SkillName: skill.Name, RemainingTurns: cooldowns[skillKey]}
 			}
 			damage, damageRolls, err := service.adventureDamage(playerAttack, playerWisdom, monster.Defense, skill.PowerPermille, skill.WisdomPermille, stats.CritRate, skill.AccuracyPermille)
 			if err != nil {
@@ -701,8 +732,12 @@ func (service *Service) finishCombatTx(tx *gorm.DB, combat *models.AdventureComb
 		return err
 	}
 	pet := *petRow
-	if status == "defeat" || status == "expired" {
+	if status == "defeat" {
 		pet.Health, pet.Status = 1, "受伤"
+	} else if status == "expired" {
+		// 超时只代表玩家暂时离开，不应把尚未结算的战斗伤害变成濒死惩罚。
+		// 宠物档案中的生命值仍是开战前已持久化的状态，安全撤离后直接恢复空闲。
+		pet.Status = "空闲"
 	} else {
 		if combat.PlayerHealth < pet.Health {
 			pet.Health = combat.PlayerHealth
@@ -732,16 +767,26 @@ func (service *Service) settleCombatVictoryTx(tx *gorm.DB, combat *models.Advent
 	if err := tx.First(&exploration, "id = ?", combat.ExplorationID).Error; err != nil {
 		return nil, 0, combatVictoryProgress{}, err
 	}
-	firstClear := false
-	objectiveType := "monster_kill"
-	if monster.Elite {
-		objectiveType = "elite_kill"
-	}
-	completed, err := service.advanceObjectivesTx(tx, combat.AccountID, exploration.ZoneKey, objectiveType, monster.Key, 1)
-	if err != nil {
+	var zone models.AdventureZoneConfig
+	if err := tx.First(&zone, "key = ?", exploration.ZoneKey).Error; err != nil {
 		return nil, 0, combatVictoryProgress{}, err
 	}
-	firstClear = len(completed) > 0
+	firstClear := false
+	if nodeMode(zone) {
+		// 节点式区域的通关奖励由闭环事件结算，战斗本身不能被当作
+		// "首次区域通关"，否则每场主线战斗都会重复命中 first_clear_only 掉落。
+		firstClear = false
+	} else {
+		objectiveType := "monster_kill"
+		if monster.Elite {
+			objectiveType = "elite_kill"
+		}
+		completed, err := service.advanceObjectivesTx(tx, combat.AccountID, exploration.ZoneKey, objectiveType, monster.Key, 1)
+		if err != nil {
+			return nil, 0, combatVictoryProgress{}, err
+		}
+		firstClear = len(completed) > 0
+	}
 	var rewards []AdventureReward
 	fixed, err := service.grantLootPoolTx(tx, combat.AccountID, monster.FixedLootPoolKey, "combat:"+combat.ID, firstClear)
 	if err != nil {
@@ -753,6 +798,11 @@ func (service *Service) settleCombatVictoryTx(tx *gorm.DB, combat *models.Advent
 	}
 	rewards = append(rewards, fixed...)
 	rewards = append(rewards, random...)
+	if reward, err := service.grantCombatVictoryCurrencyTx(tx, combat); err != nil {
+		return nil, 0, combatVictoryProgress{}, err
+	} else {
+		rewards = append(rewards, reward)
+	}
 	xpAmount := monster.AdventureXP
 	if combat.CommunityID != "" {
 		if event, eventErr := currentLiveEventTx(tx, service.Now()); eventErr != nil {
@@ -771,13 +821,33 @@ func (service *Service) settleCombatVictoryTx(tx *gorm.DB, combat *models.Advent
 	if err != nil {
 		return nil, 0, combatVictoryProgress{}, err
 	}
-	var zone models.AdventureZoneConfig
-	if err := tx.First(&zone, "key = ?", exploration.ZoneKey).Error; err != nil {
-		return nil, 0, combatVictoryProgress{}, err
-	}
-	zoneProgress, err := service.recomputeZoneProgressTx(tx, combat.AccountID, zone)
-	if err != nil {
-		return nil, 0, combatVictoryProgress{}, err
+	var zoneProgress models.PlayerZoneProgress
+	if nodeMode(zone) {
+		var node models.PlayerAdventureNodeProgress
+		if err := tx.First(&node, "account_id = ? AND zone_key = ?", combat.AccountID, exploration.ZoneKey).Error; err != nil {
+			return nil, 0, combatVictoryProgress{}, err
+		}
+		var stage models.AdventureExplorationStageConfig
+		if node.CompletedAt != nil {
+			stage = models.AdventureExplorationStageConfig{Key: "completed", ProgressStart: 100, ProgressEnd: 100}
+		} else if err := tx.First(&stage, "key = ? AND enabled = ?", exploration.StageKey, true).Error; err != nil {
+			return nil, 0, combatVictoryProgress{}, err
+		}
+		var encounter models.AdventureEncounterConfig
+		if err := tx.First(&encounter, "zone_key = ? AND encounter_key = ?", exploration.ZoneKey, exploration.EncounterKey).Error; err != nil {
+			return nil, 0, combatVictoryProgress{}, err
+		}
+		var advanceErr error
+		zoneProgress, _, advanceErr = service.advanceNodeClueTx(tx, combat.AccountID, &node, stage, encounter)
+		if advanceErr != nil {
+			return nil, 0, combatVictoryProgress{}, advanceErr
+		}
+	} else {
+		var progressErr error
+		zoneProgress, progressErr = service.recomputeZoneProgressTx(tx, combat.AccountID, zone)
+		if progressErr != nil {
+			return nil, 0, combatVictoryProgress{}, progressErr
+		}
 	}
 	return rewards, xpAmount, combatVictoryProgress{Level: adventure.Level, ExplorationPercent: zoneProgress.ExplorationPercent, ExpeditionUnlocked: zoneProgress.ExpeditionUnlocked}, nil
 }

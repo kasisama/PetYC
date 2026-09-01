@@ -24,7 +24,7 @@ func handleLottery(ctx context.Context, event core.InboundEvent, service *Servic
 	if argument == "" || argument == "概率" || argument == "规则" {
 		rules, rulesErr := service.GetChanceRules(ctx, "lottery")
 		if rulesErr != nil {
-			return riskErrorMessage(rulesErr), nil
+			return riskErrorMessageFor(service.DB, rulesErr, "lottery"), nil
 		}
 		return withKeyboard(chanceRulesMessage(service.DB, rules, "发送“抽奖一次”即可抽取。"), []core.KeyboardButton{{Label: "抽取一次", Command: "抽奖一次"}}), nil
 	}
@@ -60,7 +60,7 @@ func handleFishingMenu(ctx context.Context, event core.InboundEvent, service *Se
 	}
 	rules, err := service.GetChanceRules(ctx, "fishing")
 	if err != nil {
-		return riskErrorMessage(err), nil
+		return riskErrorMessageFor(service.DB, err, "fishing"), nil
 	}
 	return chanceRulesMessage(service.DB, rules, "发送“抛竿”开始，等待后发送“收竿”。"), nil
 }
@@ -72,6 +72,12 @@ func handleCastFishing(ctx context.Context, event core.InboundEvent, service *Se
 	}
 	run, attempts, limit, castErr := service.StartFishing(ctx, account.ID, riskSourceKey(event))
 	if castErr != nil {
+		var busy *FishingBusyError
+		if errors.As(castErr, &busy) {
+			if message, occupied := petBusyMessage(ctx, service, account.ID); occupied {
+				return message, nil
+			}
+		}
 		return riskErrorMessageFor(service.DB, castErr, "fishing"), nil
 	}
 	wait := run.ReadyAt.Sub(service.Now())
@@ -346,6 +352,7 @@ func riskErrorMessage(err error) core.OutboundMessage {
 }
 
 func riskErrorMessageFor(db *gorm.DB, err error, gameKey string) core.OutboundMessage {
+	var fishingBusy *FishingBusyError
 	switch {
 	case errors.Is(err, gameplay.ErrInsufficientFunds):
 		return text(currencyName(db) + "不足，先签到、打工或完成远征吧。")
@@ -360,6 +367,14 @@ func riskErrorMessageFor(db *gorm.DB, err error, gameKey string) core.OutboundMe
 		return text("今天的参与次数已经用完，明天再来吧。")
 	case errors.Is(err, ErrFishingActive):
 		return text("已经抛过竿啦，等待后发送“收竿”。")
+	case errors.As(err, &fishingBusy):
+		status := strings.TrimSpace(fishingBusy.Status)
+		if status == "" || status == "空闲" {
+			return text("当前宠物正在进行其他行动，完成后再发送“抛竿”。")
+		}
+		return text(fmt.Sprintf("当前宠物正在%s，先完成并领取当前行动后再发送“抛竿”。", status))
+	case errors.Is(err, ErrFishingCapacity):
+		return text("当前账号的宠物行动名额已满，先完成或领取进行中的行动后再抛竿。")
 	case errors.Is(err, ErrFishingNotReady):
 		return text("水面还没有动静，再等一会儿后发送“收竿”。")
 	case errors.Is(err, ErrNoFishingRun):
@@ -375,6 +390,12 @@ func riskErrorMessageFor(db *gorm.DB, err error, gameKey string) core.OutboundMe
 	case errors.Is(err, ErrTradeSellerRequired):
 		return text("只有交易发布者可以取消这笔交易。")
 	case errors.Is(err, ErrChanceGameDisabled):
+		if gameKey == "lottery" {
+			return text("抽奖还没有配置奖池，请稍后再试。")
+		}
+		if gameKey == "fishing" {
+			return text("钓鱼还没有配置收获，请稍后再试。")
+		}
 		return text("该玩法暂时没有开放。")
 	default:
 		return text("操作暂时没有完成，请稍后再试。")

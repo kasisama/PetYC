@@ -69,6 +69,9 @@ func EnsureOfficialDefaults(db *gorm.DB) error {
 				return err
 			}
 		}
+		if err := repairKnownBrokenFishingConfig(tx); err != nil {
+			return err
+		}
 		if err := upsertOfficialProfile(tx, snapshot); err != nil {
 			return err
 		}

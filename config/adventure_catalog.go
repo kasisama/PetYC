@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"reflect"
 
 	"gorm.io/gorm"
 	"qq-pet-saas/models"
@@ -15,6 +16,9 @@ type AdventureCatalog struct {
 	Zones                    []models.AdventureZoneConfig             `json:"zones"`
 	Prerequisites            []models.AdventureZonePrerequisiteConfig `json:"prerequisites"`
 	Objectives               []models.AdventureObjectiveConfig        `json:"objectives"`
+	Stages                   []models.AdventureExplorationStageConfig `json:"stages"`
+	StoryEvents              []models.AdventureStoryEventConfig       `json:"story_events"`
+	StoryChoices             []models.AdventureStoryEventChoiceConfig `json:"story_choices"`
 	Monsters                 []models.AdventureMonsterConfig          `json:"monsters"`
 	Skills                   []models.AdventureSkillConfig            `json:"skills"`
 	MonsterSkills            []models.AdventureMonsterSkillConfig     `json:"monster_skills"`
@@ -34,6 +38,19 @@ type AdventureCatalog struct {
 	EquipmentRecipeMaterials []models.EquipmentRecipeMaterialConfig   `json:"equipment_recipe_materials"`
 }
 
+// normalizeAdventureCatalog guarantees the editor contract never serializes a
+// missing collection as null. Old snapshots and empty tables are therefore
+// safe for the dynamic Vue editor to render.
+func normalizeAdventureCatalog(catalog *AdventureCatalog) {
+	value := reflect.ValueOf(catalog).Elem()
+	for index := 0; index < value.NumField(); index++ {
+		field := value.Field(index)
+		if field.Kind() == reflect.Slice && field.IsNil() {
+			field.Set(reflect.MakeSlice(field.Type(), 0, 0))
+		}
+	}
+}
+
 func CaptureAdventureCatalog(db *gorm.DB) (AdventureCatalog, error) {
 	var result AdventureCatalog
 	queries := []struct {
@@ -42,6 +59,7 @@ func CaptureAdventureCatalog(db *gorm.DB) (AdventureCatalog, error) {
 	}{
 		{&result.Maps, "sort_order asc, key asc"}, {&result.Zones, "map_key asc, sort_order asc, key asc"},
 		{&result.Prerequisites, "zone_key asc, prerequisite_zone_key asc"}, {&result.Objectives, "zone_key asc, sort_order asc, key asc"},
+		{&result.Stages, "zone_key asc, sort_order asc, key asc"}, {&result.StoryEvents, "zone_key asc, stage_key asc, sort_order asc, key asc"}, {&result.StoryChoices, "event_key asc, sort_order asc, choice_key asc"},
 		{&result.Monsters, "key asc"}, {&result.Skills, "key asc"}, {&result.MonsterSkills, "monster_key asc, sort_order asc, skill_key asc"},
 		{&result.Encounters, "zone_key asc, sort_order asc, encounter_key asc"}, {&result.EncounterEffects, "encounter_key asc, effect_type asc, target_key asc"}, {&result.LootPools, "key asc"},
 		{&result.LootEntries, "pool_key asc, sort_order asc, id asc"}, {&result.Expeditions, "zone_key asc"},
@@ -56,6 +74,7 @@ func CaptureAdventureCatalog(db *gorm.DB) (AdventureCatalog, error) {
 			return result, err
 		}
 	}
+	normalizeAdventureCatalog(&result)
 	return result, nil
 }
 
@@ -64,6 +83,9 @@ func assignAdventureCatalog(snapshot *ConfigSnapshot, catalog AdventureCatalog) 
 	snapshot.AdventureZones = catalog.Zones
 	snapshot.AdventurePrereqs = catalog.Prerequisites
 	snapshot.AdventureObjectives = catalog.Objectives
+	snapshot.AdventureStages = catalog.Stages
+	snapshot.AdventureStoryEvents = catalog.StoryEvents
+	snapshot.AdventureStoryChoices = catalog.StoryChoices
 	snapshot.AdventureMonsters = catalog.Monsters
 	snapshot.AdventureSkills = catalog.Skills
 	snapshot.AdventureMonsterSkills = catalog.MonsterSkills
@@ -104,6 +126,7 @@ func ReplaceAdventureCatalog(tx *gorm.DB, catalog AdventureCatalog) error {
 		&models.AdventureShopItemConfig{}, &models.CurrencyConfig{}, &models.ItemConfig{},
 		&models.AdventureLootEntryConfig{}, &models.AdventureLootPoolConfig{}, &models.AdventureEncounterEffectConfig{}, &models.AdventureEncounterConfig{},
 		&models.AdventureMonsterSkillConfig{}, &models.AdventureSkillConfig{}, &models.AdventureMonsterConfig{},
+		&models.AdventureStoryEventChoiceConfig{}, &models.AdventureStoryEventConfig{}, &models.AdventureExplorationStageConfig{},
 		&models.AdventureObjectiveConfig{}, &models.AdventureZonePrerequisiteConfig{}, &models.AdventureZoneConfig{}, &models.AdventureMapConfig{},
 	}
 	for _, table := range tables {
@@ -111,7 +134,7 @@ func ReplaceAdventureCatalog(tx *gorm.DB, catalog AdventureCatalog) error {
 			return err
 		}
 	}
-	rows := []any{catalog.Maps, catalog.Zones, catalog.Prerequisites, catalog.Objectives, catalog.Monsters, catalog.Skills, catalog.MonsterSkills, catalog.Encounters, catalog.EncounterEffects, catalog.LootPools, catalog.LootEntries, catalog.Currencies, catalog.Items, catalog.ShopItems, catalog.Expeditions, catalog.Bosses, catalog.BossRewardTiers, catalog.EquipmentTemplates, catalog.EquipmentAffixes, catalog.EquipmentRecipes, catalog.EquipmentRecipeMaterials}
+	rows := []any{catalog.Maps, catalog.Zones, catalog.Prerequisites, catalog.Objectives, catalog.Stages, catalog.StoryEvents, catalog.StoryChoices, catalog.Monsters, catalog.Skills, catalog.MonsterSkills, catalog.Encounters, catalog.EncounterEffects, catalog.LootPools, catalog.LootEntries, catalog.Currencies, catalog.Items, catalog.ShopItems, catalog.Expeditions, catalog.Bosses, catalog.BossRewardTiers, catalog.EquipmentTemplates, catalog.EquipmentAffixes, catalog.EquipmentRecipes, catalog.EquipmentRecipeMaterials}
 	for _, value := range rows {
 		raw, _ := json.Marshal(value)
 		if string(raw) == "[]" || string(raw) == "null" {

@@ -206,6 +206,10 @@ func (api *ProfileAPI) Activate(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"code": 4092, "msg": "目标方案与现有玩家数据不兼容", "data": gin.H{"conflicts": conflicts}})
 		return
 	}
+	if err = appconfig.ValidateLaunchReadiness(snapshot); err != nil {
+		c.JSON(http.StatusConflict, gin.H{"code": 4093, "msg": err.Error()})
+		return
+	}
 	previous, err := appconfig.CaptureSnapshot(api.DB)
 	if err != nil {
 		Error(c, codeInternalError, "创建回滚快照失败")

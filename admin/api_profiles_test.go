@@ -6,10 +6,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
+	"gorm.io/gorm"
 	appconfig "qq-pet-saas/config"
 	"qq-pet-saas/models"
 )
@@ -124,5 +129,73 @@ func TestProfileImportRejectsUnlistedAndTraversalFiles(t *testing.T) {
 	traversal := makeArchive(t, map[string][]byte{"config.json": configRaw, "assets/../escape.png": {1}}, map[string][]byte{"config.json": configRaw, "assets/../escape.png": {1}})
 	if _, _, _, err := parseProfileArchive(traversal); err == nil || !strings.Contains(err.Error(), "不安全路径") {
 		t.Fatalf("expected traversal rejection, got %v", err)
+	}
+}
+
+func TestActivateProfileRejectsIncompleteSnapshot(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	modelsToMigrate := []any{
+		&models.SystemConfig{}, &models.CommandConfig{}, &models.PetSpeciesConfig{}, &models.PetEvolutionRuleConfig{},
+		&models.PetEvolutionCostConfig{}, &models.PetSkillUnlockConfig{}, &models.AdventureLevelConfig{}, &models.ItemConfig{}, &models.ShopItemConfig{},
+		&models.CheckinRewardConfig{}, &models.WorkSettingConfig{}, &models.MenuConfig{}, &models.ImageConfig{}, &models.LiveEventConfig{},
+		&models.RewardTrackConfig{}, &models.GrowthRoleConfig{}, &models.GrowthStanceConfig{}, &models.PersonalityRuleConfig{},
+		&models.CodexCatalogConfig{}, &models.ExpeditionTemplateConfig{}, &models.ChanceGameConfig{}, &models.ChanceRewardConfig{},
+		&models.AdminConfigState{}, &models.ConfigProfile{}, &models.PetProfile{}, &models.GlobalInventoryItem{}, &models.EventProgress{},
+		&models.ActivityRun{}, &models.ExpeditionRun{}, &models.TradeOffer{}, &models.FishingRun{},
+		&models.AdventureMapConfig{}, &models.AdventureZoneConfig{}, &models.AdventureZonePrerequisiteConfig{},
+		&models.AdventureObjectiveConfig{}, &models.AdventureExplorationStageConfig{}, &models.AdventureStoryEventConfig{}, &models.AdventureStoryEventChoiceConfig{},
+		&models.AdventureMonsterConfig{}, &models.AdventureSkillConfig{},
+		&models.AdventureMonsterSkillConfig{}, &models.AdventureEncounterConfig{}, &models.AdventureEncounterEffectConfig{}, &models.AdventureLootPoolConfig{},
+		&models.AdventureLootEntryConfig{}, &models.CurrencyConfig{},
+		&models.AdventureShopItemConfig{}, &models.AdventureExpeditionConfig{}, &models.AdventureBossConfig{},
+		&models.AdventureBossRewardTierConfig{}, &models.EquipmentTemplateConfig{}, &models.EquipmentAffixConfig{},
+		&models.EquipmentRecipeConfig{}, &models.EquipmentRecipeMaterialConfig{}, &models.LiveEventChoiceConfig{},
+		&models.LiveEventExpeditionSourceConfig{},
+		&models.PlayerAdventureNodeProgress{}, &models.PlayerAdventureEventState{},
+		&models.AdventureExplorationSession{}, &models.AdventureCombatSession{}, &models.AdventureExpeditionRun{},
+		&models.PlayerEquipment{}, &models.AdventureBossInstance{},
+	}
+	if err = db.AutoMigrate(modelsToMigrate...); err != nil {
+		t.Fatal(err)
+	}
+	current, err := appconfig.CreateProfileFromSnapshot(db, "当前方案", "", "user", false, archiveTestSnapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Transaction(func(tx *gorm.DB) error { return appconfig.SetActiveProfile(tx, current.ID, false) }); err != nil {
+		t.Fatal(err)
+	}
+	incomplete, err := appconfig.CreateProfileFromSnapshot(db, "残缺方案", "", "user", false, archiveTestSnapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	RegisterProfileRoutes(router.Group("/api/admin"), db)
+	request, _ := http.NewRequest(http.MethodPost, "/api/admin/config/profiles/"+incomplete.ID+"/activate", bytes.NewReader([]byte(`{}`)))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	var response struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+	}
+	if err = json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("解析响应失败: %v %s", err, recorder.Body.String())
+	}
+	if recorder.Code != http.StatusConflict || response.Code != 4093 || !strings.Contains(response.Msg, "需要 3 张永久地图") {
+		t.Fatalf("残缺方案激活应返回 4093，实际 HTTP %d code=%d msg=%s", recorder.Code, response.Code, response.Msg)
+	}
+	status, err := appconfig.GetConfigStatus(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.ActiveProfileID != current.ID {
+		t.Fatalf("激活失败后当前方案被改成了 %s", status.ActiveProfileID)
 	}
 }

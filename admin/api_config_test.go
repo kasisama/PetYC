@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -427,6 +428,91 @@ func TestSaveMenuConfigAllowsEmptyImage(t *testing.T) {
 	}
 }
 
+func TestSaveConfigDeletesRowsMissingFromPayload(t *testing.T) {
+	db := newConfigTestDB(t)
+	if err := configstate.MarkConfigLoaded(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&[]models.MenuConfig{
+		{Name: "主菜单", Reply: "保留"},
+		{Name: "帮助", Reply: "应被删除"},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	response := doConfigRequest(t, newConfigTestRouter(db), http.MethodPut, "/api/admin/config/menus", []byte(`[{"Name":"主菜单","Reply":"新主菜单","Image":""}]`))
+	if response.Code != 0 {
+		t.Fatalf("保存应成功，code=%d msg=%s", response.Code, response.Msg)
+	}
+	var rows []models.MenuConfig
+	if err := db.Order("name asc").Find(&rows).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Name != "主菜单" || rows[0].Reply != "新主菜单" {
+		t.Fatalf("payload 未包含的行应被删除，实际 %#v", rows)
+	}
+}
+
+func TestSaveConfigRejectsEmptyCoreList(t *testing.T) {
+	db := newConfigTestDB(t)
+	if err := db.Create(&models.PetSpeciesConfig{Name: "米塔", Key: "mita"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	response := doConfigRequest(t, newConfigTestRouter(db), http.MethodPut, "/api/admin/config/pet_species", []byte(`[]`))
+	if response.Code != codeInvalidPayload || !strings.Contains(response.Msg, "配置列表不能为空") {
+		t.Fatalf("空宠物列表应被拒绝，code=%d msg=%s", response.Code, response.Msg)
+	}
+	var count int64
+	if err := db.Model(&models.PetSpeciesConfig{}).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("拒绝空列表后原数据应仍在，实际 %d", count)
+	}
+}
+
+func TestSaveConfigDoesNotDeleteReferencedItems(t *testing.T) {
+	db := newConfigTestDB(t)
+	if err := db.Create(&models.ItemConfig{Key: "apple", Name: "苹果", Status: "active"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.ItemConfig{Key: "berry", Name: "浆果", Status: "active"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.ShopItemConfig{Name: "苹果", Price: 10, Stock: 5}).Error; err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`[{"Key":"berry","Name":"浆果","Status":"active"}]`)
+	response := doConfigRequest(t, newConfigTestRouter(db), http.MethodPut, "/api/admin/config/items", body)
+	if response.Code != codeInvalidPayload || !strings.Contains(response.Msg, "仍被商店引用") {
+		t.Fatalf("被商店引用的物品不能删，code=%d msg=%s", response.Code, response.Msg)
+	}
+	var count int64
+	if err := db.Model(&models.ItemConfig{}).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("引用校验失败后物品应原样保留，实际 %d", count)
+	}
+}
+
+func TestResetConfigRequiresConfirmationAndReason(t *testing.T) {
+	db := newConfigTestDB(t)
+	if err := db.Create(&models.MenuConfig{Name: "主菜单", Reply: "自定义"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	router := newConfigTestRouter(db)
+	for _, body := range [][]byte{nil, []byte(`{}`), []byte(`{"reason":"回退","confirmation":"错词"}`)} {
+		response := doConfigRequest(t, router, http.MethodPost, "/api/admin/config/reset", body)
+		if response.Code != codeInvalidPayload {
+			t.Fatalf("缺少确认词应拒绝，body=%s code=%d msg=%s", body, response.Code, response.Msg)
+		}
+	}
+	var row models.MenuConfig
+	if err := db.First(&row, "name = ?", "主菜单").Error; err != nil || row.Reply != "自定义" {
+		t.Fatalf("拒绝重置后配置应保持不变: %#v %v", row, err)
+	}
+}
+
 func TestSaveConfigRejectsMalformedBody(t *testing.T) {
 	response := doConfigRequest(t, newConfigTestRouter(newConfigTestDB(t)), http.MethodPut, "/api/admin/config/menus", []byte(`{"not":"an array"}`))
 	if response.Code != codeInvalidPayload {
@@ -438,6 +524,115 @@ func TestSaveConfigRejectsUnknownSchema(t *testing.T) {
 	response := doConfigRequest(t, newConfigTestRouter(newConfigTestDB(t)), http.MethodPut, "/api/admin/config/global_parameters", []byte(`[]`))
 	if response.Code != codeSchemaNotFound {
 		t.Fatalf("期望 code %d，实际 %d", codeSchemaNotFound, response.Code)
+	}
+}
+
+func TestSaveConfigKeepsPetStableKeyOnRenameAndRejectsKeyMutation(t *testing.T) {
+	db := newConfigTestDB(t)
+	if err := db.Create(&models.PetSpeciesConfig{Key: "pet-ember", Name: "余烬游侠", FamilyKey: "ember", Stage: "base", Archetype: "balanced"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	router := newConfigTestRouter(db)
+	renamed := doConfigRequest(t, router, http.MethodPut, "/api/admin/config/pet_species", []byte(`[{"key":"pet-ember","name":"余烬巡游者","family_key":"ember","stage":"base","archetype":"balanced"}]`))
+	if renamed.Code != 0 {
+		t.Fatalf("改显示名称应保留稳定键，code=%d msg=%s", renamed.Code, renamed.Msg)
+	}
+	var saved models.PetSpeciesConfig
+	if err := db.First(&saved, "key = ?", "pet-ember").Error; err != nil || saved.Name != "余烬巡游者" {
+		t.Fatalf("稳定键或显示名称保存错误: %#v %v", saved, err)
+	}
+	mutated := doConfigRequest(t, router, http.MethodPut, "/api/admin/config/pet_species", []byte(`[{"key":"pet-other","name":"余烬巡游者","family_key":"ember","stage":"base","archetype":"balanced"}]`))
+	if mutated.Code != codeInvalidPayload || !strings.Contains(mutated.Msg, "内部稳定标识不可修改") {
+		t.Fatalf("修改稳定键应被拒绝，code=%d msg=%s", mutated.Code, mutated.Msg)
+	}
+}
+
+func TestSaveConfigValidatesPetLineage(t *testing.T) {
+	valid := `[{
+		"key":"base","name":"基础","family_key":"lumi","stage":"base","archetype":"balanced"
+	},{
+		"key":"evolved","name":"进化","family_key":"lumi","stage":"evolved","previous_form_key":"base","archetype":"balanced"
+	},{
+		"key":"awaken","name":"觉醒","family_key":"lumi","stage":"awakened","previous_form_key":"evolved","archetype":"balanced"
+	}]`
+	for name, body := range map[string]string{
+		"重复基础形态":  `[{"key":"base-a","name":"基础甲","family_key":"lumi","stage":"base","archetype":"balanced"},{"key":"base-b","name":"基础乙","family_key":"lumi","stage":"base","archetype":"balanced"}]`,
+		"跨谱系前置":   `[{"key":"base-a","name":"基础甲","family_key":"lumi","stage":"base","archetype":"balanced"},{"key":"base-b","name":"基础乙","family_key":"moon","stage":"base","archetype":"balanced"},{"key":"evolved","name":"进化","family_key":"lumi","stage":"evolved","previous_form_key":"base-b","archetype":"balanced"}]`,
+		"缺失前置":    `[{"key":"base","name":"基础","family_key":"lumi","stage":"base","archetype":"balanced"},{"key":"evolved","name":"进化","family_key":"lumi","stage":"evolved","archetype":"balanced"}]`,
+		"阶段倒退或循环": `[{"key":"base","name":"基础","family_key":"lumi","stage":"base","archetype":"balanced"},{"key":"evolved","name":"进化","family_key":"lumi","stage":"evolved","previous_form_key":"awaken","archetype":"balanced"},{"key":"awaken","name":"觉醒","family_key":"lumi","stage":"awakened","previous_form_key":"evolved","archetype":"balanced"}]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			response := doConfigRequest(t, newConfigTestRouter(newConfigTestDB(t)), http.MethodPut, "/api/admin/config/pet_species", []byte(body))
+			if response.Code != codeInvalidPayload {
+				t.Fatalf("异常谱系应被拒绝，code=%d msg=%s", response.Code, response.Msg)
+			}
+		})
+	}
+
+	db := newConfigTestDB(t)
+	router := newConfigTestRouter(db)
+	if response := doConfigRequest(t, router, http.MethodPut, "/api/admin/config/pet_species", []byte(valid)); response.Code != 0 {
+		t.Fatalf("合法进化链应可保存，code=%d msg=%s", response.Code, response.Msg)
+	}
+	invalidRule := doConfigRequest(t, router, http.MethodPut, "/api/admin/config/pet_evolution_rules", []byte(`[{"key":"wrong-parent","from_form_key":"base","to_form_key":"awaken","branch_label":"错误路线","enabled":true}]`))
+	if invalidRule.Code != codeInvalidPayload || !strings.Contains(invalidRule.Msg, "前置形态不一致") {
+		t.Fatalf("与目标前置形态不一致的规则应被拒绝，code=%d msg=%s", invalidRule.Code, invalidRule.Msg)
+	}
+	validRule := doConfigRequest(t, router, http.MethodPut, "/api/admin/config/pet_evolution_rules", []byte(`[{"key":"standard","from_form_key":"base","to_form_key":"evolved","branch_label":"标准进化","enabled":true,"sort_order":10},{"key":"sun","from_form_key":"evolved","to_form_key":"awaken","branch_label":"曦光路线","enabled":true,"sort_order":20}]`))
+	if validRule.Code != 0 {
+		t.Fatalf("合法进化规则应可保存，code=%d msg=%s", validRule.Code, validRule.Msg)
+	}
+}
+
+func TestSavePetLineageAtomicallyReplacesOnlyTargetFamily(t *testing.T) {
+	db := newConfigTestDB(t)
+	seedPets := []models.PetSpeciesConfig{
+		{Key: "ember-base", Name: "烬爪兽", FamilyKey: "ember", Stage: "base", Archetype: "balanced"},
+		{Key: "ember-evolved", Name: "炎纹猎手", FamilyKey: "ember", Stage: "evolved", PreviousFormKey: "ember-base", Archetype: "attacker"},
+		{Key: "moon-base", Name: "月灵兽", FamilyKey: "moon", Stage: "base", Archetype: "balanced"},
+	}
+	if err := db.Create(&seedPets).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.PetEvolutionRuleConfig{Key: "ember-standard", FromFormKey: "ember-base", ToFormKey: "ember-evolved", BranchLabel: "旧路线", Enabled: true, SortOrder: 10}).Error; err != nil {
+		t.Fatal(err)
+	}
+	router := newConfigTestRouter(db)
+
+	valid := []byte(`{"pets":[
+		{"key":"ember-base","name":"烬爪兽","family_key":"ember","stage":"base","archetype":"balanced"},
+		{"key":"ember-evolved","name":"焰纹猎手","family_key":"ember","stage":"evolved","previous_form_key":"ember-base","archetype":"attacker"}
+	],"rules":[{"key":"ember-standard","from_form_key":"ember-base","to_form_key":"ember-evolved","required_growth":750,"required_affection":100,"branch_label":"标准进化","enabled":true,"sort_order":20}]}`)
+	if response := doConfigRequest(t, router, http.MethodPut, "/api/admin/content/pet-lineages/ember", valid); response.Code != 0 {
+		t.Fatalf("合法谱系保存失败，code=%d msg=%s", response.Code, response.Msg)
+	}
+
+	var moon models.PetSpeciesConfig
+	if err := db.First(&moon, "key = ?", "moon-base").Error; err != nil || moon.Name != "月灵兽" {
+		t.Fatalf("其他谱系不应受影响: %#v %v", moon, err)
+	}
+	var evolved models.PetSpeciesConfig
+	if err := db.First(&evolved, "key = ?", "ember-evolved").Error; err != nil || evolved.Name != "焰纹猎手" {
+		t.Fatalf("目标形态未更新: %#v %v", evolved, err)
+	}
+	var rule models.PetEvolutionRuleConfig
+	if err := db.First(&rule, "key = ?", "ember-standard").Error; err != nil || rule.RequiredGrowth != 750 || rule.BranchLabel != "标准进化" {
+		t.Fatalf("进化规则未原子更新: %#v %v", rule, err)
+	}
+
+	invalid := []byte(`{"pets":[
+		{"key":"ember-base","name":"烬爪兽","family_key":"ember","stage":"base","archetype":"balanced"},
+		{"key":"ember-other","name":"第二基础","family_key":"ember","stage":"base","archetype":"balanced"}
+	],"rules":[]}`)
+	response := doConfigRequest(t, router, http.MethodPut, "/api/admin/content/pet-lineages/ember", invalid)
+	if response.Code != codeInvalidPayload || !strings.Contains(response.Msg, "基础形态") {
+		t.Fatalf("非法谱系应被拒绝，code=%d msg=%s", response.Code, response.Msg)
+	}
+	if err := db.First(&evolved, "key = ?", "ember-evolved").Error; err != nil || evolved.Name != "焰纹猎手" {
+		t.Fatalf("失败请求不应留下部分写入: %#v %v", evolved, err)
+	}
+	if err := db.First(&rule, "key = ?", "ember-standard").Error; err != nil || rule.RequiredGrowth != 750 {
+		t.Fatalf("失败请求不应改写进化规则: %#v %v", rule, err)
 	}
 }
 

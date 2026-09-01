@@ -35,8 +35,8 @@ export interface UpdateStatus {
 export const checkForUpdates = (force = false) =>
   api.get<UpdateInfo>(`/api/admin/updates/check${force ? '?force=1' : ''}`)
 
-export const installUpdate = () =>
-  api.post<UpdateStatus>('/api/admin/updates/install')
+export const installUpdate = (reason: string, confirmation: string) =>
+  api.post<UpdateStatus>('/api/admin/updates/install', { reason, confirmation })
 
 export const fetchUpdateStatus = () =>
   api.get<UpdateStatus>('/api/admin/updates/status')

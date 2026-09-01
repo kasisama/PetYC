@@ -41,8 +41,12 @@ type uploadPart struct {
 	BlockSize    string `json:"block_size"`
 }
 
-func (client *Client) sendGroupMedia(ctx context.Context, event core.InboundEvent, fileInfo, token string) (*SendResult, error) {
-	payload := map[string]interface{}{"msg_type": 7, "media": map[string]string{"file_info": fileInfo}}
+func (client *Client) sendGroupMedia(ctx context.Context, event core.InboundEvent, fileInfo, token, content string, keyboard *core.KeyboardPayload) (*SendResult, error) {
+	payload := map[string]interface{}{
+		"content":  content,
+		"msg_type": 7,
+		"media":    map[string]string{"file_info": fileInfo},
+	}
 	if event.MessageID != "" {
 		payload["msg_id"] = event.MessageID
 		payload["msg_seq"] = 1
@@ -51,6 +55,9 @@ func (client *Client) sendGroupMedia(ctx context.Context, event core.InboundEven
 	}
 	if strings.TrimSpace(event.ReferenceID) != "" {
 		payload["message_reference"] = map[string]interface{}{"message_id": strings.TrimSpace(event.ReferenceID)}
+	}
+	if keyboard != nil {
+		payload["keyboard"] = renderCommandKeyboard(keyboard)
 	}
 	var result SendResult
 	endpoint := fmt.Sprintf("%s/v2/groups/%s/messages", client.BaseURL, url.PathEscape(event.SpaceID))
@@ -67,6 +74,12 @@ func (client *Client) uploadGroupImage(ctx context.Context, event core.InboundEv
 	}
 	if isHTTPURL(source) {
 		return client.uploadGroupImageURL(ctx, event, source, token)
+	}
+	// A configured public image host lets QQ fetch the asset directly. This
+	// avoids the local multipart upload round-trip while retaining the exact
+	// image sent to players.
+	if publicURL := configuredImageURL(source); publicURL != "" {
+		return client.uploadGroupImageURL(ctx, event, publicURL, token)
 	}
 	data, fileName, err := readConfiguredImage(source)
 	if err != nil {

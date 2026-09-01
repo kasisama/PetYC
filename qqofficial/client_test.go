@@ -365,7 +365,7 @@ func TestClientRendersOfficialCommandKeyboardWhenEnabled(t *testing.T) {
 	}
 }
 
-func TestClientUploadsGroupImageThenSendsMarkdownWithoutDuplicateText(t *testing.T) {
+func TestClientSendsGroupRichMediaWithEmbeddedText(t *testing.T) {
 	var messages []map[string]interface{}
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
@@ -400,11 +400,14 @@ func TestClientUploadsGroupImageThenSendsMarkdownWithoutDuplicateText(t *testing
 	if _, err := client.Send(context.Background(), event, message); err != nil {
 		t.Fatal(err)
 	}
-	if len(messages) != 2 {
-		t.Fatalf("expected media and text messages, got %#v", messages)
+	if len(messages) != 1 {
+		t.Fatalf("expected one rich-media message, got %#v", messages)
 	}
 	if messages[0]["msg_type"] != float64(7) || messages[0]["msg_seq"] != float64(1) {
-		t.Fatalf("unexpected media message: %#v", messages[0])
+		t.Fatalf("unexpected rich-media message: %#v", messages[0])
+	}
+	if messages[0]["content"] != "宠物近况" {
+		t.Fatalf("rich-media message must retain text content: %#v", messages[0])
 	}
 	if reference := messages[0]["message_reference"].(map[string]interface{}); reference["message_id"] != "REFIDX_source==" {
 		t.Fatalf("unexpected media reference: %#v", reference)
@@ -413,21 +416,8 @@ func TestClientUploadsGroupImageThenSendsMarkdownWithoutDuplicateText(t *testing
 	if media["file_info"] != "media-token" {
 		t.Fatalf("unexpected media file info: %#v", media)
 	}
-	if messages[1]["msg_type"] != float64(2) || messages[1]["msg_seq"] != float64(2) {
-		t.Fatalf("unexpected markdown follow-up: %#v", messages[1])
-	}
-	if _, exists := messages[1]["content"]; exists {
-		t.Fatalf("markdown follow-up must omit content: %#v", messages[1])
-	}
-	if _, exists := messages[1]["message_reference"]; exists {
-		t.Fatalf("markdown follow-up must omit message_reference to avoid duplicate QQ rendering: %#v", messages[1])
-	}
-	markdown, ok := messages[1]["markdown"].(map[string]interface{})
-	if !ok || markdown["content"] != "**宠物近况**" {
-		t.Fatalf("unexpected markdown payload: %#v", messages[1]["markdown"])
-	}
-	if limiter.calls.Load() != 3 {
-		t.Fatalf("external requests reserved = %d, want 3 (upload, media, text)", limiter.calls.Load())
+	if limiter.calls.Load() != 2 {
+		t.Fatalf("external requests reserved = %d, want 2 (upload, rich media)", limiter.calls.Load())
 	}
 }
 
@@ -483,6 +473,57 @@ func TestClientUploadsLocalGroupImageWithoutPublicImageHost(t *testing.T) {
 	}
 	if !prepared || !finished || !merged || !bytes.Equal(uploaded, imageData) {
 		t.Fatalf("local upload incomplete: prepared=%v finished=%v merged=%v uploaded=%q", prepared, finished, merged, uploaded)
+	}
+}
+
+func TestClientPrefersPublicImageHostForLocalGroupImage(t *testing.T) {
+	temp := t.TempDir()
+	imageDir := filepath.Join(temp, "图片", "宠物图片")
+	if err := os.MkdirAll(imageDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(imageDir, "pet.png"), []byte("local-image"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	previousPath, previousHost := config.GlobalConfigPath, config.Core.ImageHost
+	config.GlobalConfigPath = temp
+	t.Cleanup(func() {
+		config.GlobalConfigPath, config.Core.ImageHost = previousPath, previousHost
+	})
+
+	publicUsed := false
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/v2/groups/group/files":
+			var body map[string]interface{}
+			_ = json.NewDecoder(request.Body).Decode(&body)
+			if source, _ := body["url"].(string); strings.HasPrefix(source, server.URL+"/images/") && strings.HasSuffix(source, "/pet.png") {
+				publicUsed = true
+			} else {
+				t.Errorf("expected public image source, got %#v", body)
+			}
+			_, _ = writer.Write([]byte(`{"file_info":"public-media"}`))
+		case "/v2/groups/group/messages":
+			_, _ = writer.Write([]byte(`{"id":"sent"}`))
+		case "/v2/groups/group/upload_prepare":
+			t.Error("configured public image host should skip local multipart upload")
+			http.Error(writer, "unexpected multipart upload", http.StatusInternalServerError)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+	config.Core.ImageHost = server.URL
+	client := NewClient("app", staticToken("access"), server.URL, server.Client())
+	client.Limiter = nil
+	event := core.InboundEvent{Platform: core.PlatformQQGroup, SceneType: core.SceneGroup, SpaceID: "group", MessageID: "source"}
+	if _, err := client.Send(context.Background(), event, core.OutboundMessage{Text: "status", Image: "宠物图片/pet.png"}); err != nil {
+		t.Fatal(err)
+	}
+	if !publicUsed {
+		t.Fatal("local image did not use the configured public image host")
 	}
 }
 

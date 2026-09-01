@@ -25,6 +25,7 @@ func profileTestDB(t *testing.T) *gorm.DB {
 		&models.ActivityRun{}, &models.ExpeditionRun{}, &models.TradeOffer{}, &models.FishingRun{},
 		&models.AdventureMapConfig{}, &models.AdventureZoneConfig{}, &models.AdventureZonePrerequisiteConfig{},
 		&models.AdventureObjectiveConfig{}, &models.AdventureMonsterConfig{}, &models.AdventureSkillConfig{},
+		&models.AdventureExplorationStageConfig{}, &models.AdventureStoryEventConfig{}, &models.AdventureStoryEventChoiceConfig{},
 		&models.AdventureMonsterSkillConfig{}, &models.AdventureEncounterConfig{}, &models.AdventureEncounterEffectConfig{}, &models.AdventureLootPoolConfig{},
 		&models.AdventureLootEntryConfig{}, &models.CurrencyConfig{},
 		&models.AdventureShopItemConfig{}, &models.AdventureExpeditionConfig{}, &models.AdventureBossConfig{},
@@ -94,6 +95,30 @@ func TestSnapshotExcludesLocalAndPreservesPlayerData(t *testing.T) {
 	}
 }
 
+func TestCaptureSnapshotIncludesNodeAdventureCollections(t *testing.T) {
+	db := profileTestDB(t)
+	rows := []any{
+		&models.AdventureMapConfig{Key: "node-map", Name: "节点地图", Region: "试炼", RecommendedLevel: 1},
+		&models.AdventureZoneConfig{Key: "node-zone", MapKey: "node-map", Name: "节点区域", RecommendedLevel: 1, DifficultyPermille: 1000, ExplorationMode: "node"},
+		&models.AdventureExplorationStageConfig{Key: "node-stage", ZoneKey: "node-zone", Name: "开始调查", ProgressEnd: 100, EventKey: "node-event"},
+		&models.AdventureStoryEventConfig{Key: "node-event", ZoneKey: "node-zone", StageKey: "node-stage", Name: "调查选择", EventType: "mainline", Weight: 1},
+		&models.AdventureStoryEventChoiceConfig{EventKey: "node-event", ChoiceKey: "option_1", Label: "记录", RiskLevel: "low"},
+		&models.AdventureStoryEventChoiceConfig{EventKey: "node-event", ChoiceKey: "option_2", Label: "追踪", RiskLevel: "high"},
+	}
+	for _, row := range rows {
+		if err := db.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	snapshot, err := CaptureSnapshot(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.AdventureStages) != 1 || len(snapshot.AdventureStoryEvents) != 1 || len(snapshot.AdventureStoryChoices) != 2 {
+		t.Fatalf("节点探索集合未进入配置快照: %#v", snapshot)
+	}
+}
+
 func TestCompatibilityBlocksMissingReferencedKeys(t *testing.T) {
 	db := profileTestDB(t)
 	if err := db.Create(&models.PetProfile{AccountID: "p1", PetType: "不存在宠物", Name: "宠物", CurrentForm: "x"}).Error; err != nil {
@@ -145,6 +170,58 @@ func TestOfficialDefaultsAreVersionedAndContainNoLocalKeys(t *testing.T) {
 	}
 	if snapshot.Summary().Rows < 300 {
 		t.Fatalf("official defaults unexpectedly small: %+v", snapshot.Summary())
+	}
+}
+
+func TestRepairKnownBrokenFishingConfigRestoresBackupPool(t *testing.T) {
+	db := profileTestDB(t)
+	brokenGame := models.ChanceGameConfig{GameKey: "fishing", Name: "生态垂钓", Enabled: true, CostCurrency: 10, DailyLimit: 5, PityThreshold: 5, PityRewardKey: "echo_shell", DurationSecond: 60}
+	brokenRewards := []models.ChanceRewardConfig{
+		{GameKey: "fishing", RewardKey: "fishing_meadow_fiber", Name: "原野纤维", ItemName: "原野纤维", Quantity: 1, Weight: 60, Enabled: true, SortOrder: 0},
+		{GameKey: "fishing", RewardKey: "fishing_survey_ink", Name: "调查墨水", ItemName: "调查墨水", Quantity: 1, Weight: 28, Enabled: true, SortOrder: 10},
+		{GameKey: "fishing", RewardKey: "fishing_pressed_flower", Name: "栖光压花", ItemName: "栖光压花", Quantity: 1, Weight: 10, Rare: true, Enabled: true, SortOrder: 20},
+		{GameKey: "fishing", RewardKey: "fishing_star_core", Name: "星辉晶核", ItemName: "星辉晶核", Quantity: 1, Weight: 2, Rare: true, Enabled: true, SortOrder: 30},
+	}
+	if err := db.Create(&brokenGame).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&brokenRewards).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repairKnownBrokenFishingConfig(db); err != nil {
+		t.Fatal(err)
+	}
+	var game models.ChanceGameConfig
+	if err := db.First(&game, "game_key = ?", "fishing").Error; err != nil {
+		t.Fatal(err)
+	}
+	if game.Name != "水域垂钓" || game.CostCurrency != 5 || game.DailyLimit != 20 || game.PityRewardKey != "water-sample" {
+		t.Fatalf("钓鱼规则未恢复备份值: %#v", game)
+	}
+	var rewards []models.ChanceRewardConfig
+	if err := db.Where("game_key = ?", "fishing").Order("sort_order").Find(&rewards).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(rewards) != 4 || rewards[0].RewardKey != "small-fish" || rewards[1].RewardKey != "shell" || rewards[2].RewardKey != "pearl" || rewards[3].RewardKey != "water-sample" {
+		t.Fatalf("钓鱼奖池未恢复: %#v", rewards)
+	}
+}
+
+func TestRepairKnownBrokenFishingConfigPreservesCustomizedPool(t *testing.T) {
+	db := profileTestDB(t)
+	custom := models.ChanceRewardConfig{GameKey: "fishing", RewardKey: "custom-fish", Name: "自定义鱼", ItemName: "自定义鱼", Quantity: 1, Weight: 100, Enabled: true}
+	if err := db.Create(&custom).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repairKnownBrokenFishingConfig(db); err != nil {
+		t.Fatal(err)
+	}
+	var rewards []models.ChanceRewardConfig
+	if err := db.Where("game_key = ?", "fishing").Find(&rewards).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(rewards) != 1 || rewards[0].RewardKey != "custom-fish" {
+		t.Fatalf("自定义奖池不应被覆盖: %#v", rewards)
 	}
 }
 

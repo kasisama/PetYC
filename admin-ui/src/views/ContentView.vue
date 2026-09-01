@@ -39,9 +39,14 @@ import {
   getEventBundle,
   fetchPlayerMessages,
   normalizeCommand,
+
+  normalizeChanceGame,
+
+  normalizeChanceReward,
   normalizeItem,
   normalizeImage,
   normalizeMenu,
+  normalizePetEvolutionRule,
   normalizePetSpecies,
   normalizeShopItem,
   previewPlayerMessage,
@@ -51,6 +56,10 @@ import {
   saveGameSettings,
   uploadImage,
   type CommandConfigRow,
+
+  type ChanceGameConfigRow,
+
+  type ChanceRewardConfigRow,
   type ConfigMeta,
   type ConfigSchema,
   type ConfigStatus,
@@ -65,6 +74,7 @@ import {
   type PlayerMessageDefinition,
   type PlayerMessagePreview,
   type PetSpeciesConfigRow,
+  type PetEvolutionRuleConfigRow,
   type ShopItemConfigRow,
 } from '../api/config'
 import { getAdventureCatalog, type AdventureMap, type AdventureZone } from '../api/adventure'
@@ -73,6 +83,7 @@ import UiState from '../components/ui/UiState.vue'
 import UiModal from '../components/ui/UiModal.vue'
 import AssetThumbnail from '../components/content/AssetThumbnail.vue'
 import ImageDropzone from '../components/content/ImageDropzone.vue'
+import PetLineageWorkspace from '../components/content/PetLineageWorkspace.vue'
 import { useToast } from '../composables/useToast'
 import { useUnsavedChanges } from '../composables/useUnsavedChanges'
 import { cloneConfigValue } from '../utils/configClone'
@@ -123,7 +134,9 @@ const configMeta = ref<Partial<Record<ConfigSchema, ConfigMeta>>>({})
 const events = ref<ContentEventRow[]>([])
 const rewards = ref<ContentRewardRow[]>([])
 const pets = ref<PetSpeciesConfigRow[]>([])
+const evolutionRules = ref<PetEvolutionRuleConfigRow[]>([])
 const items = ref<ItemConfigRow[]>([])
+const codexEntries = ref<Array<{ category: string; entry_key: string; region: string }>>([])
 const shops = ref<ShopItemConfigRow[]>([])
 const images = ref<ImageConfigRow[]>([])
 const commands = ref<CommandConfigRow[]>([])
@@ -135,6 +148,9 @@ const messagePlatform = ref('onebot')
 const messagePreview = ref<PlayerMessagePreview | null>(null)
 const previewingMessage = ref(false)
 const gameSettings = ref<GameSettingRow[]>([])
+const chanceGames = ref<ChanceGameConfigRow[]>([])
+const chanceRewards = ref<ChanceRewardConfigRow[]>([])
+const selectedChanceGame = ref<'fishing' | 'lottery'>('fishing')
 const adventureMaps = ref<AdventureMap[]>([])
 const adventureZones = ref<AdventureZone[]>([])
 const snapshot = ref('')
@@ -150,6 +166,32 @@ const editor = reactive<{ kind: EditorKind | null; index: number; draft: any }>(
 })
 const confirmation = reactive<{ open: boolean; title: string; description: string; action: null | (() => void | Promise<void>) }>({ open: false, title: '', description: '', action: null })
 const adventureZoneGroups = computed(() => adventureMaps.value.map(map => ({ map, zones: adventureZones.value.filter(zone => zone.map_key === map.key) })).filter(group => group.zones.length))
+const lineageOptions = computed(() => {
+  const names = new Map<string, string>()
+  pets.value.forEach((pet) => {
+    if (!pet.FamilyKey) return
+    const current = names.get(pet.FamilyKey)
+    if (!current || pet.Stage === 'base') names.set(pet.FamilyKey, pet.Name || '未命名谱系')
+  })
+  return [...names.entries()].map(([key, name]) => ({ key, name }))
+})
+const previousFormOptions = computed(() => {
+  if (editor.kind !== 'pet' || !editor.draft?.FamilyKey) return []
+  return pets.value.filter((pet) => pet.FamilyKey === editor.draft.FamilyKey && pet.Key !== editor.draft.Key)
+})
+const archetypeOptions = [
+  { value: 'balanced', label: '均衡型' }, { value: 'attacker', label: '攻击型' },
+  { value: 'support', label: '辅助型' }, { value: 'defender', label: '防御型' },
+]
+const itemCategoryOptions = [
+  { value: 'consumable', label: '消耗品' }, { value: 'gift', label: '礼物' },
+  { value: 'material', label: '材料' }, { value: 'evolution', label: '进化素材' },
+  { value: 'event', label: '活动物品' }, { value: 'collectible', label: '收藏品' },
+]
+const rarityOptions = [
+  { value: 'common', label: '普通' }, { value: 'fine', label: '优秀' }, { value: 'rare', label: '稀有' },
+  { value: 'epic', label: '史诗' }, { value: 'legendary', label: '传说' },
+]
 
 function askConfirmation(title: string, description: string, action: () => void | Promise<void>) {
   Object.assign(confirmation, { open: true, title, description, action })
@@ -180,6 +222,8 @@ const editableState = computed(() => ({
   commands: commands.value,
   menus: menus.value,
   gameSettings: gameSettings.value,
+  chanceGames: chanceGames.value,
+  chanceRewards: chanceRewards.value,
 }))
 const dirty = computed(() => snapshot.value !== '' && JSON.stringify(editableState.value) !== snapshot.value)
 const editorDirty = computed(() => editor.kind !== null && editorSnapshot.value !== '' && JSON.stringify(editor.draft) !== editorSnapshot.value)
@@ -188,7 +232,6 @@ useUnsavedChanges(hasUnsavedChanges)
 
 const query = computed(() => search.value.trim().toLowerCase())
 const visibleEvents = computed(() => events.value.filter((row) => `${row.name} ${row.region}`.toLowerCase().includes(query.value)))
-const visiblePets = computed(() => pets.value.filter((row) => `${row.Name} ${row.Description} ${row.FavoriteFood}`.toLowerCase().includes(query.value)))
 const itemTypes = computed(() => [...new Set(items.value.map((row) => row.Type).filter(Boolean))].sort((left, right) => left.localeCompare(right, 'zh-CN')))
 const visibleItems = computed(() => items.value.filter((row) => {
   if (itemTypeFilter.value && row.Type !== itemTypeFilter.value) return false
@@ -239,6 +282,15 @@ const gameGroups = computed(() => {
   })
   return [...groups.entries()].map(([group, rows]) => ({ group, rows }))
 })
+const selectedChanceGameConfig = computed(() => chanceGames.value.find(row => row.game_key === selectedChanceGame.value))
+const selectedChanceRewards = computed(() => chanceRewards.value.filter(row => row.game_key === selectedChanceGame.value).sort((left, right) => left.sort_order - right.sort_order || String(left.id ?? '').localeCompare(String(right.id ?? ''))))
+
+function applySavedPetLineage(familyKey: string, payload: { pets: PetSpeciesConfigRow[]; rules: PetEvolutionRuleConfigRow[] }) {
+  const previousKeys = new Set(pets.value.filter((pet) => pet.FamilyKey === familyKey).map((pet) => pet.Key))
+  pets.value = [...pets.value.filter((pet) => pet.FamilyKey !== familyKey), ...payload.pets]
+  evolutionRules.value = [...evolutionRules.value.filter((rule) => !previousKeys.has(rule.FromFormKey) && !previousKeys.has(rule.ToFormKey)), ...payload.rules]
+  void fetchConfigStatus().then((next) => { status.value = next })
+}
 
 const itemStatusOptions: Array<{ value: ItemStatus; label: string }> = [
   { value: 'active', label: '正常上架' },
@@ -432,6 +484,11 @@ function openEditor(kind: Exclude<EditorKind, 'event'>, row?: any) {
           : kind === 'image' ? emptyImage('')
             : kind === 'command' ? emptyCommand('')
               : emptyMenu('')
+  if (!row && kind === 'pet') {
+    editor.draft.Key = `pet-${crypto.randomUUID().slice(0, 8)}`
+    editor.draft.FamilyKey = editor.draft.Key
+  }
+  if (!row && kind === 'item') editor.draft.Key = `item-${crypto.randomUUID().slice(0, 8)}`
   editorSnapshot.value = JSON.stringify(editor.draft)
 }
 
@@ -797,15 +854,39 @@ async function refreshPlayerMessagePreview() {
 async function saveGame() {
   saving.value = true
   try {
-    gameSettings.value = await saveGameSettings(gameSettings.value.map((row) => ({ key: row.key, value: row.value })))
+    const settings = await saveGameSettings(gameSettings.value.map((row) => ({ key: row.key, value: row.value })))
+    await saveConfig('chance_games', chanceGames.value)
+    await saveConfig('chance_rewards', chanceRewards.value)
+    gameSettings.value = settings
     status.value = await fetchConfigStatus()
     syncSnapshot()
-    toast.success('游戏参数已保存，聊天命令会立即按新内容生效')
+    toast.success('游戏参数与概率奖池已保存，聊天命令会立即按新内容生效')
   } catch (reason) {
     toast.error(reason instanceof Error ? reason.message : '游戏参数保存失败')
   } finally {
     saving.value = false
   }
+}
+
+function chanceGameLabel(key: string) {
+  return key === 'fishing' ? '钓鱼' : key === 'lottery' ? '抽奖' : key
+}
+
+function addChanceReward() {
+  const gameKey = selectedChanceGame.value
+  const rewards = chanceRewards.value.filter(row => row.game_key === gameKey)
+  let next = 1
+  let rewardKey = `${gameKey}-reward-${next}`
+  while (rewards.some(row => row.reward_key === rewardKey)) {
+    next++
+    rewardKey = `${gameKey}-reward-${next}`
+  }
+  const sortOrder = Math.max(0, ...rewards.map(row => row.sort_order)) + 10
+  chanceRewards.value.push({ game_key: gameKey, reward_key: rewardKey, name: '', item_name: '', quantity: 1, currency: 0, weight: 1, rare: false, enabled: true, sort_order: sortOrder })
+}
+
+function removeChanceReward(row: ChanceRewardConfigRow) {
+  chanceRewards.value = chanceRewards.value.filter(candidate => candidate !== row)
 }
 
 function updateListSetting(row: GameSettingRow, event: Event) {
@@ -868,13 +949,18 @@ function syncSnapshot() {
   snapshot.value = JSON.stringify(editableState.value)
 }
 
+function asRows<T>(value: unknown): T[] {
+  return Array.isArray(value) ? value as T[] : []
+}
+
 async function load() {
   loading.value = true
   try {
-    const [eventRows, rewardRows, petRows, itemRows, shopRows, imageRows, commandRows, menuRows, messages, settings, currentStatus, adventure] = await Promise.all([
+    const [eventRows, rewardRows, petRows, evolutionRuleRows, itemRows, shopRows, imageRows, commandRows, menuRows, messages, settings, chanceGameRows, chanceRewardRows, codexRows, currentStatus, adventure] = await Promise.all([
       fetchConfig('live_events'),
       fetchConfig('reward_tracks'),
       fetchConfig('pet_species'),
+      fetchConfig('pet_evolution_rules'),
       fetchConfig('items'),
       fetchConfig('shop_items'),
       fetchConfig('images'),
@@ -882,19 +968,31 @@ async function load() {
       fetchConfig('menus'),
       fetchPlayerMessages(),
       fetchGameSettings(),
+      fetchConfig('chance_games'),
+      fetchConfig('chance_rewards'),
+      fetchConfig('codex_catalog'),
       fetchConfigStatus(),
       getAdventureCatalog(),
     ])
-    events.value = eventRows as ContentEventRow[]
-    rewards.value = rewardRows as ContentRewardRow[]
-    pets.value = petRows.map(normalizePetSpecies)
-    items.value = itemRows.map(normalizeItem)
-    shops.value = shopRows.map(normalizeShopItem)
-    images.value = imageRows.map(normalizeImage)
-    commands.value = commandRows.map(normalizeCommand)
-    menus.value = menuRows.map(normalizeMenu)
-    playerMessages.value = messages
-    gameSettings.value = settings
+    events.value = asRows<ContentEventRow>(eventRows)
+    rewards.value = asRows<ContentRewardRow>(rewardRows)
+    pets.value = asRows(petRows).map(normalizePetSpecies)
+    evolutionRules.value = asRows(evolutionRuleRows).map(normalizePetEvolutionRule)
+    items.value = asRows(itemRows).map(normalizeItem)
+    shops.value = asRows(shopRows).map(normalizeShopItem)
+    images.value = asRows(imageRows).map(normalizeImage)
+    commands.value = asRows(commandRows).map(normalizeCommand)
+    menus.value = asRows(menuRows).map(normalizeMenu)
+    playerMessages.value = asRows<PlayerMessageDefinition>(messages)
+    gameSettings.value = asRows<GameSettingRow>(settings)
+    chanceGames.value = asRows(chanceGameRows).map(normalizeChanceGame)
+    chanceRewards.value = asRows(chanceRewardRows).map(normalizeChanceReward)
+    codexEntries.value = asRows(codexRows).map((raw) => {
+      const row = raw as Record<string, unknown>
+      return {
+      category: String(row.category ?? row.Category ?? ''), entry_key: String(row.entry_key ?? row.EntryKey ?? ''), region: String(row.region ?? row.Region ?? ''),
+      }
+    }).filter((row) => row.entry_key)
     status.value = currentStatus
     adventureMaps.value = adventure.catalog.maps
     adventureZones.value = adventure.catalog.zones
@@ -988,26 +1086,12 @@ onMounted(load)
         </select>
         <div class="toolbar-actions">
           <label v-if="assetTab === 'images'" class="btn btn-ghost upload-button"><IconPhoto :size="16" />上传图片<input type="file" accept="image/png,image/jpeg,image/gif,image/webp" @change="uploadAsset($event)" /></label>
-          <button class="btn btn-ghost" @click="openEditor(assetTab === 'pets' ? 'pet' : assetTab === 'items' ? 'item' : assetTab === 'shop' ? 'shop' : 'image')"><IconPlus :size="16" />新增</button>
+          <button v-if="assetTab !== 'pets'" class="btn btn-ghost" @click="openEditor(assetTab === 'items' ? 'item' : assetTab === 'shop' ? 'shop' : 'image')"><IconPlus :size="16" />新增</button>
         </div>
       </div>
 
       <template v-if="assetTab === 'pets'">
-        <UiState v-if="visiblePets.length === 0" class="compact-state" title="没有匹配的宠物" description="调整搜索词，或新增一个宠物种类。" />
-        <div v-else class="pet-grid">
-          <article v-for="row in visiblePets" :key="row.Name" class="pet-card" @click="openEditor('pet', row)">
-            <AssetThumbnail :path="row.Image" :label="row.Name" kind="pet" size="catalog" />
-            <div class="pet-meta">
-              <h3>{{ row.Name }}</h3>
-              <p>{{ row.Description || '尚未填写宠物介绍' }}</p>
-              <div class="pet-chips">
-                <span v-if="row.FavoriteFood" class="chip">{{ row.FavoriteFood }}</span>
-                <span v-else class="chip is-warn">缺偏爱食物</span>
-                <span v-if="row.Evolution" class="chip">{{ row.Evolution }}</span>
-              </div>
-            </div>
-          </article>
-        </div>
+        <PetLineageWorkspace :pets="pets" :rules="evolutionRules" :query="search" :busy="saving" @saved="applySavedPetLineage" @reload="reload" />
       </template>
 
       <template v-else-if="assetTab === 'items'">
@@ -1200,6 +1284,39 @@ onMounted(load)
             </article>
           </div>
         </section>
+        <section class="game-group chance-editor">
+          <header><div><span>两套奖池独立保存</span><h3>概率玩法与奖励</h3></div></header>
+          <nav class="sub-tabs" aria-label="概率玩法选择">
+            <button v-for="game in chanceGames" :key="game.game_key" :class="{ active: selectedChanceGame === game.game_key }" @click="selectedChanceGame = game.game_key === 'lottery' ? 'lottery' : 'fishing'">{{ chanceGameLabel(game.game_key) }}</button>
+          </nav>
+          <div v-if="selectedChanceGameConfig" class="chance-game-form">
+            <label><span>玩法名称</span><input v-model="selectedChanceGameConfig.name" /></label>
+            <label class="switch-control"><input v-model="selectedChanceGameConfig.enabled" type="checkbox" /><span class="switch-track"><i /></span><b>{{ selectedChanceGameConfig.enabled ? '已开启' : '已关闭' }}</b></label>
+            <label><span>货币消耗</span><input v-model.number="selectedChanceGameConfig.cost_currency" type="number" min="0" /></label>
+            <label><span>物品消耗</span><select v-model="selectedChanceGameConfig.cost_item"><option value="">不消耗物品</option><option v-for="item in items" :key="item.Key || item.Name" :value="item.Name">{{ item.Name }}{{ item.Status === 'active' ? '' : `（${item.Status}）` }}</option></select></label>
+            <label><span>物品数量</span><input v-model.number="selectedChanceGameConfig.cost_quantity" type="number" min="0" /></label>
+            <label><span>每日次数</span><input v-model.number="selectedChanceGameConfig.daily_limit" type="number" min="0" /></label>
+            <label><span>保底次数</span><input v-model.number="selectedChanceGameConfig.pity_threshold" type="number" min="0" /></label>
+            <label><span>保底奖励</span><select v-model="selectedChanceGameConfig.pity_reward_key"><option value="">不设置保底奖励</option><option v-for="reward in selectedChanceRewards" :key="reward.reward_key" :value="reward.reward_key">{{ reward.name || reward.item_name || '未命名奖励' }}{{ reward.enabled ? '' : '（未启用）' }}</option></select></label>
+            <label v-if="selectedChanceGame === 'fishing'"><span>等待秒数</span><input v-model.number="selectedChanceGameConfig.duration_second" type="number" min="0" /></label>
+            <label class="wide-field"><span>规则说明</span><input v-model="selectedChanceGameConfig.rules" /></label>
+          </div>
+          <div class="chance-reward-head"><div><span>当前编辑：{{ chanceGameLabel(selectedChanceGame) }}</span><h4>奖池</h4></div><button class="btn btn-ghost btn-small" @click="addChanceReward"><IconPlus :size="15" />添加奖励</button></div>
+          <div class="chance-reward-list">
+            <article v-for="row in selectedChanceRewards" :key="String(row.id ?? row.reward_key)" class="chance-reward-row">
+              <label><span>奖励展示名称</span><input v-model="row.name" placeholder="例如：小鱼" /></label>
+              <label><span>奖励物品</span><select v-model="row.item_name" @change="!row.name.trim() && (row.name = row.item_name)"><option value="">仅发放货币</option><option v-for="item in items" :key="item.Key || item.Name" :value="item.Name">{{ item.Name }}{{ item.Status === 'active' ? '' : `（${item.Status}）` }}</option></select></label>
+              <label><span>数量</span><input v-model.number="row.quantity" type="number" min="0" /></label>
+              <label><span>货币</span><input v-model.number="row.currency" type="number" min="0" /></label>
+              <label><span>权重</span><input v-model.number="row.weight" type="number" min="1" /></label>
+              <label><span>顺序</span><input v-model.number="row.sort_order" type="number" min="0" /></label>
+              <label class="switch-control"><input v-model="row.rare" type="checkbox" /><span class="switch-track"><i /></span><b>珍稀</b></label>
+              <label class="switch-control"><input v-model="row.enabled" type="checkbox" /><span class="switch-track"><i /></span><b>{{ row.enabled ? '启用' : '停用' }}</b></label>
+              <details class="technical-details"><summary>高级设置</summary><label><span>内部稳定标识</span><input :value="row.reward_key" readonly /></label></details>
+              <button class="btn btn-danger btn-small" @click="removeChanceReward(row)"><IconTrash :size="15" />删除</button>
+            </article>
+          </div>
+        </section>
       </div>
     </template>
 
@@ -1225,19 +1342,18 @@ onMounted(load)
           <header><div><span>步骤 1</span><h3>基础资料</h3></div><b>名称、介绍与偏好</b></header>
           <ImageDropzone :path="editor.draft.Image" :label="editorImageLabel()" kind="pet" size="medium" :busy="uploading" @file="uploadPetAsset($event, 'Image')" @clear="clearPetAsset('Image')" />
           <div class="form-grid two">
-            <label><span>稳定键</span><input v-model="editor.draft.Key" :disabled="editor.index >= 0" placeholder="lumisprout_base" /></label>
             <label><span>宠物名称</span><input v-model="editor.draft.Name" /></label>
-            <label><span>谱系键</span><input v-model="editor.draft.FamilyKey" placeholder="lumisprout" /></label>
+            <label><span>所属谱系</span><select v-model="editor.draft.FamilyKey"><option v-for="lineage in lineageOptions" :key="lineage.key" :value="lineage.key">{{ lineage.name }}</option><option v-if="editor.index<0" :value="editor.draft.Key">以当前宠物创建新谱系</option></select></label>
             <label><span>阶段</span><select v-model="editor.draft.Stage"><option value="base">基础</option><option value="evolved">标准进化</option><option value="awakened">觉醒</option></select></label>
-            <label><span>前置形态键</span><input v-model="editor.draft.PreviousFormKey" placeholder="空表示基础形态" /></label>
-            <label><span>成长定位</span><input v-model="editor.draft.Archetype" placeholder="balanced / support / attacker" /></label>
+            <label><span>前置形态</span><select v-model="editor.draft.PreviousFormKey"><option value="">无（基础形态）</option><option v-for="pet in previousFormOptions" :key="pet.Key" :value="pet.Key">{{ pet.Name }} · {{ pet.Stage==='base'?'基础':'进化' }}</option></select></label>
+            <label><span>成长定位</span><select v-model="editor.draft.Archetype"><option v-for="option in archetypeOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select></label>
             <label><span>可领养</span><select v-model="editor.draft.Adoptable"><option :value="true">是</option><option :value="false">否</option></select></label>
-            <label><span>图鉴条目</span><input v-model="editor.draft.CodexEntryKey" /></label>
-            <label><span>默认形象路径</span><input v-model="editor.draft.Image" placeholder="上传后自动填写，也可输入相对路径" /></label>
-            <label><span>偏爱食物</span><input v-model="editor.draft.FavoriteFood" placeholder="与物品名称一致" /></label>
-            <label><span>偏爱礼物</span><input v-model="editor.draft.FavoriteGift" placeholder="与物品名称一致" /></label>
+            <label><span>图鉴条目</span><select v-model="editor.draft.CodexEntryKey"><option value="">暂不记录图鉴</option><option v-for="entry in codexEntries" :key="entry.category+entry.entry_key" :value="entry.entry_key">{{ entry.category }} · {{ entry.entry_key }}{{ entry.region ? ` · ${entry.region}` : '' }}</option></select></label>
+            <label><span>偏爱食物</span><select v-model="editor.draft.FavoriteFood"><option value="">不设置</option><option v-for="item in items" :key="item.Key" :value="item.Name">{{ item.Name }}</option></select></label>
+            <label><span>偏爱礼物</span><select v-model="editor.draft.FavoriteGift"><option value="">不设置</option><option v-for="item in items" :key="`gift-${item.Key}`" :value="item.Name">{{ item.Name }}</option></select></label>
             <label class="wide-field"><span>宠物介绍</span><textarea v-model="editor.draft.Description" rows="4" /></label>
           </div>
+          <details v-if="editor.index>=0" class="technical-field"><summary>高级设置</summary><label><span>内部稳定标识（只读）</span><input :value="editor.draft.Key" readonly /></label><label><span>内部谱系标识（只读）</span><input :value="editor.draft.FamilyKey" readonly /></label></details>
         </section>
 
         <section class="drawer-section pet-step">
@@ -1262,7 +1378,6 @@ onMounted(load)
             <label><span>所需成长</span><input v-model.number="editor.draft.EvolutionGrowth" type="number" min="0" /></label><label><span>所需好感</span><input v-model.number="editor.draft.EvolutionAffect" type="number" min="0" /></label>
           </div>
           <ImageDropzone :path="editor.draft.EvolutionImage" :label="`${editorImageLabel()}进化形态`" kind="pet" size="medium" :busy="uploading" @file="uploadPetAsset($event, 'EvolutionImage')" @clear="clearPetAsset('EvolutionImage')" />
-          <label class="path-field"><span>进化图片路径</span><input v-model="editor.draft.EvolutionImage" placeholder="上传后自动填写，也可输入相对路径" /></label>
         </section>
 
         <section class="drawer-section pet-step">
@@ -1272,29 +1387,37 @@ onMounted(load)
             <label><span>所需成长</span><input v-model.number="editor.draft.AwakenGrowth" type="number" min="0" /></label><label><span>所需好感</span><input v-model.number="editor.draft.AwakenAffect" type="number" min="0" /></label>
           </div>
           <ImageDropzone :path="editor.draft.AwakenImage" :label="`${editorImageLabel()}觉醒形态`" kind="pet" size="medium" :busy="uploading" @file="uploadPetAsset($event, 'AwakenImage')" @clear="clearPetAsset('AwakenImage')" />
-          <label class="path-field"><span>觉醒图片路径</span><input v-model="editor.draft.AwakenImage" placeholder="上传后自动填写，也可输入相对路径" /></label>
         </section>
 
         <section class="drawer-section pet-step">
           <header><div><span>步骤 5</span><h3>场景图片</h3></div><b>每张图都可预览、点击或拖拽上传</b></header>
           <div class="pet-image-grid">
-            <article><h4>领养配图</h4><ImageDropzone :path="editor.draft.AdoptImage" :label="`${editorImageLabel()}领养`" kind="pet" size="medium" :busy="uploading" @file="uploadPetAsset($event, 'AdoptImage')" @clear="clearPetAsset('AdoptImage')" /><input v-model="editor.draft.AdoptImage" aria-label="领养配图路径" placeholder="图片路径" /></article>
-            <article><h4>锻炼开始</h4><ImageDropzone :path="editor.draft.TrainStartImg" :label="`${editorImageLabel()}锻炼开始`" kind="pet" size="medium" :busy="uploading" @file="uploadPetAsset($event, 'TrainStartImg')" @clear="clearPetAsset('TrainStartImg')" /><input v-model="editor.draft.TrainStartImg" aria-label="锻炼开始图片路径" placeholder="图片路径" /></article>
-            <article><h4>锻炼完成</h4><ImageDropzone :path="editor.draft.TrainEndImg" :label="`${editorImageLabel()}锻炼完成`" kind="pet" size="medium" :busy="uploading" @file="uploadPetAsset($event, 'TrainEndImg')" @clear="clearPetAsset('TrainEndImg')" /><input v-model="editor.draft.TrainEndImg" aria-label="锻炼完成图片路径" placeholder="图片路径" /></article>
-            <article><h4>学习开始</h4><ImageDropzone :path="editor.draft.StudyStartImg" :label="`${editorImageLabel()}学习开始`" kind="pet" size="medium" :busy="uploading" @file="uploadPetAsset($event, 'StudyStartImg')" @clear="clearPetAsset('StudyStartImg')" /><input v-model="editor.draft.StudyStartImg" aria-label="学习开始图片路径" placeholder="图片路径" /></article>
-            <article><h4>学习完成</h4><ImageDropzone :path="editor.draft.StudyEndImg" :label="`${editorImageLabel()}学习完成`" kind="pet" size="medium" :busy="uploading" @file="uploadPetAsset($event, 'StudyEndImg')" @clear="clearPetAsset('StudyEndImg')" /><input v-model="editor.draft.StudyEndImg" aria-label="学习完成图片路径" placeholder="图片路径" /></article>
-            <article><h4>健身开始</h4><ImageDropzone :path="editor.draft.FitnessStartImg" :label="`${editorImageLabel()}健身开始`" kind="pet" size="medium" :busy="uploading" @file="uploadPetAsset($event, 'FitnessStartImg')" @clear="clearPetAsset('FitnessStartImg')" /><input v-model="editor.draft.FitnessStartImg" aria-label="健身开始图片路径" placeholder="图片路径" /></article>
-            <article><h4>健身完成</h4><ImageDropzone :path="editor.draft.FitnessEndImg" :label="`${editorImageLabel()}健身完成`" kind="pet" size="medium" :busy="uploading" @file="uploadPetAsset($event, 'FitnessEndImg')" @clear="clearPetAsset('FitnessEndImg')" /><input v-model="editor.draft.FitnessEndImg" aria-label="健身完成图片路径" placeholder="图片路径" /></article>
+            <article><h4>领养配图</h4><ImageDropzone :path="editor.draft.AdoptImage" :label="`${editorImageLabel()}领养`" kind="pet" size="medium" :busy="uploading" @file="uploadPetAsset($event, 'AdoptImage')" @clear="clearPetAsset('AdoptImage')" /></article>
+            <article><h4>锻炼开始</h4><ImageDropzone :path="editor.draft.TrainStartImg" :label="`${editorImageLabel()}锻炼开始`" kind="pet" size="medium" :busy="uploading" @file="uploadPetAsset($event, 'TrainStartImg')" @clear="clearPetAsset('TrainStartImg')" /></article>
+            <article><h4>锻炼完成</h4><ImageDropzone :path="editor.draft.TrainEndImg" :label="`${editorImageLabel()}锻炼完成`" kind="pet" size="medium" :busy="uploading" @file="uploadPetAsset($event, 'TrainEndImg')" @clear="clearPetAsset('TrainEndImg')" /></article>
+            <article><h4>学习开始</h4><ImageDropzone :path="editor.draft.StudyStartImg" :label="`${editorImageLabel()}学习开始`" kind="pet" size="medium" :busy="uploading" @file="uploadPetAsset($event, 'StudyStartImg')" @clear="clearPetAsset('StudyStartImg')" /></article>
+            <article><h4>学习完成</h4><ImageDropzone :path="editor.draft.StudyEndImg" :label="`${editorImageLabel()}学习完成`" kind="pet" size="medium" :busy="uploading" @file="uploadPetAsset($event, 'StudyEndImg')" @clear="clearPetAsset('StudyEndImg')" /></article>
+            <article><h4>健身开始</h4><ImageDropzone :path="editor.draft.FitnessStartImg" :label="`${editorImageLabel()}健身开始`" kind="pet" size="medium" :busy="uploading" @file="uploadPetAsset($event, 'FitnessStartImg')" @clear="clearPetAsset('FitnessStartImg')" /></article>
+            <article><h4>健身完成</h4><ImageDropzone :path="editor.draft.FitnessEndImg" :label="`${editorImageLabel()}健身完成`" kind="pet" size="medium" :busy="uploading" @file="uploadPetAsset($event, 'FitnessEndImg')" @clear="clearPetAsset('FitnessEndImg')" /></article>
           </div>
         </section>
       </div>
       <div v-else-if="editor.kind === 'item' && editor.draft" class="form-grid">
         <ImageDropzone class="editor-image" :path="editorImagePath()" :label="editorImageLabel()" kind="item" :busy="uploading" @file="uploadEditorAsset" @clear="clearEditorImage" />
-        <label><span>稳定键</span><input v-model="editor.draft.Key" :disabled="editor.index >= 0" /></label><label><span>物品名称</span><input v-model="editor.draft.Name" /></label><label><span>分类</span><input v-model="editor.draft.Category" placeholder="consumable/gift/material" /></label><label><span>稀有度</span><input v-model="editor.draft.Rarity" /></label><label><span>堆叠上限</span><input v-model.number="editor.draft.MaxStack" type="number" min="1" /></label><label><span>用途</span><input v-model="editor.draft.Usage" /></label><label><span>运营状态</span><select v-model="editor.draft.Status"><option v-for="option in itemStatusOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select></label><label><span>物品类型</span><input v-model="editor.draft.Type" /></label><label><span>回收价格</span><input v-model.number="editor.draft.SellPrice" type="number" min="0" /></label><label><span>图片路径</span><input v-model="editor.draft.Image" placeholder="上传后自动填写，也可输入相对路径" /></label><label><span>物品说明</span><textarea v-model="editor.draft.Description" rows="4" /></label>
+        <label><span>物品名称</span><input v-model="editor.draft.Name" /></label>
+        <label><span>分类</span><select v-model="editor.draft.Category"><option v-for="option in itemCategoryOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select></label>
+        <label><span>稀有度</span><select v-model="editor.draft.Rarity"><option v-for="option in rarityOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select></label>
+        <label><span>堆叠上限</span><input v-model.number="editor.draft.MaxStack" type="number" min="1" /></label>
+        <label><span>用途</span><input v-model="editor.draft.Usage" /></label>
+        <label><span>运营状态</span><select v-model="editor.draft.Status"><option v-for="option in itemStatusOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select></label>
+        <label><span>物品类型</span><select v-model="editor.draft.Type"><option value="材料">材料</option><option value="消耗品">消耗品</option><option value="礼物">礼物</option><option value="进化素材">进化素材</option><option value="活动品">活动品</option></select></label>
+        <label><span>回收价格</span><input v-model.number="editor.draft.SellPrice" type="number" min="0" /></label>
+        <label><span>物品说明</span><textarea v-model="editor.draft.Description" rows="4" /></label>
+        <details v-if="editor.index>=0" class="technical-field"><summary>高级设置</summary><label><span>内部稳定标识（只读）</span><input :value="editor.draft.Key" readonly /></label></details>
       </div>
       <div v-else-if="editor.kind === 'shop' && editor.draft" class="form-grid">
         <ImageDropzone class="editor-image" :path="editorImagePath()" :label="editorImageLabel()" kind="shop" :busy="uploading" @file="uploadEditorAsset" @clear="clearEditorImage" />
-        <label><span>商品名称</span><input v-model="editor.draft.Name" /></label><label><span>商店类型</span><select v-model="editor.draft.ShopType"><option value="shop_normal">普通商店</option><option value="shop_affection">羁绊商店</option></select></label><label><span>价格</span><input v-model.number="editor.draft.Price" type="number" min="0" /></label><label><span>当前库存</span><input v-model.number="editor.draft.Stock" type="number" min="-1" /></label><label><span>目标库存</span><input v-model.number="editor.draft.RestockTarget" type="number" min="-1" /></label><label><span>每日限购</span><input v-model.number="editor.draft.DailyLimit" type="number" min="0" /></label><label><span>每周限购</span><input v-model.number="editor.draft.WeeklyLimit" type="number" min="0" /></label><label><span>图片路径</span><input v-model="editor.draft.Image" placeholder="留空时自动使用同名物品图" /></label><label><span>商品说明</span><textarea v-model="editor.draft.Description" rows="4" /></label>
+        <label><span>商品名称</span><input v-model="editor.draft.Name" /></label><label><span>商店类型</span><select v-model="editor.draft.ShopType"><option value="shop_normal">普通商店</option><option value="shop_affection">羁绊商店</option></select></label><label><span>价格</span><input v-model.number="editor.draft.Price" type="number" min="0" /></label><label><span>当前库存</span><input v-model.number="editor.draft.Stock" type="number" min="-1" /></label><label><span>目标库存</span><input v-model.number="editor.draft.RestockTarget" type="number" min="-1" /></label><label><span>每日限购</span><input v-model.number="editor.draft.DailyLimit" type="number" min="0" /></label><label><span>每周限购</span><input v-model.number="editor.draft.WeeklyLimit" type="number" min="0" /></label><label><span>商品说明</span><textarea v-model="editor.draft.Description" rows="4" /></label>
       </div>
       <div v-else-if="editor.kind === 'image' && editor.draft" class="form-grid">
         <ImageDropzone class="editor-image" :path="editorImagePath()" :label="editorImageLabel()" kind="image" :busy="uploading" @file="uploadEditorAsset" @clear="clearEditorImage" />
@@ -1305,8 +1428,8 @@ onMounted(load)
       </div>
       <div v-else-if="editor.kind === 'menu' && editor.draft" class="form-grid">
         <ImageDropzone class="editor-image" :path="editorImagePath()" :label="editorImageLabel()" kind="image" :busy="uploading" @file="uploadEditorAsset" @clear="clearEditorImage" />
-        <label><span>场景标识</span><input v-model="editor.draft.Name" :disabled="editor.index >= 0" /></label><label><span>菜单配图</span><input v-model="editor.draft.Image" placeholder="上传后自动填写，也可输入图片相对路径或 HTTPS 地址" /></label><label><span>纯文本回复（必填）</span><textarea v-model="editor.draft.Reply" rows="10" /></label><label><span>Markdown 回复（可选）</span><textarea v-model="editor.draft.Markdown" rows="10" placeholder="# 标题&#10;**加粗内容**&#10;留空时发送上面的纯文本回复" /></label>
-        <p class="section-help">Markdown 支持标题、加粗、链接等 QQ 机器人语法；留空时只发送纯文本。配图可上传到「图片/上传/」、填写相对路径或 HTTPS 地址。保存当前配置后，文本、Markdown 和图片立即对玩家生效；新增、删除或重命名场景后仍需点「重载生效」。</p>
+        <label><span>场景标识</span><input v-model="editor.draft.Name" :disabled="editor.index >= 0" /></label><label><span>纯文本回复（必填）</span><textarea v-model="editor.draft.Reply" rows="10" /></label><label><span>Markdown 回复（可选）</span><textarea v-model="editor.draft.Markdown" rows="10" placeholder="# 标题&#10;**加粗内容**&#10;留空时发送上面的纯文本回复" /></label>
+        <p class="section-help">Markdown 支持标题、加粗、链接等 QQ 机器人语法；留空时只发送纯文本。配图仅可在上方直接上传、移除或重新上传。保存当前配置后，文本、Markdown 和图片立即对玩家生效；新增、删除或重命名场景后仍需点「重载生效」。</p>
         <div class="qq-preview large"><div class="qq-avatar"><IconPaw :size="19" /></div><div class="qq-thread"><div v-if="editor.draft.Image" class="qq-image-block"><AssetThumbnail :path="editor.draft.Image" :label="editorImageLabel()" kind="image" size="tile" /></div><div class="qq-message">{{ editor.draft.Reply || '输入文案后在这里检查 QQ 消息效果。' }}</div></div></div>
         <div v-if="editor.draft.Markdown" class="markdown-source"><strong>QQ Markdown 源码</strong><small>最终渲染效果以 QQ 客户端为准</small><pre>{{ editor.draft.Markdown }}</pre></div>
       </div>
@@ -1328,7 +1451,7 @@ onMounted(load)
 </template>
 
 <style scoped>
-.content-page{display:grid;gap:12px;max-width:1440px;margin:0 auto;padding-bottom:48px}
+.content-page{display:grid;gap:12px;max-width:none;margin:0;padding-bottom:48px}
 .workspace-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .workspace-bar .page-tabs{margin:0;flex:1;min-width:min(520px,100%)}
 .page-tabs button{display:inline-flex;align-items:center;gap:7px}
@@ -1351,6 +1474,7 @@ onMounted(load)
 .pet-chips{display:flex;gap:6px;flex-wrap:wrap}
 .chip{padding:3px 8px;border-radius:999px;background:var(--bg-elevated);color:var(--text-muted);font-size:11px;font-weight:600}
 .chip.is-warn{background:var(--warning-soft);color:var(--warning-strong)}
+.lineage-workspace{display:grid;gap:14px}.lineage-summary{margin:0;color:var(--text-muted);font-size:12px}.lineage-group,.lineage-issues{overflow:hidden;border:1px solid var(--border-color);border-radius:var(--radius-card);background:var(--bg-surface)}.lineage-group>header,.lineage-issues>header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 16px;border-bottom:1px solid var(--border-color);background:var(--bg-elevated)}.lineage-group header span,.lineage-issues header span{color:var(--text-muted);font-size:10px}.lineage-group h3,.lineage-issues h3{margin:2px 0 0;font-size:14px}.lineage-group>header code{color:var(--text-muted);font-size:11px}.lineage-flow{display:grid;gap:9px;padding:13px}.lineage-node{position:relative;display:grid;gap:6px;min-width:0;padding:11px 12px;margin-left:calc(var(--lineage-depth, 0) * 28px);text-align:left}.lineage-node:not(.issue-node)::before{position:absolute;top:-10px;left:-18px;width:16px;height:20px;border-bottom:1px solid var(--border-strong);border-left:1px solid var(--border-strong);content:''}.lineage-node.is-root::before{display:none}.lineage-node.is-match{border-color:var(--accent);background:var(--accent-soft)}.lineage-node-title{display:flex;align-items:center;gap:9px;min-width:0}.lineage-node-title h4{margin:4px 0 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}.lineage-node code,.issue-node code{overflow:hidden;color:var(--text-muted);text-overflow:ellipsis;white-space:nowrap;font-size:11px}.lineage-node p,.lineage-node small{margin:0;color:var(--text-muted);font-size:11px}.lineage-node small{color:var(--accent)}.lineage-placeholder{display:grid;flex:0 0 auto;place-items:center;width:34px;height:34px;border-radius:9px;background:var(--bg-elevated);color:var(--text-muted)}.status-mark[data-stage='base']{background:var(--success-soft);color:var(--success-strong)}.status-mark[data-stage='evolved']{background:var(--accent-soft);color:var(--accent)}.status-mark[data-stage='awakened']{background:var(--warning-soft);color:var(--warning-strong)}.lineage-issue{padding:12px 16px;border-top:1px solid var(--border-color)}.lineage-issue:first-of-type{border-top:0}.lineage-issue>p{margin:0 0 9px;color:var(--text-muted);font-size:12px}.lineage-issue>div{display:flex;gap:8px;flex-wrap:wrap}.issue-node{width:min(280px,100%);margin:0;border:1px dashed var(--warning-strong);background:var(--warning-soft);cursor:pointer}.issue-node strong{font-size:13px}
 .bulk-bar{display:flex;position:sticky;top:8px;z-index:5;align-items:center;gap:9px;flex-wrap:wrap;padding:10px 12px;border:1px solid var(--border-color);border-radius:var(--radius-card);background:var(--bg-elevated)}
 .bulk-bar>span{margin-right:auto;color:var(--text-muted)}
 .bulk-bar select,.bulk-bar>input{min-height:36px;padding:6px 9px;border:1px solid var(--border-color);border-radius:var(--radius-input);background:var(--bg-base);color:var(--text-main)}
@@ -1379,7 +1503,7 @@ onMounted(load)
 .toolbar-actions{display:flex;gap:8px}.upload-button{position:relative;overflow:hidden}.upload-button input{position:absolute;inset:0;opacity:0;cursor:pointer}.image-preview{display:grid;place-items:center;min-height:76px;overflow:hidden;border-radius:11px;background:var(--bg-elevated);color:var(--text-muted)}.image-preview img{width:100%;height:100%;object-fit:cover}.image-preview.large{min-height:240px}.upload-field input{padding:10px}
 @media(max-width:1100px){.pet-grid,.image-gallery{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:900px){.menu-grid{grid-template-columns:1fr}}
-@media(max-width:700px){.content-page{gap:12px}.workspace-bar,.toolbar{align-items:stretch;flex-direction:column}.searchbox{min-width:0;width:100%}.event-card{grid-template-columns:auto minmax(0,1fr)}.event-card>.btn{grid-column:1/-1;width:100%}.bulk-bar{align-items:stretch}.bulk-bar>*{width:100%}.pet-grid,.image-gallery{grid-template-columns:1fr}.command-row{grid-template-columns:auto minmax(0,1fr) auto}.command-trigger{grid-column:2}.command-row>.status-mark{grid-column:2}.setting-grid{grid-template-columns:1fr}.form-grid.two,.reward-meta{grid-template-columns:1fr}.drawer-help{grid-template-columns:auto 1fr}.drawer-help>.btn{grid-column:1/-1}.reward-items>div{grid-template-columns:minmax(0,1fr) 72px auto}.drawer-actions{flex-wrap:wrap}.drawer-actions>span{display:none}.drawer-actions .btn{flex:1 1 auto}.image-actions{opacity:1}}
+@media(max-width:700px){.content-page{gap:12px}.workspace-bar,.toolbar{align-items:stretch;flex-direction:column}.searchbox{min-width:0;width:100%}.event-card{grid-template-columns:auto minmax(0,1fr)}.event-card>.btn{grid-column:1/-1;width:100%}.bulk-bar{align-items:stretch}.bulk-bar>*{width:100%}.pet-grid,.image-gallery{grid-template-columns:1fr}.lineage-node{margin-left:calc(var(--lineage-depth, 0) * 16px)}.command-row{grid-template-columns:auto minmax(0,1fr) auto}.command-trigger{grid-column:2}.command-row>.status-mark{grid-column:2}.setting-grid{grid-template-columns:1fr}.form-grid.two,.reward-meta{grid-template-columns:1fr}.drawer-help{grid-template-columns:auto 1fr}.drawer-help>.btn{grid-column:1/-1}.reward-items>div{grid-template-columns:minmax(0,1fr) 72px auto}.drawer-actions{flex-wrap:wrap}.drawer-actions>span{display:none}.drawer-actions .btn{flex:1 1 auto}.image-actions{opacity:1}}
 @media(max-width:600px){.toolbar-actions{width:100%}.toolbar-actions>*{flex:1}}
 .editor-image{margin-bottom:4px}
 .message-studio{display:grid;grid-template-columns:minmax(260px,360px) minmax(0,1fr);gap:14px}.message-catalog{display:grid;align-content:start;gap:7px;max-height:680px;overflow:auto}.message-catalog button{display:grid;gap:4px;padding:12px;border:1px solid var(--border-color);border-radius:11px;background:var(--bg-surface);color:inherit;text-align:left;cursor:pointer}.message-catalog button.active{border-color:var(--accent);background:var(--accent-soft)}.message-catalog small,.message-catalog span{color:var(--text-muted);font-size:11px}.message-catalog span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.message-preview-panel{display:grid;align-content:start;gap:14px;padding:17px;border:1px solid var(--border-color);border-radius:var(--radius-card);background:var(--bg-surface)}.message-preview-panel>header{display:flex;align-items:start;justify-content:space-between;gap:12px}.message-preview-panel h3{margin:2px 0 5px}.message-preview-panel header span,.template-note>span,.message-variable-grid span{color:var(--text-muted);font-size:10px}.message-preview-panel header label{display:grid;gap:4px}.message-preview-panel select,.message-variable-grid input{min-height:36px;padding:6px 9px;border:1px solid var(--border-color);border-radius:var(--radius-input);background:var(--bg-base);color:var(--text-main)}.message-variable-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.message-variable-grid label{display:grid;gap:4px}.template-note{display:grid;gap:5px;padding:10px;border-radius:9px;background:var(--bg-elevated)}.template-note code{white-space:pre-wrap}
@@ -1391,4 +1515,5 @@ onMounted(load)
 @media(max-width:900px){.choice-list.detailed label{grid-template-columns:28px 1fr auto}.choice-list.detailed label input:nth-of-type(2),.choice-list.detailed label select,.choice-list.detailed label input:nth-of-type(3){grid-column:2}}
 .event-editor-actions{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border:1px solid var(--border-color);border-radius:11px;background:var(--bg-elevated)}.event-editor-actions p{margin:0;color:var(--text-muted);font-size:12px}.zone-picker{display:grid;gap:10px;margin-top:12px}.zone-picker>section{overflow:hidden;border:1px solid var(--border-color);border-radius:11px}.zone-picker>section>header{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;background:var(--bg-elevated)}.zone-picker>section>header small{color:var(--text-muted)}.zone-picker label{display:flex;align-items:center;gap:10px;padding:10px 12px;border-top:1px solid var(--border-color);cursor:pointer}.zone-picker label:hover{background:var(--bg-hover)}.zone-picker input{width:16px;height:16px;accent-color:var(--accent)}.zone-picker label span{display:grid;gap:2px}.zone-picker label small,.zone-picker>p{color:var(--text-muted);font-size:11px}.zone-picker>p{margin:0;padding:14px;border:1px dashed var(--border-color);border-radius:11px}
 @media(max-width:700px){.event-editor-actions{align-items:stretch;flex-direction:column}}
+.chance-editor{padding-bottom:16px}.chance-editor>.sub-tabs,.chance-game-form,.chance-reward-head,.chance-reward-list{margin:16px}.chance-game-form{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.chance-game-form label,.chance-reward-row label{display:grid;gap:5px}.chance-game-form label>span,.chance-reward-row label>span{color:var(--text-muted);font-size:11px}.chance-game-form input,.chance-reward-row input{width:100%;min-height:36px;padding:7px 9px;border:1px solid var(--border-color);border-radius:var(--radius-input);background:var(--bg-base);color:var(--text-main);font:inherit}.chance-game-form .wide-field{grid-column:1/-1}.chance-reward-head{display:flex;align-items:center;justify-content:space-between}.chance-reward-head h4{margin:2px 0 0}.chance-reward-head span{color:var(--text-muted);font-size:11px}.chance-reward-list{display:grid;gap:8px}.chance-reward-row{display:grid;grid-template-columns:repeat(7,minmax(0,1fr)) auto auto auto;align-items:end;gap:8px;padding:12px;border:1px solid var(--border-color);border-radius:10px}.chance-reward-row .switch-control{padding-bottom:7px}@media(max-width:900px){.chance-game-form{grid-template-columns:repeat(2,minmax(0,1fr))}.chance-reward-row{grid-template-columns:repeat(3,minmax(0,1fr))}}@media(max-width:700px){.chance-game-form,.chance-reward-row{grid-template-columns:1fr}.chance-game-form .wide-field{grid-column:auto}}
 </style>

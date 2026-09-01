@@ -36,6 +36,11 @@ func handleFormPreview(ctx context.Context, event core.InboundEvent, service *Se
 		return renderEvolutionBranches(stage, options), nil
 	}
 	if err != nil {
+		if errors.Is(err, gameplay.ErrActivityActive) {
+			if message, busy := petBusyMessage(ctx, service, account.ID); busy {
+				return message, nil
+			}
+		}
 		return evolutionBusinessError(err, stage)
 	}
 	return renderEvolutionPreview(service.DB.WithContext(ctx), preview), nil
@@ -63,6 +68,11 @@ func handleFormConfirm(ctx context.Context, event core.InboundEvent, service *Se
 		preview, err = evolution.EvolveTo(ctx, account.ID, target)
 	}
 	if err != nil {
+		if errors.Is(err, gameplay.ErrActivityActive) {
+			if message, busy := petBusyMessage(ctx, service, account.ID); busy {
+				return message, nil
+			}
+		}
 		return evolutionBusinessError(err, stage)
 	}
 	db := service.DB.WithContext(ctx)

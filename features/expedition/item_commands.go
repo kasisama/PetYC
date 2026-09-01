@@ -21,6 +21,11 @@ func handleUseItem(ctx context.Context, event core.InboundEvent, service *Servic
 	}
 	result, err := gameplay.NewItemEffectService(service.DB).Use(ctx, account.ID, name, quantity, itemUseIdempotencyKey(event))
 	if err != nil {
+		if errors.Is(err, gameplay.ErrActivityActive) {
+			if message, busy := petBusyMessage(ctx, service, account.ID); busy {
+				return message, nil
+			}
+		}
 		return itemUseBusinessError(err)
 	}
 	if result.Duplicate {

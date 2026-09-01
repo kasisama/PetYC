@@ -91,8 +91,23 @@ func handleShopPage(ctx context.Context, event core.InboundEvent, service *Servi
 		}
 		lines = append(lines, fmt.Sprintf("• %s｜%d %s｜%s", listing.Name, listing.Price, currency, stock))
 	}
-	lines = append(lines, "", "发送“查看商品 商品名”查看图片和详情。", "购买示例：购买 小饼干*2")
-	return text(strings.Join(lines, "\n")), nil
+	lines = append(lines, "", "🔎 发送“查看商品 商品名”查看图片和详情。", "🛒 购买示例：购买 小饼干*2")
+	buttons := make([]core.KeyboardButton, 0, 2)
+	if result.Page > 1 {
+		previous := fmt.Sprintf("%s %d", command, result.Page-1)
+		lines = append(lines, "⬅️ 上一页："+previous)
+		buttons = append(buttons, core.KeyboardButton{Label: "⬅️ 上一页", Command: previous})
+	}
+	if result.Page < result.TotalPages {
+		next := fmt.Sprintf("%s %d", command, result.Page+1)
+		lines = append(lines, "➡️ 下一页："+next)
+		buttons = append(buttons, core.KeyboardButton{Label: "➡️ 下一页", Command: next})
+	}
+	message := text(strings.Join(lines, "\n"))
+	if len(buttons) > 0 {
+		message = withKeyboard(message, buttons)
+	}
+	return message, nil
 }
 
 func handleShopItem(ctx context.Context, event core.InboundEvent, service *Service) (core.OutboundMessage, error) {
@@ -158,9 +173,22 @@ func handleItemDetail(ctx context.Context, event core.InboundEvent, service *Ser
 	if item.SellPrice > 0 {
 		sell = fmt.Sprintf("%d %s", item.SellPrice, currencyName(service.DB))
 	}
-	message := text(fmt.Sprintf("【%s】\n类型：%s\n%s\n出售价格：%s\n%s", item.Name, displayItemType(item.Type), effect, sell, description))
+	message := text(fmt.Sprintf("%s【%s】\n类型：%s\n用途：%s\n出售价格：%s\n\n%s\n\n%s", itemTypeEmoji(item.Type), item.Name, displayItemType(item.Type), effect, sell, description, itemUseGuide(item.Type)))
 	message.Image = item.Image
 	return message, nil
+}
+
+func itemUseGuide(itemType string) string {
+	switch strings.TrimSpace(itemType) {
+	case "饱食":
+		return "操作：发送“喂养 物品名*数量”交给宠物。"
+	case "礼物", "好感":
+		return "操作：发送“送礼 物品名*数量”增加好感。"
+	case "成长", "智慧", "力量", "防御":
+		return "操作：发送“学习”“锻炼”或“健身”选择对应成长用品。"
+	default:
+		return "操作：发送“使用 物品名*数量”；不能直接使用的物品会说明适用玩法。"
+	}
 }
 
 func handleBuy(ctx context.Context, event core.InboundEvent, service *Service) (core.OutboundMessage, error) {

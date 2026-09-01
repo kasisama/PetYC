@@ -18,6 +18,7 @@ import (
 	"qq-pet-saas/core"
 	"qq-pet-saas/database"
 	_ "qq-pet-saas/features"
+	"qq-pet-saas/gameplay"
 	"qq-pet-saas/models"
 	"qq-pet-saas/notifications"
 	"qq-pet-saas/qqofficial"
@@ -75,6 +76,7 @@ func main() {
 	if sqlDB, dbErr := database.DB.DB(); dbErr == nil {
 		defer sqlDB.Close()
 	}
+	core.InboundGuard = gameplay.BanGuard(database.DB)
 	if err := config.EnsureOfficialDefaults(database.DB); err != nil {
 		log.Fatalf("[Main] 初始化官方 SQL 配置失败: %v", err)
 	}
@@ -87,6 +89,9 @@ func main() {
 	}
 	if err := core.SyncUnifiedCommandConfigs(database.DB); err != nil {
 		log.Fatalf("[Main] 更新命令目录失败: %v", err)
+	}
+	if err := config.RequireLiveLaunchReadiness(database.DB); err != nil {
+		log.Fatalf("[Main] 当前配置未达到上线完整度: %v", err)
 	}
 	if err := config.MarkConfigLoaded(database.DB); err != nil {
 		log.Fatalf("[Main] 初始化配置版本状态失败: %v", err)

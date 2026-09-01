@@ -12,7 +12,7 @@ import (
 )
 
 var modernMenuTemplates = []models.MenuConfig{
-	{Name: "主菜单", Reply: "🐾【宠物菜单】\n\n🌟 新手上路\n领养宠物 · 我的宠物 · 签到 · 我的背包\n\n🍖 日常陪伴\n喂养 · 摸头 · 散步 · 送礼 · 洗澡\n\n🛒 商店与成长\n商店 · 学习 · 锻炼 · 打工 · 进化\n\n🧭 冒险世界\n地图 · 探索 区域名 · 远征 · 远征状态 · 领取 · 地图首领\n\n🏕️ 社群协作\n营地 · 共建 · 小队 · 求助 · 支援\n\n🔐 账号管理\n生成绑定码 · 绑定 · 我的数据\n\n💡 发送“商店”看看今天能带回家的食物，或发送“地图”开始探索", Markdown: "# 🐾 宠物菜单\n\n**🌟 新手上路**\n领养宠物 · 我的宠物 · 签到 · 我的背包\n\n**🍖 日常陪伴**\n喂养 · 摸头 · 散步 · 送礼 · 洗澡\n\n**🛒 商店与成长**\n商店 · 学习 · 锻炼 · 打工 · 进化\n\n**🧭 冒险世界**\n地图 · 探索 区域名 · 远征 · 远征状态 · 领取 · 地图首领\n\n**🏕️ 社群协作**\n营地 · 共建 · 小队 · 求助 · 支援\n\n**🔐 账号管理**\n生成绑定码 · 绑定 · 我的数据\n\n**💡 发送“商店”看看今天能带回家的食物，或发送“地图”开始探索**"},
+	{Name: "主菜单", Reply: "🐾【宠物菜单】\n\n🌟 新手上路\n领养宠物 · 我的宠物 · 签到 · 今日待办 · 我的背包\n\n🍖 日常陪伴\n喂养 · 摸头 · 散步 · 送礼 · 洗澡\n\n🛒 商店与成长\n商店 · 学习 · 锻炼 · 打工 · 进化\n\n🧭 冒险世界\n地图 · 探索 区域名 · 远征 · 远征状态 · 领取 · 地图首领\n\n🏕️ 社群协作\n营地 · 共建 · 小队 · 求助 · 支援\n\n🔐 账号管理\n生成绑定码 · 绑定 · 我的数据\n\n💡 不知道做什么？发送“今日待办”。", Markdown: "# 🐾 宠物菜单\n\n**🌟 新手上路**\n领养宠物 · 我的宠物 · 签到 · 今日待办 · 我的背包\n\n**🍖 日常陪伴**\n喂养 · 摸头 · 散步 · 送礼 · 洗澡\n\n**🛒 商店与成长**\n商店 · 学习 · 锻炼 · 打工 · 进化\n\n**🧭 冒险世界**\n地图 · 探索 区域名 · 远征 · 远征状态 · 领取 · 地图首领\n\n**🏕️ 社群协作**\n营地 · 共建 · 小队 · 求助 · 支援\n\n**🔐 账号管理**\n生成绑定码 · 绑定 · 我的数据\n\n**💡 不知道做什么？发送 `今日待办`。**"},
 	{Name: "今日与状态", Reply: "【签到与宠物状态】\n签到：完成每日签到并领取陪伴奖励\n我的宠物：查看宠物近况和准备度\n喂养／摸头／散步／送礼／洗澡：日常宠物互动", Markdown: "# 📅 今日与状态\n\n**🎁 每日签到**\n`签到`：完成每日签到并领取陪伴奖励\n\n**🐾 宠物状态**\n`我的宠物`：查看宠物近况和准备度\n\n**💗 日常互动**\n`喂养` · `摸头` · `散步` · `送礼` · `洗澡`"},
 	{Name: "远征指南", Reply: "【冒险与远征指南】\n地图：查看大地图、区域与探索度\n探索 区域名：手动触发遭遇\n战斗中可发送普攻、防御或战斗技能\n完成区域指定目标后解锁该区域远征\n远征 区域名：派遣宠物挂机获取区域奖励\n地图首领：查看群内限时首领", Markdown: "# 🧭 冒险与远征指南\n\n**🗺️ 区域探索**\n`地图`：查看大地图、区域与探索度  \n`探索 区域名`：手动触发遭遇\n\n**⚔️ 回合战斗**\n进入战斗后再发送 `普攻` · `防御` · `战斗技能`\n\n**⏳ 宠物远征**\n完成区域指定目标后解锁远征  \n`远征 区域名`：挂机获取区域奖励\n\n**👑 限时挑战**\n`地图首领`：查看群内限时首领"},
 	{Name: "成长与图鉴", Reply: "【成长与图鉴】\n定位：查看探索者、守护者、学者和支援者\n定位 名称：切换成长方向\n技能：查看当前技能组合\n图鉴：查看区域发现与调查进度\n\n失败仍会获得基础调查进度。", Markdown: "# 📖 成长与图鉴\n\n**🧭 成长定位**\n`定位`：查看探索者、守护者、学者和支援者  \n`定位 名称`：切换成长方向\n\n**✨ 技能组合**\n`技能`：查看当前技能组合\n\n**📚 区域图鉴**\n`图鉴`：查看区域发现与调查进度\n\n> 探索失败仍会获得基础调查进度。"},
@@ -35,6 +35,12 @@ var legacyOfficialMenus = map[string]models.MenuConfig{
 	"营地与小队": {
 		Reply:    "【营地与小队】\n营地：查看当前群或频道社区\n共建 木材 20：贡献设施材料\n小队：查看远征小队\n地图首领：参加当前地图的限时群体挑战\n求助／支援：发布或响应互助单",
 		Markdown: "# 🏕️ 营地与小队\n\n**🏠 社区营地**\n`营地`：查看当前群或频道社区  \n`共建 木材 20`：贡献设施材料\n\n**👥 远征小队**\n`小队`：查看远征小队\n\n**👑 群体挑战**\n`地图首领`：参加当前地图的限时首领\n\n**🤝 社区互助**\n`求助` · `支援`：发布或响应互助单",
+	},
+}
+
+var additionalLegacyOfficialReplies = map[string][]string{
+	"主菜单": {
+		"🐾【宠物菜单】\n\n🌟 新手上路\n领养宠物 · 我的宠物 · 签到 · 我的背包\n\n🍖 日常陪伴\n喂养 · 摸头 · 散步 · 送礼 · 洗澡\n\n🛒 商店与成长\n商店 · 学习 · 锻炼 · 打工 · 进化\n\n🧭 冒险世界\n地图 · 探索 区域名 · 远征 · 远征状态 · 领取 · 地图首领\n\n🏕️ 社群协作\n营地 · 共建 · 小队 · 求助 · 支援\n\n🔐 账号管理\n生成绑定码 · 绑定 · 我的数据\n\n💡 发送“商店”看看今天能带回家的食物，或发送“地图”开始探索",
 	},
 }
 
@@ -107,11 +113,17 @@ func usingOfficialProfile(tx *gorm.DB) bool {
 }
 
 func isLegacyOfficialMenu(existing models.MenuConfig) bool {
-	legacy, ok := legacyOfficialMenus[existing.Name]
-	if !ok {
-		return false
+	if legacy, ok := legacyOfficialMenus[existing.Name]; ok {
+		if strings.TrimSpace(existing.Reply) == strings.TrimSpace(legacy.Reply) {
+			return true
+		}
 	}
-	return strings.TrimSpace(existing.Reply) == strings.TrimSpace(legacy.Reply)
+	for _, reply := range additionalLegacyOfficialReplies[existing.Name] {
+		if strings.TrimSpace(existing.Reply) == strings.TrimSpace(reply) {
+			return true
+		}
+	}
+	return false
 }
 
 func PromptMenuOverwrite(in io.Reader, out io.Writer, interactive bool) MenuOverwritePrompt {

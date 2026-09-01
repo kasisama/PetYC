@@ -71,8 +71,26 @@ func TestExploreCombatUnlocksZoneAndGrantsEquipment(t *testing.T) {
 	if len(result.Rewards) == 0 || result.Rewards[0].Name != "嫩枝短剑" {
 		t.Fatalf("装备奖励应解析为模板中文名，得到 %#v", result.Rewards)
 	}
-	if text := rewardText(result.Rewards[0]); text != "获得装备：嫩枝短剑" || strings.Contains(text, "twig-sword") || strings.Contains(text, equipment.ID) {
+	if text := rewardText(result.Rewards[0]); text != "🗡️ 获得装备：嫩枝短剑" || strings.Contains(text, "twig-sword") || strings.Contains(text, equipment.ID) {
 		t.Fatalf("战斗结算不应展示字段名或装备编号: %q", text)
+	}
+	var currencyReward *AdventureReward
+	for index := range result.Rewards {
+		if result.Rewards[index].Type == "currency" && result.Rewards[index].Key == gameplay.DefaultCurrencyKey {
+			currencyReward = &result.Rewards[index]
+			break
+		}
+	}
+	if currencyReward == nil || currencyReward.Quantity != 3 || !strings.HasPrefix(rewardText(*currencyReward), "💰") {
+		t.Fatalf("普通地图战斗应发放 3 枚主货币并带图标: %#v", result.Rewards)
+	}
+	var wallet models.PlayerWallet
+	if err = db.First(&wallet, "account_id = ? AND currency_key = ?", "adventure-player", gameplay.DefaultCurrencyKey).Error; err != nil || wallet.Balance != 3 {
+		t.Fatalf("战斗胜利应只发放一次基础货币: wallet=%#v err=%v", wallet, err)
+	}
+	var ledgerCount int64
+	if err = db.Model(&models.WalletLedger{}).Where("account_id = ? AND reason = ?", "adventure-player", "adventure_combat_victory").Count(&ledgerCount).Error; err != nil || ledgerCount != 1 {
+		t.Fatalf("战斗货币应只写一笔可追踪账本: count=%d err=%v", ledgerCount, err)
 	}
 	var pet models.PetProfile
 	if err = db.First(&pet, "account_id = ?", "adventure-player").Error; err != nil {
@@ -180,7 +198,39 @@ func TestBlueprintUnlockCraftEquipAndSalvage(t *testing.T) {
 	}
 }
 
-func TestExpiredCombatPersistsInjuryAndAllowsExploreAfterTreat(t *testing.T) {
+func TestEquipRejectsBelowRequiredLevelThenSucceeds(t *testing.T) {
+	service, db, _ := newTestService(t)
+	seedAdventurePlayer(t, service, "wearer", "光芽")
+	if err := db.Create(&models.EquipmentTemplateConfig{Key: "equipment_03", Name: "晨露罗盘", Slot: "treasure", Rarity: "common", RequiredLevel: 3, Enabled: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.PlayerAdventureProgress{AccountID: "wearer", Level: 1}).Error; err != nil {
+		t.Fatal(err)
+	}
+	item := models.PlayerEquipment{ID: "eq-compass", AccountID: "wearer", TemplateKey: "equipment_03", Rarity: "common"}
+	if err := db.Create(&item).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := service.Equip(context.Background(), "wearer", item.ID)
+	var levelErr *EquipmentLevelTooLowError
+	if !errors.As(err, &levelErr) || levelErr.RequiredLevel != 3 || levelErr.CurrentLevel != 1 {
+		t.Fatalf("expected level requirement error, got %#v", err)
+	}
+
+	if err := db.Model(&models.PlayerAdventureProgress{}).Where("account_id = ?", "wearer").Update("level", 3).Error; err != nil {
+		t.Fatal(err)
+	}
+	equipped, err := service.Equip(context.Background(), "wearer", item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if equipped.EquippedSlot != "treasure" || equipped.EquippedPetID == "" {
+		t.Fatalf("unexpected equipped equipment: %#v", equipped)
+	}
+}
+
+func TestExpiredCombatSafelyWithdrawsAndAllowsExploreImmediately(t *testing.T) {
 	service, db, now := newTestService(t)
 	service.RandomIntn = func(int) (int, error) { return 0, nil }
 	seedAdventurePlayer(t, service, "expire-player", "超时光芽兽")
@@ -219,21 +269,11 @@ func TestExpiredCombatPersistsInjuryAndAllowsExploreAfterTreat(t *testing.T) {
 	if err := db.First(&pet, "account_id = ?", "expire-player").Error; err != nil {
 		t.Fatal(err)
 	}
-	if pet.Status != "受伤" {
-		t.Fatalf("timeout must injure pet, got %#v", pet)
-	}
-	care := gameplay.NewCareService(db)
-	if _, err := care.Treat(context.Background(), "expire-player", gameplay.DefaultCurrencyKey, 0); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.First(&pet, "account_id = ?", "expire-player").Error; err != nil {
-		t.Fatal(err)
-	}
-	if pet.Status != "空闲" {
-		t.Fatalf("treatment must clear injured status, got %#v", pet)
+	if pet.Status != "空闲" || pet.Health != 100 {
+		t.Fatalf("timeout must safely preserve the pet, got %#v", pet)
 	}
 	if _, err := service.ExploreZone(context.Background(), "expire-player", "zone"); err != nil {
-		t.Fatalf("treated pet should be able to explore again, got %v", err)
+		t.Fatalf("safely withdrawn pet should be able to explore again, got %v", err)
 	}
 }
 

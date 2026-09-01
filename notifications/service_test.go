@@ -54,6 +54,42 @@ func TestEnqueueIsIdempotentAndHonorsPreference(t *testing.T) {
 	}
 }
 
+func TestWorkerCancelsJobsForBannedAccounts(t *testing.T) {
+	db := notificationTestDB(t)
+	if err := db.AutoMigrate(&models.PlayerAccount{}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
+	bannedAt := now.Add(-time.Hour)
+	if err := db.Create(&models.PlayerAccount{ID: "banned", BannedAt: &bannedAt}).Error; err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(db)
+	service.Now = func() time.Time { return now }
+	if _, err := service.Enqueue(context.Background(), EnqueueRequest{AccountID: "banned", IdempotencyKey: "job-1", Kind: "expedition_done", Platform: "onebot", Message: "回来啦", DueAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	sent := false
+	worker := &Worker{Service: service, Send: func(context.Context, models.NotificationJob) error {
+		sent = true
+		return nil
+	}}
+	processed, err := worker.ProcessOne(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("process = %v %v", processed, err)
+	}
+	if sent {
+		t.Fatal("封禁账号不应投递主动通知")
+	}
+	var job models.NotificationJob
+	if err = db.First(&job, "idempotency_key = ?", "job-1").Error; err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != StatusCancelled {
+		t.Fatalf("job status = %s", job.Status)
+	}
+}
+
 func TestClaimDueTreatsEmptyQueueAsIdle(t *testing.T) {
 	db := notificationTestDB(t)
 	service := NewService(db)

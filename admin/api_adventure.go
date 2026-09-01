@@ -101,14 +101,14 @@ func (api *AdventureAPI) saveCatalog(c *gin.Context) {
 }
 
 func adventureCatalogSummary(payload appconfig.AdventureCatalog) gin.H {
-	return gin.H{"maps": len(payload.Maps), "zones": len(payload.Zones), "monsters": len(payload.Monsters), "bosses": len(payload.Bosses), "equipment": len(payload.EquipmentTemplates), "objectives": len(payload.Objectives), "items": len(payload.Items), "shop_items": len(payload.ShopItems)}
+	return gin.H{"maps": len(payload.Maps), "zones": len(payload.Zones), "monsters": len(payload.Monsters), "bosses": len(payload.Bosses), "equipment": len(payload.EquipmentTemplates), "objectives": len(payload.Objectives), "stages": len(payload.Stages), "story_events": len(payload.StoryEvents), "story_choices": len(payload.StoryChoices), "items": len(payload.Items), "shop_items": len(payload.ShopItems)}
 }
 
 func adventureIssue(err error) adventureValidationIssue {
 	message := err.Error()
 	issue := adventureValidationIssue{Module: "catalog", Code: "invalid_reference", Message: message}
 	mappings := []struct{ Prefix, Module string }{
-		{"大地图", "maps"}, {"区域", "exploration"}, {"探索目标", "exploration"}, {"遭遇", "exploration"},
+		{"大地图", "maps"}, {"区域", "exploration"}, {"探索目标", "exploration"}, {"节点探索", "exploration"}, {"探索故事", "exploration"}, {"主线探索", "exploration"}, {"遭遇", "exploration"},
 		{"怪物", "monsters"}, {"战斗技能", "skills"}, {"奖励池", "loot"}, {"远征物品", "inventory"},
 		{"远征货币", "inventory"}, {"远征商店", "shop"}, {"区域远征", "expeditions"}, {"地图首领", "bosses"},
 		{"装备", "equipment"},

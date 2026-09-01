@@ -42,6 +42,11 @@ func handleStartActivity(ctx context.Context, event core.InboundEvent, service *
 	activity.Now = service.Now
 	result, err := activity.Start(ctx, account.ID, request)
 	if err != nil {
+		if errors.Is(err, gameplay.ErrActivityActive) {
+			if message, busy := petBusyMessage(ctx, service, account.ID); busy {
+				return message, nil
+			}
+		}
 		return activityBusinessError(err)
 	}
 	lines := []string{
@@ -78,6 +83,11 @@ func handleFinishActivity(ctx context.Context, event core.InboundEvent, service 
 	activity.Now = service.Now
 	result, err := activity.Complete(ctx, account.ID, kind, gameplay.DefaultCurrencyKey)
 	if err != nil {
+		if errors.Is(err, gameplay.ErrActivityActive) {
+			if message, busy := petBusyMessage(ctx, service, account.ID); busy {
+				return message, nil
+			}
+		}
 		return activityBusinessError(err)
 	}
 	lines := []string{fmt.Sprintf("🎊【%s完成】", kind), activityFinishScene(kind, result.PetName)}

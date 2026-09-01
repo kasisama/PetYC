@@ -83,6 +83,7 @@ func TestExpeditionSettlementStaysOnStartingPetAfterSwitch(t *testing.T) {
 
 func TestFishingSettlementStaysOnStartingPetAfterSwitch(t *testing.T) {
 	service, db, now := newTestService(t)
+	seedChanceGames(t, db)
 	account, first, second := adoptTwoExpeditionPets(t, service)
 	if err := gameplay.NewWalletService(db).Credit(context.Background(), account.ID, gameplay.DefaultCurrencyKey, 10); err != nil {
 		t.Fatal(err)

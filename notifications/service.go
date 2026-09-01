@@ -141,6 +141,20 @@ func (service *Service) ClaimDue(ctx context.Context, lease time.Duration) (*mod
 	return &claimed, nil
 }
 
+func (service *Service) MarkCancelled(ctx context.Context, jobID string) error {
+	now := service.now()
+	result := service.DB.WithContext(ctx).Model(&models.NotificationJob{}).
+		Where("id = ? AND status = ?", jobID, StatusSending).
+		Updates(map[string]interface{}{"status": StatusCancelled, "locked_at": nil, "last_error": "account banned", "updated_at": now})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
 func (service *Service) MarkSent(ctx context.Context, jobID string) error {
 	now := service.now()
 	result := service.DB.WithContext(ctx).Model(&models.NotificationJob{}).
@@ -199,6 +213,23 @@ func backoff(attempt int) time.Duration {
 	return delay
 }
 
+func accountNotificationBanned(db *gorm.DB, accountID string, now time.Time) bool {
+	if db == nil || strings.TrimSpace(accountID) == "" {
+		return false
+	}
+	var account models.PlayerAccount
+	if err := db.Select("banned_at", "ban_expires_at").First(&account, "id = ?", accountID).Error; err != nil {
+		return false
+	}
+	if account.BannedAt == nil {
+		return false
+	}
+	if account.BanExpiresAt != nil && !account.BanExpiresAt.After(now) {
+		return false
+	}
+	return true
+}
+
 func (service *Service) now() time.Time {
 	if service.Now != nil {
 		return service.Now()
@@ -226,6 +257,9 @@ func (worker *Worker) ProcessOne(ctx context.Context) (bool, error) {
 	}
 	if err != nil {
 		return false, err
+	}
+	if accountNotificationBanned(worker.Service.DB, job.AccountID, worker.Service.now()) {
+		return true, worker.Service.MarkCancelled(ctx, job.ID)
 	}
 	if worker.Send == nil {
 		err = errors.New("notification sender unavailable")

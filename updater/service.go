@@ -23,13 +23,6 @@ const (
 	maxArtifactBytes         = 512 << 20
 )
 
-// These values are injected by the release workflow. They are public URLs,
-// never credentials. Empty values keep development builds on GitHub only.
-var (
-	defaultGiteeManifestURL string
-	defaultGiteeReleaseURL  string
-)
-
 type CheckInfo struct {
 	CurrentVersion string `json:"currentVersion"`
 	LatestVersion  string `json:"latestVersion"`
@@ -92,10 +85,7 @@ func NewService(config Config) *Service {
 		config.PublicKey = DefaultPublicKey
 	}
 	if config.ReleaseURL == "" {
-		config.ReleaseURL = strings.TrimSpace(defaultGiteeReleaseURL)
-		if config.ReleaseURL == "" {
-			config.ReleaseURL = defaultGitHubReleaseURL
-		}
+		config.ReleaseURL = defaultGitHubReleaseURL
 	}
 	if config.HTTPClient == nil {
 		config.HTTPClient = &http.Client{Timeout: 30 * time.Second}
@@ -130,12 +120,7 @@ func normalizeManifestSources(config Config) []ManifestSource {
 			ManifestURL: config.ManifestURL, SignatureURL: config.SignatureURL,
 		}})
 	}
-	sources := make([]ManifestSource, 0, 2)
-	if address := strings.TrimSpace(defaultGiteeManifestURL); address != "" {
-		sources = append(sources, ManifestSource{ManifestURL: address})
-	}
-	sources = append(sources, ManifestSource{ManifestURL: defaultGitHubManifestURL})
-	return completeManifestSources(sources)
+	return completeManifestSources([]ManifestSource{{ManifestURL: defaultGitHubManifestURL}})
 }
 
 func completeManifestSources(sources []ManifestSource) []ManifestSource {

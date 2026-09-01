@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -95,6 +96,35 @@ func TestCompanionFeedAndGiftConsumeUnifiedInventoryAndApplyFavorites(t *testing
 	}
 	if pet.Hunger != 80 || pet.Affection != 110 || pet.BondLevel != 2 {
 		t.Fatalf("companion interaction did not persist pet state: %#v", pet)
+	}
+}
+
+func TestCompanionGiftAcceptsConfiguredGiftTypeWithEmptyEffect(t *testing.T) {
+	db := newGameplayDB(t, ":memory:")
+	if err := db.Create(&models.PetSpeciesConfig{
+		Name: "光芽兽", Hunger: 100, HungerMax: 100,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.PetProfile{
+		AccountID: "account-gift", PetType: "光芽兽", Name: "光芽兽", CurrentForm: "光芽兽",
+		Role: "探索者", Stance: "探索", Status: "空闲", Mood: "一般", MoodPoints: 50,
+		Readiness: 100, Health: 100, HealthMax: 100, Hunger: 100, HungerMax: 100,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.ItemConfig{Name: "风铃草结", Status: "active", Type: "礼物", Effect: ""}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := NewInventoryService(db).Credit(context.Background(), "account-gift", "风铃草结", 1); err != nil {
+		t.Fatal(err)
+	}
+	result, err := NewCompanionService(db).Interact(context.Background(), "account-gift", ActionGift, "风铃草结", 1, CompanionRules{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.AffectionDelta != 8 {
+		t.Fatalf("空 Effect 的礼物应按 8 点好感: %#v", result)
 	}
 }
 
@@ -792,6 +822,57 @@ func oneBotIdentity(groupID, userID string) core.InboundEvent {
 	return core.InboundEvent{
 		Platform: core.PlatformOneBot, AppID: "onebot", SceneType: core.SceneGroup,
 		SpaceID: groupID, ActorID: userID,
+	}
+}
+
+func TestAccountBannedDetectsActiveAndExpired(t *testing.T) {
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	bannedAt := now.Add(-time.Hour)
+	expired := now.Add(-time.Minute)
+	future := now.Add(time.Hour)
+	if AccountBanned(models.PlayerAccount{}, now) {
+		t.Fatal("未封禁账号不应被拦住")
+	}
+	if !AccountBanned(models.PlayerAccount{BannedAt: &bannedAt}, now) {
+		t.Fatal("永久封禁应生效")
+	}
+	if AccountBanned(models.PlayerAccount{BannedAt: &bannedAt, BanExpiresAt: &expired}, now) {
+		t.Fatal("到期封禁应自动失效")
+	}
+	if !AccountBanned(models.PlayerAccount{BannedAt: &bannedAt, BanExpiresAt: &future}, now) {
+		t.Fatal("未到期封禁应生效")
+	}
+}
+
+func TestRejectBannedDoesNotCreateAccountOrLeakReason(t *testing.T) {
+	db := newGameplayDB(t, ":memory:")
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	bannedAt := now.Add(-time.Hour)
+	accountID := "acct-ban-1"
+	if err := db.Create(&models.PlayerAccount{ID: accountID, BannedAt: &bannedAt, BanReason: "内部原因勿展示"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.PlayerIdentity{AccountID: accountID, Platform: "onebot", AppID: "onebot", SceneType: "group", ScopeID: "*", SubjectID: "10001"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	message, handled, err := RejectBanned(context.Background(), db, oneBotIdentity("group-a", "10001"), now)
+	if err != nil || !handled {
+		t.Fatalf("封禁账号应被拦截 handled=%v err=%v", handled, err)
+	}
+	if !strings.Contains(message.Text, "暂时无法使用游戏命令") || strings.Contains(message.Text, "内部原因勿展示") {
+		t.Fatalf("封禁文案不正确或泄漏原因: %q", message.Text)
+	}
+	if message.BusinessResult != "banned" {
+		t.Fatalf("BusinessResult=%q", message.BusinessResult)
+	}
+	unknown, handled, err := RejectBanned(context.Background(), db, oneBotIdentity("group-a", "nobody"), now)
+	if err != nil || handled || unknown.Text != "" {
+		t.Fatalf("无账号不应拦截: handled=%v msg=%q err=%v", handled, unknown.Text, err)
+	}
+	var count int64
+	db.Model(&models.PlayerAccount{}).Count(&count)
+	if count != 1 {
+		t.Fatalf("拦截不得新建账号, count=%d", count)
 	}
 }
 

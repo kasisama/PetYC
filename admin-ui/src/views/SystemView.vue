@@ -96,9 +96,11 @@ const resetMsg = ref('')
 const resetErr = ref('')
 /** 二次确认：要求用户输入「恢复出厂」以降低误触 */
 const resetConfirmText = ref('')
+const resetReason = ref('')
 
 function openResetDialog() {
   resetConfirmText.value = ''
+  resetReason.value = ''
   resetErr.value = ''
   resetOpen.value = true
 }
@@ -107,10 +109,15 @@ function closeResetDialog() {
   if (resetBusy.value) return
   resetOpen.value = false
   resetConfirmText.value = ''
+  resetReason.value = ''
 }
 
 async function confirmReset() {
   if (resetBusy.value) return
+  if (!resetReason.value.trim()) {
+    resetErr.value = '请填写操作原因'
+    return
+  }
   if (resetConfirmText.value.trim() !== '恢复出厂') {
     resetErr.value = '请输入「恢复出厂」以确认操作'
     return
@@ -119,10 +126,11 @@ async function confirmReset() {
   resetErr.value = ''
   resetMsg.value = ''
   try {
-    resetMsg.value = await resetConfigs()
+    resetMsg.value = await resetConfigs(resetReason.value.trim(), resetConfirmText.value.trim())
     await loadConfigStatus()
     resetOpen.value = false
     resetConfirmText.value = ''
+    resetReason.value = ''
   } catch (err) {
     resetErr.value = err instanceof Error ? err.message : '恢复出厂配置失败'
   } finally {
@@ -332,6 +340,10 @@ onBeforeUnmount(() => {
           <strong>官方默认 v0.1.0</strong>。现有玩家数据、本机参数及其他配置方案不会被删除。
         </p>
         <label class="field">
+          <span class="field-label">操作原因</span>
+          <textarea v-model="resetReason" class="field-input" rows="3" placeholder="必填，将写入审计日志" :disabled="resetBusy"/>
+        </label>
+        <label class="field">
           <span class="field-label">请输入「恢复出厂」以确认</span>
           <input
             v-model="resetConfirmText"
@@ -350,7 +362,7 @@ onBeforeUnmount(() => {
           <button
             type="button"
             class="btn btn-danger"
-            :disabled="resetBusy || resetConfirmText.trim() !== '恢复出厂'"
+            :disabled="resetBusy || !resetReason.trim() || resetConfirmText.trim() !== '恢复出厂'"
             @click="confirmReset"
           >
             {{ resetBusy ? '执行中…' : '确认恢复出厂配置' }}

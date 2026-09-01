@@ -27,8 +27,11 @@ type AdventureZoneConfig struct {
 	HungerCost                   int64  `gorm:"not null;default:0" json:"hunger_cost"`
 	ReadinessCost                int    `gorm:"not null;default:0" json:"readiness_cost"`
 	ExpeditionUnlockObjectiveKey string `gorm:"size:64" json:"expedition_unlock_objective_key"`
-	Enabled                      bool   `gorm:"not null;default:true;index" json:"enabled"`
-	SortOrder                    int    `gorm:"not null;default:0;index" json:"sort_order"`
+	// ExplorationMode keeps the legacy objective loop available while selected
+	// zones opt into the configurable node-based exploration flow.
+	ExplorationMode string `gorm:"size:16;not null;default:'legacy';index" json:"exploration_mode"`
+	Enabled         bool   `gorm:"not null;default:true;index" json:"enabled"`
+	SortOrder       int    `gorm:"not null;default:0;index" json:"sort_order"`
 }
 
 type AdventureZonePrerequisiteConfig struct {
@@ -103,8 +106,59 @@ type AdventureEncounterConfig struct {
 	Name          string `gorm:"size:96;not null" json:"name"`
 	Description   string `gorm:"type:text" json:"description"`
 	Weight        int    `gorm:"not null;default:1" json:"weight"`
+	StageKey      string `gorm:"size:64;not null;default:'';index" json:"stage_key"`
+	// NodeRole is mainline, side or repeat. It is only interpreted by zones
+	// using the node exploration mode.
+	NodeRole  string `gorm:"size:16;not null;default:'';index" json:"node_role"`
+	ClueValue int    `gorm:"not null;default:0" json:"clue_value"`
+	Enabled   bool   `gorm:"not null;default:true;index" json:"enabled"`
+	SortOrder int    `gorm:"not null;default:0" json:"sort_order"`
+}
+
+// AdventureExplorationStageConfig defines one ordered portion of a
+// node-based zone. Entering a stage with EventKey pauses exploration until the
+// player resolves that configured event.
+type AdventureExplorationStageConfig struct {
+	Key           string `gorm:"primaryKey;size:64" json:"key"`
+	ZoneKey       string `gorm:"size:64;not null;index" json:"zone_key"`
+	Name          string `gorm:"size:96;not null" json:"name"`
+	Description   string `gorm:"type:text" json:"description"`
+	ProgressStart int    `gorm:"not null;default:0" json:"progress_start"`
+	ProgressEnd   int    `gorm:"not null;default:100" json:"progress_end"`
+	RequiredClues int    `gorm:"not null;default:0" json:"required_clues"`
+	NextStageKey  string `gorm:"size:64" json:"next_stage_key"`
+	EventKey      string `gorm:"size:64" json:"event_key"`
 	Enabled       bool   `gorm:"not null;default:true;index" json:"enabled"`
-	SortOrder     int    `gorm:"not null;default:0" json:"sort_order"`
+	SortOrder     int    `gorm:"not null;default:0;index" json:"sort_order"`
+}
+
+// AdventureStoryEventConfig is an operator-authored event. Mainline events
+// are entered by their stage; repeat events are reserved for completed zones.
+type AdventureStoryEventConfig struct {
+	Key         string `gorm:"primaryKey;size:64" json:"key"`
+	ZoneKey     string `gorm:"size:64;not null;index" json:"zone_key"`
+	StageKey    string `gorm:"size:64;index" json:"stage_key"`
+	Name        string `gorm:"size:128;not null" json:"name"`
+	Description string `gorm:"type:text" json:"description"`
+	EventType   string `gorm:"size:16;not null;default:'mainline';index" json:"event_type"`
+	Weight      int    `gorm:"not null;default:1" json:"weight"`
+	Enabled     bool   `gorm:"not null;default:true;index" json:"enabled"`
+	SortOrder   int    `gorm:"not null;default:0;index" json:"sort_order"`
+}
+
+// AdventureStoryEventChoiceConfig advances the exploration state. Combat is
+// represented by selecting a next stage whose encounters contain the battle;
+// this keeps choice settlement idempotent and battle settlement centralized.
+type AdventureStoryEventChoiceConfig struct {
+	ID           uint   `gorm:"primaryKey" json:"id"`
+	EventKey     string `gorm:"size:64;not null;uniqueIndex:idx_adventure_story_event_choice" json:"event_key"`
+	ChoiceKey    string `gorm:"size:64;not null;uniqueIndex:idx_adventure_story_event_choice" json:"choice_key"`
+	Label        string `gorm:"size:128;not null" json:"label"`
+	Description  string `gorm:"type:text" json:"description"`
+	RiskLevel    string `gorm:"size:16;not null;default:'low'" json:"risk_level"`
+	NextStageKey string `gorm:"size:64" json:"next_stage_key"`
+	Enabled      bool   `gorm:"not null;default:true;index" json:"enabled"`
+	SortOrder    int    `gorm:"not null;default:0;index" json:"sort_order"`
 }
 
 // AdventureEncounterEffectConfig turns landmarks and safe encounters into
@@ -314,6 +368,34 @@ type PlayerObjectiveProgress struct {
 	UpdatedAt    time.Time
 }
 
+// PlayerAdventureNodeProgress is isolated from legacy objectives so a zone
+// can migrate to node mode without the two progress algorithms interfering.
+type PlayerAdventureNodeProgress struct {
+	ID             uint   `gorm:"primaryKey"`
+	AccountID      string `gorm:"size:36;not null;uniqueIndex:idx_player_adventure_node_progress"`
+	ZoneKey        string `gorm:"size:64;not null;uniqueIndex:idx_player_adventure_node_progress"`
+	StageKey       string `gorm:"size:64;not null"`
+	ClueProgress   int    `gorm:"not null;default:0"`
+	SideMisses     int    `gorm:"not null;default:0"`
+	ActionSequence int64  `gorm:"not null;default:0"`
+	CompletedAt    *time.Time
+	UpdatedAt      time.Time
+}
+
+// PlayerAdventureEventState stores an immutable event snapshot while a
+// choice is pending, so a configuration publish cannot strand a player.
+type PlayerAdventureEventState struct {
+	ID                uint   `gorm:"primaryKey"`
+	AccountID         string `gorm:"size:36;not null;uniqueIndex:idx_player_adventure_event"`
+	ZoneKey           string `gorm:"size:64;not null;uniqueIndex:idx_player_adventure_event"`
+	EventKey          string `gorm:"size:64;not null;uniqueIndex:idx_player_adventure_event"`
+	Status            string `gorm:"size:16;not null;default:'pending';index"`
+	SelectedChoiceKey string `gorm:"size:64"`
+	SnapshotJSON      string `gorm:"type:text"`
+	ResolvedAt        *time.Time
+	UpdatedAt         time.Time
+}
+
 type AdventureExplorationSession struct {
 	ID           string `gorm:"primaryKey;size:36"`
 	AccountID    string `gorm:"size:36;not null;index:idx_adventure_exploration_account_status"`
@@ -322,6 +404,8 @@ type AdventureExplorationSession struct {
 	MapKey       string `gorm:"size:64;not null"`
 	ZoneKey      string `gorm:"size:64;not null"`
 	EncounterKey string `gorm:"size:64"`
+	StageKey     string `gorm:"size:64"`
+	NodeRole     string `gorm:"size:16"`
 	Status       string `gorm:"size:24;not null;index:idx_adventure_exploration_account_status"`
 	StartedAt    time.Time
 	FinishedAt   *time.Time

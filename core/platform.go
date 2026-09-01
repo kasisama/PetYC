@@ -176,6 +176,12 @@ func (router *CommandRouter) Route(ctx context.Context, event InboundEvent) (Out
 		return OutboundMessage{}, false, nil
 	}
 	event.Text = text
+	if InboundGuard != nil {
+		if message, handled, err := InboundGuard(ctx, event); handled || err != nil {
+			recordGameplayMetric(event, matchedCommand, message, err)
+			return message, true, err
+		}
+	}
 	message, err := handler(ctx, event)
 	recordGameplayMetric(event, matchedCommand, message, err)
 	return message, true, err
@@ -220,6 +226,7 @@ var (
 	unifiedRouterMu  sync.RWMutex
 	unifiedFeatures  = make(map[string]UnifiedFeature)
 	unifiedFeatureMu sync.RWMutex
+	InboundGuard     func(context.Context, InboundEvent) (OutboundMessage, bool, error)
 )
 
 func RegisterUnifiedHandler(command string, handler UnifiedHandler) error {

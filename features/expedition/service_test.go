@@ -18,6 +18,22 @@ import (
 	"qq-pet-saas/models"
 )
 
+func seedChanceGames(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	if err := db.Create(&[]models.ChanceGameConfig{
+		{GameKey: "lottery", Name: "幸运抽奖", Enabled: true, CostCurrency: 20, DailyLimit: 10, PityThreshold: 10, PityRewardKey: "light-stone"},
+		{GameKey: "fishing", Name: "水域垂钓", Enabled: true, CostCurrency: 5, DailyLimit: 20, PityThreshold: 5, PityRewardKey: "water-sample", DurationSecond: 60},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&[]models.ChanceRewardConfig{
+		{GameKey: "lottery", RewardKey: "companion-mark", Name: "陪伴印记", Weight: 60, ItemName: "陪伴印记", Quantity: 1, Enabled: true, SortOrder: 10},
+		{GameKey: "fishing", RewardKey: "small-fish", Name: "小鱼", Weight: 60, ItemName: "小鱼", Quantity: 1, Enabled: true, SortOrder: 10},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func newTestService(t *testing.T) (*Service, *gorm.DB, *time.Time) {
 	t.Helper()
 	if len(config.Core.InitialPets) == 0 {
@@ -50,14 +66,16 @@ func newTestService(t *testing.T) (*Service, *gorm.DB, *time.Time) {
 		&models.PetEvolutionRuleConfig{}, &models.PetEvolutionCostConfig{}, &models.PetSkillUnlockConfig{}, &models.AdventureLevelConfig{},
 		&models.ItemConfig{}, &models.ShopItemConfig{}, &models.ShopPurchaseLog{},
 		&models.AdventureMapConfig{}, &models.AdventureZoneConfig{}, &models.AdventureZonePrerequisiteConfig{},
-		&models.AdventureObjectiveConfig{}, &models.AdventureMonsterConfig{}, &models.AdventureSkillConfig{},
+		&models.AdventureObjectiveConfig{}, &models.AdventureExplorationStageConfig{}, &models.AdventureStoryEventConfig{}, &models.AdventureStoryEventChoiceConfig{},
+		&models.AdventureMonsterConfig{}, &models.AdventureSkillConfig{},
 		&models.AdventureMonsterSkillConfig{}, &models.AdventureEncounterConfig{}, &models.AdventureEncounterEffectConfig{}, &models.AdventureLootPoolConfig{},
 		&models.AdventureLootEntryConfig{}, &models.CurrencyConfig{},
 		&models.AdventureShopItemConfig{}, &models.AdventureExpeditionConfig{}, &models.AdventureBossConfig{},
 		&models.AdventureBossRewardTierConfig{}, &models.EquipmentTemplateConfig{}, &models.EquipmentAffixConfig{},
 		&models.EquipmentRecipeConfig{}, &models.EquipmentRecipeMaterialConfig{}, &models.LiveEventChoiceConfig{},
 		&models.LiveEventExpeditionSourceConfig{}, &models.PlayerAdventureProgress{}, &models.PlayerZoneProgress{},
-		&models.PlayerObjectiveProgress{}, &models.AdventureExplorationSession{}, &models.AdventureCombatSession{},
+		&models.PlayerObjectiveProgress{}, &models.PlayerAdventureNodeProgress{}, &models.PlayerAdventureEventState{},
+		&models.AdventureExplorationSession{}, &models.AdventureCombatSession{},
 		&models.AdventureCombatTurn{}, &models.PlayerEquipment{}, &models.PlayerBlueprintProgress{},
 		&models.AdventureShopPurchase{},
 		&models.AdventureExpeditionRun{}, &models.AdventureBossInstance{}, &models.AdventureBossContribution{},
@@ -826,6 +844,64 @@ func TestFishingUsesTimedClaimAndAuditedReward(t *testing.T) {
 	db.Model(&models.ChanceOutcome{}).Where("account_id = ? AND game_key = ?", account.ID, "fishing").Count(&outcomes)
 	if item.Quantity != 1 || outcomes != 1 {
 		t.Fatalf("fishing reward was not exactly once: item=%d outcomes=%d", item.Quantity, outcomes)
+	}
+}
+
+func TestFishingCommandsReportOtherActiveActionInsteadOfActiveRod(t *testing.T) {
+	service, db, now := newTestService(t)
+	service.RandomIntn = func(int) (int, error) { return 0, nil }
+	if err := db.Create(&models.ChanceGameConfig{GameKey: "fishing", Name: "测试垂钓", Enabled: true, CostCurrency: 5, DailyLimit: 2, DurationSecond: 60}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.ChanceRewardConfig{GameKey: "fishing", RewardKey: "fish", Name: "小鱼", Weight: 100, ItemName: "小鱼", Quantity: 1, Enabled: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+	event := oneBotEvent("100", "busy-fishing-player", "抛竿")
+	account, err := service.ResolveAccount(context.Background(), event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = service.AdoptWithStarter(context.Background(), account.ID, "光芽兽", "光芽兽", gameplay.DefaultCurrencyKey, 20); err != nil {
+		t.Fatal(err)
+	}
+	activity := gameplay.NewActivityService(db)
+	activity.Now = service.Now
+	if _, err = activity.Start(context.Background(), account.ID, gameplay.ActivityStartRequest{Kind: gameplay.ActivityWork, Duration: time.Minute}); err != nil {
+		t.Fatal(err)
+	}
+
+	router := core.NewCommandRouter()
+	if err = RegisterCommands(router.Register, func() *Service { return service }); err != nil {
+		t.Fatal(err)
+	}
+	cast, handled, err := router.Route(context.Background(), event)
+	if err != nil || !handled || !strings.Contains(cast.Text, "正在打工") || strings.Contains(cast.Text, "已经抛过竿") {
+		t.Fatalf("打工中的抛竿提示错误: handled=%v err=%v message=%q", handled, err, cast.Text)
+	}
+	event.Text = "收竿"
+	claim, handled, err := router.Route(context.Background(), event)
+	if err != nil || !handled || !strings.Contains(claim.Text, "当前没有等待收竿的鱼竿") {
+		t.Fatalf("未实际抛竿时收竿提示错误: handled=%v err=%v message=%q", handled, err, claim.Text)
+	}
+
+	*now = now.Add(time.Minute)
+	if _, err = activity.Complete(context.Background(), account.ID, gameplay.ActivityWork, gameplay.DefaultCurrencyKey); err != nil {
+		t.Fatal(err)
+	}
+	event.Text = "抛竿"
+	cast, handled, err = router.Route(context.Background(), event)
+	if err != nil || !handled || !strings.Contains(cast.Text, "到时间后发送“收竿”") {
+		t.Fatalf("完成打工后应能抛竿: handled=%v err=%v message=%q", handled, err, cast.Text)
+	}
+	event.Text = "收竿"
+	*now = now.Add(time.Minute)
+	claim, handled, err = router.Route(context.Background(), event)
+	if err != nil || !handled || !strings.Contains(claim.Text, "收竿成功") {
+		t.Fatalf("抛竿后应能收竿: handled=%v err=%v message=%q", handled, err, claim.Text)
+	}
+	claim, _, err = router.Route(context.Background(), event)
+	if err != nil || !strings.Contains(claim.Text, "当前没有等待收竿的鱼竿") {
+		t.Fatalf("收竿应只结算一次: err=%v message=%q", err, claim.Text)
 	}
 }
 

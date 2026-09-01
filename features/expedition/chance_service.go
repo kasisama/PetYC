@@ -20,27 +20,14 @@ var (
 	ErrFishingActive      = errors.New("已经有一根鱼竿在等待收获")
 	ErrFishingNotReady    = errors.New("现在收竿还太早")
 	ErrNoFishingRun       = errors.New("当前没有等待收竿的鱼竿")
+	ErrFishingCapacity    = errors.New("当前账号的行动名额已满")
 )
 
-var defaultChanceGames = map[string]models.ChanceGameConfig{
-	"lottery": {GameKey: "lottery", Name: "幸运抽奖", Enabled: true, CostCurrency: 20, DailyLimit: 10, PityThreshold: 10, PityRewardKey: "light-stone", Rules: "每抽消耗20星砂；每日10次；连续9次未获得珍稀奖励时，第10次必得光之石。"},
-	"fishing": {GameKey: "fishing", Name: "水域垂钓", Enabled: true, CostCurrency: 5, DailyLimit: 20, PityThreshold: 5, PityRewardKey: "water-sample", DurationSecond: 60, Rules: "每次抛竿消耗5星砂；每日20次；连续4次未获得珍稀收获时，第5次必得水域样本。"},
-}
+// FishingBusyError keeps a non-fishing action from being reported as an
+// already-cast rod. The player needs to finish the displayed action first.
+type FishingBusyError struct{ Status string }
 
-var defaultChanceRewards = map[string][]models.ChanceRewardConfig{
-	"lottery": {
-		{GameKey: "lottery", RewardKey: "companion-mark", Name: "陪伴印记", Weight: 60, ItemName: "陪伴印记", Quantity: 1, Enabled: true, SortOrder: 10},
-		{GameKey: "lottery", RewardKey: "forest-sample", Name: "林地样本", Weight: 30, ItemName: "林地样本", Quantity: 1, Enabled: true, SortOrder: 20},
-		{GameKey: "lottery", RewardKey: "eco-sample", Name: "生态样本", Weight: 9, ItemName: "生态样本", Quantity: 1, Enabled: true, SortOrder: 30},
-		{GameKey: "lottery", RewardKey: "light-stone", Name: "光之石", Weight: 1, ItemName: "光之石", Quantity: 1, Rare: true, Enabled: true, SortOrder: 40},
-	},
-	"fishing": {
-		{GameKey: "fishing", RewardKey: "small-fish", Name: "小鱼", Weight: 60, ItemName: "小鱼", Quantity: 1, Enabled: true, SortOrder: 10},
-		{GameKey: "fishing", RewardKey: "shell", Name: "贝壳", Weight: 30, ItemName: "贝壳", Quantity: 1, Enabled: true, SortOrder: 20},
-		{GameKey: "fishing", RewardKey: "pearl", Name: "珍珠", Weight: 9, ItemName: "珍珠", Quantity: 1, Enabled: true, SortOrder: 30},
-		{GameKey: "fishing", RewardKey: "water-sample", Name: "水域样本", Weight: 1, ItemName: "水域样本", Quantity: 1, Rare: true, Enabled: true, SortOrder: 40},
-	},
-}
+func (err *FishingBusyError) Error() string { return "宠物正在进行其他行动: " + err.Status }
 
 type ChanceRate struct {
 	Reward models.ChanceRewardConfig
@@ -89,11 +76,7 @@ func chanceGameTx(tx *gorm.DB, gameKey string) (models.ChanceGameConfig, error) 
 		}
 		return configured, nil
 	}
-	fallback, exists := defaultChanceGames[gameKey]
-	if !exists || !fallback.Enabled {
-		return configured, ErrChanceGameDisabled
-	}
-	return fallback, nil
+	return configured, ErrChanceGameDisabled
 }
 
 func chanceRewardsTx(tx *gorm.DB, gameKey string) ([]models.ChanceRewardConfig, int, error) {
@@ -102,7 +85,7 @@ func chanceRewardsTx(tx *gorm.DB, gameKey string) ([]models.ChanceRewardConfig, 
 		return nil, 0, err
 	}
 	if len(rows) == 0 {
-		rows = append([]models.ChanceRewardConfig(nil), defaultChanceRewards[gameKey]...)
+		return nil, 0, errors.New("奖励概率尚未配置")
 	}
 	enabled := make([]models.ChanceRewardConfig, 0, len(rows))
 	total := 0
@@ -297,9 +280,18 @@ func (service *Service) StartFishing(ctx context.Context, accountID, sourceKey s
 			return petErr
 		}
 		pet := *petRow
+		var activeFishing models.FishingRun
+		if result := tx.Limit(1).Find(&activeFishing, "account_id = ? AND status = ?", accountID, "running"); result.Error != nil {
+			return result.Error
+		} else if result.RowsAffected > 0 {
+			return ErrFishingActive
+		}
 		if err = gameplay.ReservePetRunTx(tx, accountID, pet.ID); err != nil {
-			if errors.Is(err, gameplay.ErrTooManyConcurrentRuns) || errors.Is(err, gameplay.ErrActivityActive) {
-				return ErrFishingActive
+			if errors.Is(err, gameplay.ErrActivityActive) {
+				return &FishingBusyError{Status: pet.Status}
+			}
+			if errors.Is(err, gameplay.ErrTooManyConcurrentRuns) {
+				return ErrFishingCapacity
 			}
 			return err
 		}

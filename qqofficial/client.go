@@ -65,17 +65,19 @@ func (client *Client) Send(ctx context.Context, event core.InboundEvent, message
 	if err != nil {
 		return nil, err
 	}
-	mediaSent := false
+	rendered := message.Render(client.MarkdownEnabled, client.KeyboardEnabled)
 	if message.Image != "" && event.Platform == core.PlatformQQGroup && event.SceneType == core.SceneGroup {
 		if fileInfo, mediaErr := client.uploadGroupImage(ctx, event, message.Image, token); mediaErr != nil {
 			log.Printf("[QQOfficial] 宠物图片上传失败，已降级为纯文本: %v", mediaErr)
-		} else if _, mediaErr = client.sendGroupMedia(ctx, event, fileInfo, token); mediaErr != nil {
-			log.Printf("[QQOfficial] 宠物图片发送失败，已降级为纯文本: %v", mediaErr)
+		} else if result, mediaErr := client.sendGroupMedia(ctx, event, fileInfo, token, rendered.Text, rendered.Keyboard); mediaErr != nil {
+			log.Printf("[QQOfficial] 图文消息发送失败，已降级为纯文本: %v", mediaErr)
 		} else {
-			mediaSent = true
+			if client.Status != nil {
+				client.Status.markSend()
+			}
+			return result, nil
 		}
 	}
-	rendered := message.Render(client.MarkdownEnabled, client.KeyboardEnabled)
 	markdownActive := rendered.Markdown != nil && strings.TrimSpace(rendered.Markdown.Content) != ""
 	var endpoint string
 	payload := make(map[string]interface{})
@@ -95,11 +97,7 @@ func (client *Client) Send(ctx context.Context, event core.InboundEvent, message
 		}
 		if event.MessageID != "" {
 			payload["msg_id"] = event.MessageID
-			if mediaSent {
-				payload["msg_seq"] = 2
-			} else {
-				payload["msg_seq"] = 1
-			}
+			payload["msg_seq"] = 1
 		} else if event.EventID != "" {
 			payload["event_id"] = event.EventID
 		}

@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"strings"
+
+	"qq-pet-saas/models"
 )
 
 func validateAdventureSnapshot(snapshot ConfigSnapshot, items map[string]bool, events map[string]bool) error {
@@ -11,11 +13,14 @@ func validateAdventureSnapshot(snapshot ConfigSnapshot, items map[string]bool, e
 	}
 	maps := map[string]bool{}
 	zones := map[string]string{}
+	zoneNames := map[string]string{}
+	zoneRecommended := map[string]int{}
 	objectives := map[string]string{}
 	monsters := map[string]bool{}
 	skills := map[string]bool{}
 	pools := map[string]bool{}
 	equipment := map[string]bool{}
+	equipmentTemplates := map[string]models.EquipmentTemplateConfig{}
 	bosses := map[string]bool{}
 	currencies := map[string]bool{}
 
@@ -28,10 +33,12 @@ func validateAdventureSnapshot(snapshot ConfigSnapshot, items map[string]bool, e
 	}
 	for _, row := range snapshot.AdventureZones {
 		key := strings.TrimSpace(row.Key)
-		if key == "" || zones[key] != "" || !maps[row.MapKey] || strings.TrimSpace(row.Name) == "" || row.RecommendedLevel < 1 || row.DifficultyPermille <= 0 || row.HungerCost < 0 || row.ReadinessCost < 0 {
+		if key == "" || zones[key] != "" || !maps[row.MapKey] || strings.TrimSpace(row.Name) == "" || row.RecommendedLevel < 1 || row.DifficultyPermille <= 0 || row.HungerCost < 0 || row.ReadinessCost < 0 || (row.ExplorationMode != "" && row.ExplorationMode != "legacy" && row.ExplorationMode != "node") {
 			return fmt.Errorf("区域配置无效或引用了不存在的大地图: %s", key)
 		}
 		zones[key] = row.MapKey
+		zoneNames[key] = row.Name
+		zoneRecommended[key] = row.RecommendedLevel
 	}
 	graph := map[string][]string{}
 	for _, row := range snapshot.AdventurePrereqs {
@@ -99,9 +106,79 @@ func validateAdventureSnapshot(snapshot ConfigSnapshot, items map[string]bool, e
 		}
 	}
 	validEncounterTypes := map[string]bool{"monster": true, "landmark": true, "safe": true}
+	nodeZones := map[string]bool{}
+	for _, zone := range snapshot.AdventureZones {
+		if zone.ExplorationMode == "node" {
+			nodeZones[zone.Key] = true
+		}
+	}
+	stageZones := map[string]string{}
+	for _, row := range snapshot.AdventureStages {
+		if row.Key == "" || stageZones[row.Key] != "" || !nodeZones[row.ZoneKey] || row.Name == "" || row.ProgressStart < 0 || row.ProgressEnd <= row.ProgressStart || row.ProgressEnd > 100 || row.RequiredClues < 0 {
+			return fmt.Errorf("节点探索阶段配置无效或重复: %s", row.Key)
+		}
+		stageZones[row.Key] = row.ZoneKey
+	}
+	for _, zone := range snapshot.AdventureZones {
+		if !nodeZones[zone.Key] {
+			continue
+		}
+		hasStart, hasEnd := false, false
+		for _, stage := range snapshot.AdventureStages {
+			if stage.ZoneKey != zone.Key {
+				continue
+			}
+			hasStart = hasStart || stage.ProgressStart == 0
+			hasEnd = hasEnd || stage.ProgressEnd == 100
+			if stage.NextStageKey != "" && stageZones[stage.NextStageKey] != zone.Key {
+				return fmt.Errorf("节点探索阶段 %s 引用了不存在或跨区域的下一阶段 %s", stage.Key, stage.NextStageKey)
+			}
+		}
+		if !hasStart || !hasEnd {
+			return fmt.Errorf("节点探索区域 %s 必须有从 0 到 100 的阶段链", zone.Key)
+		}
+	}
+	storyEvents := map[string]models.AdventureStoryEventConfig{}
+	for _, row := range snapshot.AdventureStoryEvents {
+		if row.Key == "" || storyEvents[row.Key].Key != "" || !nodeZones[row.ZoneKey] || row.Name == "" || (row.EventType != "mainline" && row.EventType != "repeat") || row.Weight <= 0 {
+			return fmt.Errorf("探索故事事件配置无效或重复: %s", row.Key)
+		}
+		if row.StageKey != "" && stageZones[row.StageKey] != row.ZoneKey {
+			return fmt.Errorf("探索故事事件 %s 引用了不存在或跨区域的阶段 %s", row.Key, row.StageKey)
+		}
+		storyEvents[row.Key] = row
+	}
+	for _, stage := range snapshot.AdventureStages {
+		if stage.EventKey == "" {
+			continue
+		}
+		event, ok := storyEvents[stage.EventKey]
+		if !ok || event.ZoneKey != stage.ZoneKey || event.StageKey != stage.Key {
+			return fmt.Errorf("节点探索阶段 %s 引用了不存在或不匹配的事件 %s", stage.Key, stage.EventKey)
+		}
+	}
+	choicesByStoryEvent := map[string]int{}
+	for _, row := range snapshot.AdventureStoryChoices {
+		event, ok := storyEvents[row.EventKey]
+		if !ok || row.ChoiceKey == "" || row.Label == "" || (row.RiskLevel != "low" && row.RiskLevel != "medium" && row.RiskLevel != "high") {
+			return fmt.Errorf("探索故事选项配置无效: %s/%s", row.EventKey, row.ChoiceKey)
+		}
+		if row.NextStageKey != "" && stageZones[row.NextStageKey] != event.ZoneKey {
+			return fmt.Errorf("探索故事选项 %s/%s 引用了不存在或跨区域的阶段 %s", row.EventKey, row.ChoiceKey, row.NextStageKey)
+		}
+		choicesByStoryEvent[row.EventKey]++
+	}
+	for key, event := range storyEvents {
+		if event.EventType == "mainline" && (choicesByStoryEvent[key] < 2 || choicesByStoryEvent[key] > 3) {
+			return fmt.Errorf("主线探索事件 %s 必须配置 2 到 3 个选项", key)
+		}
+	}
 	for _, row := range snapshot.AdventureEncounters {
-		if zones[row.ZoneKey] == "" || row.EncounterKey == "" || row.Name == "" || !validEncounterTypes[row.EncounterType] || row.Weight <= 0 {
+		if zones[row.ZoneKey] == "" || row.EncounterKey == "" || row.Name == "" || !validEncounterTypes[row.EncounterType] || row.Weight <= 0 || (row.NodeRole != "" && row.NodeRole != "mainline" && row.NodeRole != "side" && row.NodeRole != "repeat") || row.ClueValue < 0 {
 			return fmt.Errorf("区域遭遇配置无效: %s/%s", row.ZoneKey, row.EncounterKey)
+		}
+		if row.StageKey != "" && stageZones[row.StageKey] != row.ZoneKey {
+			return fmt.Errorf("区域遭遇 %s 引用了不存在或跨区域的阶段 %s", row.EncounterKey, row.StageKey)
 		}
 		if row.EncounterType == "monster" && !monsters[row.TargetKey] {
 			return fmt.Errorf("遭遇 %s 引用了不存在的怪物 %s", row.EncounterKey, row.TargetKey)
@@ -154,6 +231,7 @@ func validateAdventureSnapshot(snapshot ConfigSnapshot, items map[string]bool, e
 			return fmt.Errorf("装备 %s 引用了不存在的分解材料 %s", row.Key, row.SalvageItem)
 		}
 		equipment[row.Key] = true
+		equipmentTemplates[row.Key] = row
 	}
 	validAttributes := map[string]bool{"attack": true, "defense": true, "health": true, "wisdom": true, "crit_rate": true, "dodge_rate": true, "damage_bonus": true, "damage_reduction": true}
 	for _, row := range snapshot.EquipmentAffixes {
@@ -188,6 +266,19 @@ func validateAdventureSnapshot(snapshot ConfigSnapshot, items map[string]bool, e
 		case "equipment":
 			if !equipment[row.RewardKey] {
 				return fmt.Errorf("奖励池 %s 引用了不存在的装备 %s", row.PoolKey, row.RewardKey)
+			}
+			if strings.HasSuffix(row.PoolKey, "_loot") {
+				zoneKey := strings.TrimSuffix(row.PoolKey, "_loot")
+				if rec, ok := zoneRecommended[zoneKey]; ok {
+					template := equipmentTemplates[row.RewardKey]
+					if template.RequiredLevel > rec {
+						name := template.Name
+						if name == "" {
+							name = row.RewardKey
+						}
+						return fmt.Errorf("区域 %s 掉落装备 %s 的穿戴等级 %d 高于推荐等级 %d", zoneNames[zoneKey], name, template.RequiredLevel, rec)
+					}
+				}
 			}
 		case "blueprint_fragment":
 			if !equipment[row.RewardKey] {

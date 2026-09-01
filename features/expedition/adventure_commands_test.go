@@ -217,14 +217,14 @@ func TestExploreCombatEncounterShowsBothFighters(t *testing.T) {
 
 func TestRewardTextUsesDisplayNamesWithoutInternalIDs(t *testing.T) {
 	equipment := rewardText(AdventureReward{Type: "equipment", Key: "equipment_01", Name: "原野短杖", Quantity: 1, Equipment: &models.PlayerEquipment{ID: "ce7489f0-9442-410c-a773-fdf855fe7196", TemplateKey: "equipment_01"}})
-	if equipment != "获得装备：原野短杖" {
+	if equipment != "🗡️ 获得装备：原野短杖" {
 		t.Fatalf("装备奖励应只显示中文名: %q", equipment)
 	}
 	if strings.Contains(equipment, "equipment_01") || strings.Contains(equipment, "ce7489f0") {
 		t.Fatalf("装备奖励泄漏了字段名或编号: %q", equipment)
 	}
 	fragment := rewardText(AdventureReward{Type: "blueprint_fragment", Key: "equipment_01", Name: "原野短杖蓝图碎片", Quantity: 2})
-	if fragment != "获得：原野短杖蓝图碎片 ×2" {
+	if fragment != "📜 获得蓝图碎片：原野短杖蓝图碎片 ×2" {
 		t.Fatalf("蓝图奖励应显示中文名: %q", fragment)
 	}
 }

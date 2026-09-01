@@ -58,7 +58,8 @@ export interface CodexCatalogItem extends CodexCatalogRule { id:number;discovere
 export interface GameplayCodex {summary:{catalog_count:number;discovered_entries:number;discovery_rate:number};items:CodexCatalogItem[];warnings:string[]}
 
 export interface PlayerDetail {
-  account: { ID: string; CreatedAt: string; UpdatedAt: string; active_pet_id?: string }
+  account: { ID: string; CreatedAt: string; UpdatedAt: string; active_pet_id?: string; banned_at?: string | null; ban_expires_at?: string | null; ban_reason?: string }
+  banned?: boolean
   pet: Record<string, unknown>
   pets?: Array<Record<string, unknown>>
   active_pet_id?: string
@@ -170,6 +171,7 @@ export function normalizePlayerDetail(raw: unknown): PlayerDetail {
     expeditions: arrayOrEmpty<Record<string, unknown>>(value.expeditions),
     communities: arrayOrEmpty<Record<string, unknown>>(value.communities),
     notifications: { Enabled: typeof notifications.Enabled === 'boolean' ? notifications.Enabled : true },
+    banned: value.banned === true,
     adventure_inventory: arrayOrEmpty<Record<string, unknown>>(value.adventure_inventory),
     adventure_equipment: arrayOrEmpty<Record<string, unknown>>(value.adventure_equipment),
     adventure_blueprints: arrayOrEmpty<Record<string, unknown>>(value.adventure_blueprints),
@@ -184,6 +186,12 @@ export async function getPlayer(accountId: string) { return normalizePlayerDetai
 export function grantItem(accountId: string, body: { item_name: string; quantity: number; reason: string; idempotency_key: string }) { return api.post(`/api/admin/players/${accountId}/grants`, body) }
 export function grantCurrency(accountId: string, body: { currency_key: string; amount: number; direction: 'grant' | 'debit'; reason: string; idempotency_key: string }) {
   return api.post(`/api/admin/players/${accountId}/currency`, body)
+}
+export function banPlayer(accountId: string, body: { reason: string; confirmation: string; duration_hours?: number }) {
+  return api.post(`/api/admin/players/${accountId}/ban`, body)
+}
+export function unbanPlayer(accountId: string, body: { reason: string; confirmation: string }) {
+  return api.post(`/api/admin/players/${accountId}/unban`, body)
 }
 export function setActivePet(accountId: string, petId: string, reason: string) { return api.post(`/api/admin/players/${accountId}/active_pet`, { pet_id: petId, reason }) }
 export function resetSeason(eventKey: string, body: { reason: string; confirmation: string; season_key?: string }) {

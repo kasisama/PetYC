@@ -75,6 +75,9 @@ func adventureZoneStatus(zone AdventureZoneView) string {
 		return "需先完成" + strings.Join(zone.MissingPrerequisites, "、")
 	}
 	status := fmt.Sprintf("探索度 %d%%", zone.ExplorationPercent)
+	if strings.TrimSpace(zone.StageName) != "" {
+		status = fmt.Sprintf("%s · %s · %d%%", zone.StageName, zone.CurrentGoal, zone.ExplorationPercent)
+	}
 	if zone.ExpeditionUnlocked {
 		status += " · 可远征"
 	}
@@ -115,6 +118,7 @@ type adventureCombatView struct {
 	Outcome        string
 	ExtraLines     []string
 	SkillNames     []string
+	SkillCooldowns map[string]int
 }
 
 func formatAdventureCombatMessage(view adventureCombatView) core.OutboundMessage {
@@ -175,6 +179,19 @@ func formatAdventureCombatMessage(view adventureCombatView) core.OutboundMessage
 			plain = append(plain, "战斗技能："+strings.Join(view.SkillNames, "、"), "例如：发送“战斗技能 "+view.SkillNames[0]+"”。")
 			markdown = append(markdown, "战斗技能："+strings.Join(view.SkillNames, "、"), "例如：发送“战斗技能 "+view.SkillNames[0]+"”。")
 		}
+		if len(view.SkillCooldowns) > 0 {
+			cooldowns := make([]string, 0, len(view.SkillCooldowns))
+			for _, name := range view.SkillNames {
+				if turns := view.SkillCooldowns[name]; turns > 0 {
+					cooldowns = append(cooldowns, fmt.Sprintf("%s（还需 %d 回合）", name, turns))
+				}
+			}
+			if len(cooldowns) > 0 {
+				line := "技能冷却：" + strings.Join(cooldowns, "、")
+				plain = append(plain, line)
+				markdown = append(markdown, line)
+			}
+		}
 	}
 	return menuText(strings.TrimSpace(strings.Join(plain, "\n")), strings.TrimSpace(strings.Join(markdown, "\n")))
 }
@@ -207,6 +224,28 @@ func combatSkillNames(ctx context.Context, service *Service, petID string) []str
 	return names
 }
 
+func combatSkillCooldowns(ctx context.Context, service *Service, petID, raw string) map[string]int {
+	if service == nil || service.DB == nil || strings.TrimSpace(petID) == "" || strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	values := map[string]int{}
+	if json.Unmarshal([]byte(raw), &values) != nil {
+		return nil
+	}
+	result := make(map[string]int, len(values))
+	for key, turns := range values {
+		if turns <= 0 {
+			continue
+		}
+		var skill models.AdventureSkillConfig
+		lookup := service.DB.WithContext(ctx).Select("name").Limit(1).Find(&skill, "key = ? AND enabled = ?", key, true)
+		if lookup.Error == nil && lookup.RowsAffected > 0 && strings.TrimSpace(skill.Name) != "" {
+			result[skill.Name] = turns
+		}
+	}
+	return result
+}
+
 func combatActionKeyboard(message core.OutboundMessage, skillNames []string) core.OutboundMessage {
 	rows := [][]core.KeyboardButton{{
 		{Label: "普攻", Command: "普攻"},
@@ -218,7 +257,7 @@ func combatActionKeyboard(message core.OutboundMessage, skillNames []string) cor
 	}
 	skillButtons := make([]core.KeyboardButton, 0, len(skillNames))
 	for _, name := range skillNames {
-		skillButtons = append(skillButtons, core.KeyboardButton{Label: name, Command: "战斗技能 " + name})
+		skillButtons = append(skillButtons, core.KeyboardButton{Label: "战斗技能 " + name, Command: "战斗技能 " + name})
 	}
 	rows = append(rows, chunkKeyboardButtons(skillButtons, 2)...)
 	return withKeyboard(message, rows...)
@@ -297,9 +336,20 @@ func handleAdventureExplore(ctx context.Context, event core.InboundEvent, servic
 	}
 	result, err := service.ExploreZoneInCommunity(ctx, account.ID, communityID(event), zone.Key)
 	if err != nil {
+		if errors.Is(err, ErrAdventureBusy) {
+			if message, busy := petBusyMessage(ctx, service, account.ID); busy {
+				return message, nil
+			}
+		}
 		return adventureBusinessError(err)
 	}
+	if result.Event != nil {
+		return formatAdventureStoryEvent(zone, *result.Event), nil
+	}
 	lines := []string{fmt.Sprintf("🧭【%s｜探索开始】", zone.Name), result.Encounter.Name, result.Encounter.Description}
+	if strings.TrimSpace(result.Goal) != "" {
+		lines = append(lines, "", "当前目标："+result.Goal)
+	}
 	message := text(strings.Join(lines, "\n"))
 	if result.Combat != nil {
 		playerName, monsterName := combatActorNames(ctx, service, result.Combat.PetID, result.Combat.MonsterKey)
@@ -316,10 +366,65 @@ func handleAdventureExplore(ctx context.Context, event core.InboundEvent, servic
 		message = combatActionKeyboard(message, skillNames)
 	} else {
 		lines = append(lines, "", fmt.Sprintf("区域探索度：%d%%", result.Progress.ExplorationPercent))
+		if result.Encounter.NodeRole == "side" {
+			lines = append(lines, "本次是支线遭遇，获得收获但未推进主线线索。")
+		} else if result.Encounter.NodeRole == "mainline" {
+			lines = append(lines, "获得区域线索，探索主线正在推进。")
+		}
 		message = withKeyboard(text(strings.Join(lines, "\n")), []core.KeyboardButton{{Label: "继续探索", Command: "探索 " + zone.Name}, {Label: "查看地图", Command: "地图"}})
 	}
 	message.Image = zone.Image
 	return message, nil
+}
+
+func formatAdventureStoryEvent(zone models.AdventureZoneConfig, event AdventureStoryEventView) core.OutboundMessage {
+	lines := []string{fmt.Sprintf("✨【%s｜%s】", zone.Name, event.Event.Name), event.Event.Description, "", "请选择行动："}
+	buttons := make([]core.KeyboardButton, 0, len(event.Choices))
+	for index, choice := range event.Choices {
+		line := "· " + choice.Label
+		if strings.TrimSpace(choice.Description) != "" {
+			line += "：" + choice.Description
+		}
+		lines = append(lines, line)
+		buttons = append(buttons, core.KeyboardButton{Label: choice.Label, Command: eventChoiceCommand(index + 1)})
+	}
+	return withKeyboard(text(strings.Join(lines, "\n")), chunkKeyboardButtons(buttons, 1)...)
+}
+
+func handleAdventureEventChoice(ctx context.Context, event core.InboundEvent, service *Service) (core.OutboundMessage, error) {
+	account, err := resolve(ctx, service, event)
+	if err != nil {
+		return core.OutboundMessage{}, err
+	}
+	choiceKey := strings.TrimSpace(strings.TrimPrefix(event.Text, "探索选择"))
+	if choiceKey == "" {
+		return text("请选择当前事件提供的行动按钮。"), nil
+	}
+	result, err := service.ResolveNodeEvent(ctx, account.ID, choiceKey)
+	if err != nil {
+		return adventureBusinessError(err)
+	}
+	lines := []string{fmt.Sprintf("✨【%s】", result.Event.Name), "你选择了：" + result.Choice.Label}
+	if strings.TrimSpace(result.Choice.Description) != "" {
+		lines = append(lines, result.Choice.Description)
+	}
+	if result.Progress.ExpeditionUnlocked {
+		lines = append(lines, "", "区域探索已完成，挂机远征已开放。")
+		return withKeyboard(text(strings.Join(lines, "\n")), []core.KeyboardButton{{Label: "远征", Command: "远征"}, {Label: "查看地图", Command: "地图"}}), nil
+	}
+	lines = append(lines, "", fmt.Sprintf("探索度：%d%%｜下一阶段：%s", result.Progress.ExplorationPercent, result.Stage.Name))
+	return withKeyboard(text(strings.Join(lines, "\n")), []core.KeyboardButton{{Label: "继续探索", Command: "探索 " + zoneName(ctx, service, result.Progress.ZoneKey)}, {Label: "查看地图", Command: "地图"}}), nil
+}
+
+func zoneName(ctx context.Context, service *Service, zoneKey string) string {
+	var zone models.AdventureZoneConfig
+	if service != nil && service.DB != nil {
+		_ = service.DB.WithContext(ctx).Select("name").Limit(1).Find(&zone, "key = ?", zoneKey).Error
+	}
+	if strings.TrimSpace(zone.Name) != "" {
+		return zone.Name
+	}
+	return zoneKey
 }
 
 func handleAdventureCombatAction(ctx context.Context, event core.InboundEvent, service *Service) (core.OutboundMessage, error) {
@@ -336,9 +441,12 @@ func handleAdventureCombatAction(ctx context.Context, event core.InboundEvent, s
 	case strings.HasPrefix(event.Text, "撤退"):
 		action = "retreat"
 	case strings.HasPrefix(event.Text, "战斗技能"):
-		key, ok := resolveCombatSkillKey(service.DB.WithContext(ctx), strings.TrimSpace(strings.TrimPrefix(event.Text, "战斗技能")))
+		rawSkill := strings.TrimSpace(strings.TrimPrefix(event.Text, "战斗技能"))
+		key, ok := resolveCombatSkillKey(service.DB.WithContext(ctx), rawSkill)
 		if ok {
 			action = "skill:" + key
+		} else {
+			return text("没有找到这个战斗技能。发送“技能”查看已解锁技能，或选择普攻、防御、撤退。"), nil
 		}
 	}
 	if action == "" {
@@ -354,7 +462,8 @@ func handleAdventureCombatAction(ctx context.Context, event core.InboundEvent, s
 		PlayerHP: result.Session.PlayerHealth, MonsterHP: result.Session.MonsterHealth,
 		PlayerDamage: result.Turn.PlayerDamage, MonsterDamage: result.Turn.MonsterDamage,
 		PlayerDefended: result.Turn.PlayerAction == "defend", Outcome: result.Turn.Result,
-		SkillNames: combatSkillNames(ctx, service, result.Session.PetID),
+		SkillNames:     combatSkillNames(ctx, service, result.Session.PetID),
+		SkillCooldowns: combatSkillCooldowns(ctx, service, result.Session.PetID, result.Session.CooldownsJSON),
 	}
 	if result.Turn.Result == "ongoing" {
 		view.Outcome = ""
@@ -384,14 +493,26 @@ func rewardText(reward AdventureReward) string {
 	if name == "" {
 		name = reward.Key
 	}
-	if reward.Type == "equipment" {
-		return "获得装备：" + name
+	switch reward.Type {
+	case "currency":
+		return fmt.Sprintf("💰 %s +%d", name, reward.Quantity)
+	case "equipment":
+		return "🗡️ 获得装备：" + name
+	case "blueprint_fragment":
+		return fmt.Sprintf("📜 获得蓝图碎片：%s ×%d", name, reward.Quantity)
+	case "item":
+		return fmt.Sprintf("📦 获得物品：%s ×%d", name, reward.Quantity)
+	default:
+		return fmt.Sprintf("🎁 获得：%s ×%d", name, reward.Quantity)
 	}
-	return fmt.Sprintf("获得：%s ×%d", name, reward.Quantity)
 }
 
 func adventureBusinessError(err error) (core.OutboundMessage, error) {
+	var cooldown *CombatSkillCooldownError
+	var levelTooLow *EquipmentLevelTooLowError
 	switch {
+	case errors.As(err, &cooldown):
+		return text(fmt.Sprintf("“%s”仍在冷却，还需等待 %d 回合。\n本回合可以选择普攻、防御或其他未冷却技能。", cooldown.SkillName, cooldown.RemainingTurns)), nil
 	case errors.Is(err, ErrZoneLocked):
 		return text("该区域尚未解锁。发送“地图”查看需要先完成的区域或目标。"), nil
 	case errors.Is(err, ErrAdventureInjured):
@@ -400,12 +521,16 @@ func adventureBusinessError(err error) (core.OutboundMessage, error) {
 		return text("宠物正在进行其他行动，暂时不能开始新的探索。"), nil
 	case errors.Is(err, ErrNoEncounter):
 		return text("该区域还没有配置可用的探索遭遇，请联系管理员。"), nil
+	case errors.Is(err, ErrNoPendingAdventureEvent):
+		return text("当前没有待处理的探索事件。发送“探索 区域名”继续调查。"), nil
+	case errors.Is(err, ErrInvalidAdventureEventChoice):
+		return text("请选择当前事件提供的行动按钮。"), nil
 	case errors.Is(err, ErrNoActiveCombat):
 		return text("当前没有进行中的地图战斗。发送“地图”开始探索。"), nil
 	case errors.Is(err, ErrCombatExpired):
-		return text("本场战斗已经超时，宠物进入受伤状态，请先治疗。"), nil
+		return text("⛺【安全撤离】\n你离开得有些久，本场战斗已自动结束。宠物没有受伤，也不会获得本场奖励。\n\n发送“地图”重新开始探索。"), nil
 	case errors.Is(err, ErrInvalidCombatAction):
-		return text("这个行动当前不能使用，请选择普攻、防御或撤退。"), nil
+		return text("这个战斗技能当前不可用，可能尚未装备或已被替换。发送“技能”查看已解锁技能，或选择普攻、防御、撤退。"), nil
 	case errors.Is(err, ErrBossUnavailable):
 		return text("这个地图首领当前没有出现，发送“地图首领”查看实时状态。"), nil
 	case errors.Is(err, ErrBossChallengeLimit):
@@ -416,6 +541,14 @@ func adventureBusinessError(err error) (core.OutboundMessage, error) {
 		return text("暂时没有可领取的地图首领奖励，或奖励已经领取。"), nil
 	case errors.Is(err, ErrEquipmentNotFound):
 		return text("没有找到这件装备。发送“装备背包”查看可穿戴的装备。"), nil
+	case errors.Is(err, ErrEquipmentLocked):
+		return text("这件装备已锁定，先解锁再分解。"), nil
+	case errors.Is(err, ErrEquipmentEquipped):
+		return text("请先卸下装备再分解。"), nil
+	case errors.Is(err, ErrRecipeLocked):
+		return text("这件装备的蓝图还没解锁。发送“蓝图”查看进度。"), nil
+	case errors.As(err, &levelTooLow):
+		return text(fmt.Sprintf("这件装备需要冒险等级 %d 才能穿戴，当前等级 %d。继续探索提升等级后再试。", levelTooLow.RequiredLevel, levelTooLow.CurrentLevel)), nil
 	default:
 		return expeditionBusinessError(err)
 	}
@@ -434,6 +567,14 @@ func handleEquipment(ctx context.Context, event core.InboundEvent, service *Serv
 		return text("🎒【装备背包】\n还没有装备。探索地图、挑战首领或制造装备都能获得武器、防具与秘宝。"), nil
 	}
 	templates := equipmentTemplatesByKey(ctx, service.DB, equipmentTemplateKeys(rows))
+	level := 1
+	var progress models.PlayerAdventureProgress
+	if err = service.DB.WithContext(ctx).Limit(1).Find(&progress, "account_id = ?", account.ID).Error; err != nil {
+		return core.OutboundMessage{}, err
+	}
+	if progress.Level > 0 {
+		level = progress.Level
+	}
 	lines := []string{"🎒【装备背包】", "点击下方按钮穿戴，或发送“穿戴 1”。"}
 	buttons := []core.KeyboardButton{}
 	for index, row := range rows {
@@ -450,8 +591,13 @@ func handleEquipment(ctx context.Context, event core.InboundEvent, service *Serv
 		if rarity == "" {
 			rarity = row.Rarity
 		}
-		lines = append(lines, fmt.Sprintf("%d. %s｜%s｜%s｜%s", index+1, name, equipmentSlotLabel(template.Slot), rarity, status))
-		if row.EquippedSlot == "" {
+		line := fmt.Sprintf("%d. %s｜%s｜%s｜%s", index+1, name, equipmentSlotLabel(template.Slot), rarity, status)
+		tooLow := template.RequiredLevel > level
+		if tooLow {
+			line += fmt.Sprintf("｜需等级%d", template.RequiredLevel)
+		}
+		lines = append(lines, line)
+		if row.EquippedSlot == "" && !tooLow {
 			buttons = append(buttons, core.KeyboardButton{Label: "穿戴 " + name, Command: fmt.Sprintf("穿戴 %d", index+1)})
 		}
 	}
@@ -575,6 +721,11 @@ func handleAdventureBoss(ctx context.Context, event core.InboundEvent, service *
 		key := strings.TrimSpace(strings.TrimPrefix(argument, "挑战 "))
 		combat, err := service.StartAdventureBossChallenge(ctx, account.ID, community, key)
 		if err != nil {
+			if errors.Is(err, ErrAdventureBusy) {
+				if message, busy := petBusyMessage(ctx, service, account.ID); busy {
+					return message, nil
+				}
+			}
 			return adventureBusinessError(err)
 		}
 		return withKeyboard(text(fmt.Sprintf("🐲【首领挑战开始】\n共享生命：%d\n请选择本回合行动。", combat.MonsterHealth)), []core.KeyboardButton{{Label: "普攻", Command: "普攻"}, {Label: "防御", Command: "防御"}, {Label: "撤退", Command: "撤退"}}), nil
@@ -627,7 +778,7 @@ func handleConfiguredExpedition(ctx context.Context, event core.InboundEvent, se
 		if err != nil {
 			return core.OutboundMessage{}, err
 		}
-		lines := []string{"🧭【区域远征】", "只有完成手动探索目标的区域才能派遣。", ""}
+		lines := []string{"🧭【区域远征】", "先探索地图解锁区域，再派遣远征。限时首领请发送“地图首领”。", ""}
 		buttons := []core.KeyboardButton{}
 		for _, adventureMap := range maps {
 			available := 0
@@ -660,6 +811,11 @@ func handleConfiguredExpedition(ctx context.Context, event core.InboundEvent, se
 	}
 	run, err := service.StartAdventureExpeditionInCommunity(ctx, accountID, communityID(event), zone.Key)
 	if err != nil {
+		if errors.Is(err, ErrAdventureBusy) {
+			if message, busy := petBusyMessage(ctx, service, accountID); busy {
+				return message, nil
+			}
+		}
 		return adventureBusinessError(err)
 	}
 	var snapshot AdventureExpeditionSnapshot
@@ -667,6 +823,8 @@ func handleConfiguredExpedition(ctx context.Context, event core.InboundEvent, se
 	lines := []string{fmt.Sprintf("🚩【%s已开始】", snapshot.Config.Name), fmt.Sprintf("区域：%s｜预计返回：%s", zone.Name, run.EndsAt.Format("01-02 15:04")), fmt.Sprintf("当前评价：%s｜战力 %d/%d", snapshot.Grade, snapshot.Power, snapshot.Config.RecommendedPower), "发送“远征状态”查看进度。"}
 	message := text(strings.Join(lines, "\n"))
 	message.Image = snapshot.Config.StartImage
+	enqueueTimedNotification(ctx, service, event, accountID, "expedition_done", "adventure-expedition:"+run.ID+":done", run.EndsAt,
+		fmt.Sprintf("🎉【远征归来】\n%s 已经结束啦！宠物正带着一路收集的宝贝在营地门口等你。\n发送“领取”迎接它带回的收获吧。", snapshot.Config.Name))
 	return message, nil
 }
 
@@ -682,8 +840,9 @@ func configuredExpeditionStatus(ctx context.Context, service *Service, accountID
 	var snapshot AdventureExpeditionSnapshot
 	_ = json.Unmarshal([]byte(run.SnapshotJSON), &snapshot)
 	remaining := run.EndsAt.Sub(service.Now())
-	if remaining < 0 {
-		remaining = 0
+	if remaining <= 0 {
+		message := text(fmt.Sprintf("🧭【%s已完成】\n区域：%s\n评价：%s\n返回时间：%s\n宠物已经回来了，发送“领取”结算奖励。", snapshot.Config.Name, snapshot.Zone.Name, snapshot.Grade, run.EndsAt.Format("01-02 15:04")))
+		return withKeyboard(message, []core.KeyboardButton{{Label: "领取", Command: "领取"}}), true, nil
 	}
 	return text(fmt.Sprintf("🧭【%s】\n区域：%s\n评价：%s\n返回时间：%s\n剩余：%s", snapshot.Config.Name, snapshot.Zone.Name, snapshot.Grade, run.EndsAt.Format("01-02 15:04"), friendlyDuration(remaining))), true, nil
 }

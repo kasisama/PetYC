@@ -1,13 +1,16 @@
 import { api } from './client'
 
 export interface AdventureMap { key:string; name:string; region:string; description:string; image:string; recommended_level:number; enabled:boolean; sort_order:number }
-export interface AdventureZone { key:string; map_key:string; name:string; description:string; image:string; recommended_level:number; difficulty_permille:number; hunger_cost:number; readiness_cost:number; expedition_unlock_objective_key:string; enabled:boolean; sort_order:number }
+export interface AdventureZone { key:string; map_key:string; name:string; description:string; image:string; recommended_level:number; difficulty_permille:number; hunger_cost:number; readiness_cost:number; expedition_unlock_objective_key:string; exploration_mode:string; enabled:boolean; sort_order:number }
 export interface ZonePrerequisite { id?:number; zone_key:string; prerequisite_zone_key:string }
 export interface AdventureObjective { key:string; zone_key:string; name:string; objective_type:string; target_key:string; required_count:number; weight:number; codex_category:string; codex_entry:string; codex_progress:number; enabled:boolean; sort_order:number }
 export interface AdventureMonster { key:string; name:string; description:string; image:string; level:number; max_health:number; attack:number; defense:number; wisdom:number; adventure_xp:number; ai_profile:string; fixed_loot_pool_key:string; random_loot_pool_key:string; elite:boolean; enabled:boolean }
 export interface AdventureSkill { key:string; name:string; description:string; power_permille:number; wisdom_permille:number; accuracy_permille:number; cooldown_turns:number; effect_type:string; effect_value:number; enabled:boolean }
 export interface MonsterSkill { id?:number; monster_key:string; skill_key:string; weight:number; sort_order:number }
-export interface AdventureEncounter { id?:number; zone_key:string; encounter_key:string; encounter_type:string; target_key:string; name:string; description:string; weight:number; enabled:boolean; sort_order:number }
+export interface AdventureStage { key:string; zone_key:string; name:string; description:string; progress_start:number; progress_end:number; required_clues:number; next_stage_key:string; event_key:string; enabled:boolean; sort_order:number }
+export interface AdventureStoryEvent { key:string; zone_key:string; stage_key:string; name:string; description:string; event_type:string; weight:number; enabled:boolean; sort_order:number }
+export interface AdventureStoryChoice { id?:number; event_key:string; choice_key:string; label:string; description:string; risk_level:string; next_stage_key:string; enabled:boolean; sort_order:number }
+export interface AdventureEncounter { id?:number; zone_key:string; encounter_key:string; encounter_type:string; target_key:string; name:string; description:string; weight:number; stage_key:string; node_role:string; clue_value:number; enabled:boolean; sort_order:number }
 export interface AdventureEncounterEffect { id?:number; encounter_key:string; effect_type:string; target_key:string; min_value:number; max_value:number; weight:number; enabled:boolean }
 export interface LootPool { key:string; name:string; rolls:number; allow_duplicates:boolean }
 export interface LootEntry { id?:number; pool_key:string; reward_type:string; reward_key:string; min_quantity:number; max_quantity:number; weight:number; guaranteed:boolean; first_clear_only:boolean; sort_order:number }
@@ -27,6 +30,9 @@ export interface AdventureCatalog {
   zones: AdventureZone[]
   prerequisites: ZonePrerequisite[]
   objectives: AdventureObjective[]
+  stages: AdventureStage[]
+  story_events: AdventureStoryEvent[]
+  story_choices: AdventureStoryChoice[]
   monsters: AdventureMonster[]
   skills: AdventureSkill[]
   monster_skills: MonsterSkill[]
@@ -52,6 +58,23 @@ export interface AdventureValidationIssue { module:string; entity_key?:string; f
 export interface AdventureValidation { valid:boolean; issues:AdventureValidationIssue[]; summary:Record<string, number> }
 export interface AdventureSaveResult { saved:boolean; revision:number; summary:Record<string, number> }
 
-export const getAdventureCatalog = () => api.get<AdventureCatalogEnvelope>('/api/admin/adventure/catalog')
+const adventureCollections = [
+  'maps', 'zones', 'prerequisites', 'objectives', 'stages', 'story_events', 'story_choices',
+  'monsters', 'skills', 'monster_skills', 'encounters', 'encounter_effects', 'loot_pools',
+  'loot_entries', 'currencies', 'items', 'shop_items', 'expeditions', 'bosses',
+  'boss_reward_tiers', 'equipment_templates', 'equipment_affixes', 'equipment_recipes',
+  'equipment_recipe_materials',
+] as const satisfies readonly (keyof AdventureCatalog)[]
+
+/** 兼容旧服务或历史快照：动态编辑器始终拿到完整的数组目录。 */
+export function normalizeAdventureCatalog(raw: Partial<AdventureCatalog> | null | undefined): AdventureCatalog {
+  const source = raw && typeof raw === 'object' ? raw : {}
+  return Object.fromEntries(adventureCollections.map((key) => [key, Array.isArray(source[key]) ? source[key] : []])) as unknown as AdventureCatalog
+}
+
+export const getAdventureCatalog = async () => {
+  const envelope = await api.get<AdventureCatalogEnvelope>('/api/admin/adventure/catalog')
+  return { ...envelope, catalog: normalizeAdventureCatalog(envelope.catalog) }
+}
 export const validateAdventureCatalog = (catalog: AdventureCatalog) => api.post<AdventureValidation>('/api/admin/adventure/catalog/validate', catalog)
 export const saveAdventureCatalog = (revision:number, catalog: AdventureCatalog) => api.put<AdventureSaveResult>('/api/admin/adventure/catalog', { expected_revision:revision, catalog })

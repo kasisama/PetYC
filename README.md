@@ -2,7 +2,7 @@
 
 PetYC 是一个自托管的 QQ 宠物养成与长期运营平台。项目同时支持 **OneBot v11 反向 WebSocket** 和 **QQ 官方群/频道机器人**，提供宠物成长、异步远征、社区协作、赛季活动，以及内置的可视化运营后台。
 
-当前已发布版本：`v0.1.3`，完整内容见 [更新日志](CHANGELOG.md)。
+当前已发布版本：`v0.1.4`，完整内容见 [更新日志](CHANGELOG.md)。
 
 ## 主要能力
 
@@ -89,13 +89,13 @@ petyc_版本号_linux_amd64
 
 ```powershell
 cd D:\PetYC
-.\petyc_0.1.3_windows_amd64.exe
+.\petyc_0.1.4_windows_amd64.exe
 ```
 
 按 `Ctrl+C` 可以让服务正常关闭。查看版本：
 
 ```powershell
-.\petyc_0.1.3_windows_amd64.exe --version
+.\petyc_0.1.4_windows_amd64.exe --version
 ```
 
 如果端口已被占用，Windows 交互式启动会建议一个可用端口。直接回车采用建议端口，也可以输入 `1–65535` 范围内的其他端口；输入 `q` 取消启动。端口改变后，OneBot、反向代理和防火墙配置也要使用新端口。
@@ -106,10 +106,10 @@ cd D:\PetYC
 
 ```bash
 sudo mkdir -p /opt/petyc
-sudo mv petyc_0.1.3_linux_amd64 /opt/petyc/
-sudo chmod +x /opt/petyc/petyc_0.1.3_linux_amd64
+sudo mv petyc_0.1.4_linux_amd64 /opt/petyc/
+sudo chmod +x /opt/petyc/petyc_0.1.4_linux_amd64
 cd /opt/petyc
-./petyc_0.1.3_linux_amd64
+./petyc_0.1.4_linux_amd64
 ```
 
 首次在交互式终端运行时，程序会依次询问管理员账号、密码、监听地址、端口和机器人接入方式。默认地址：
@@ -147,7 +147,7 @@ Type=simple
 User=petyc
 Group=petyc
 WorkingDirectory=/opt/petyc
-ExecStart=/opt/petyc/petyc_0.1.3_linux_amd64
+ExecStart=/opt/petyc/petyc_0.1.4_linux_amd64
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30

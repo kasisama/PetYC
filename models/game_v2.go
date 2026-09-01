@@ -9,10 +9,13 @@ import (
 )
 
 type PlayerAccount struct {
-	ID          string `gorm:"primaryKey;size:36"`
-	ActivePetID string `gorm:"size:36;index" json:"active_pet_id"`
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID           string     `gorm:"primaryKey;size:36"`
+	ActivePetID  string     `gorm:"size:36;index" json:"active_pet_id"`
+	BannedAt     *time.Time `json:"banned_at"`
+	BanExpiresAt *time.Time `json:"ban_expires_at"`
+	BanReason    string     `gorm:"size:500" json:"ban_reason"`
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 type PlayerIdentity struct {

@@ -217,11 +217,8 @@ func (service *CompanionService) applyGift(tx *gorm.DB, pet *models.PetProfile, 
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(item.Type) != "好感" {
-		return ErrWrongItemType
-	}
-	effect, err := strconv.ParseInt(strings.TrimSpace(item.Effect), 10, 64)
-	if err != nil || effect <= 0 {
+	effect, ok := CompanionGiftEffect(*item)
+	if !ok {
 		return ErrWrongItemType
 	}
 	if err = service.inventory().DebitTx(tx, pet.AccountID, item.Name, quantity); err != nil {
@@ -242,6 +239,29 @@ func (service *CompanionService) applyGift(tx *gorm.DB, pet *models.PetProfile, 
 	result.AffectionDelta = affection
 	result.Image = item.Image
 	return nil
+}
+
+func IsCompanionGiftType(itemType string) bool {
+	switch strings.TrimSpace(itemType) {
+	case "礼物", "好感":
+		return true
+	default:
+		return false
+	}
+}
+
+func CompanionGiftEffect(item models.ItemConfig) (int64, bool) {
+	if !IsCompanionGiftType(item.Type) {
+		return 0, false
+	}
+	effect, err := strconv.ParseInt(strings.TrimSpace(item.Effect), 10, 64)
+	if err == nil && effect > 0 {
+		return effect, true
+	}
+	if strings.TrimSpace(item.Type) == "礼物" {
+		return 8, true
+	}
+	return 0, false
 }
 
 func applySimpleCompanion(pet *models.PetProfile, species models.PetSpeciesConfig, hungerCost, growth, affection int64, moodDelta int, growthLimit, affectionLimit int64, daily *models.CompanionActionDaily, result *CompanionResult) error {

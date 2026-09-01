@@ -4,8 +4,17 @@ import (
 	"fmt"
 	"strings"
 
+	"gorm.io/gorm"
 	"qq-pet-saas/models"
 )
+
+func RequireLiveLaunchReadiness(db *gorm.DB) error {
+	snapshot, err := CaptureSnapshot(db)
+	if err != nil {
+		return err
+	}
+	return ValidateLaunchReadiness(snapshot)
+}
 
 func ValidateLaunchReadiness(snapshot ConfigSnapshot) error {
 	if len(snapshot.AdventureMaps) != 3 {

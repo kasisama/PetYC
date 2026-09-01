@@ -25,6 +25,8 @@ func RegisterEcosystemRoutes(group *gin.RouterGroup, db *gorm.DB) {
 	group.GET("/players/:account_id", api.PlayerDetail)
 	group.POST("/players/:account_id/grants", api.GrantItem)
 	group.POST("/players/:account_id/currency", api.AdjustCurrency)
+	group.POST("/players/:account_id/ban", api.BanPlayer)
+	group.POST("/players/:account_id/unban", api.UnbanPlayer)
 	group.POST("/players/:account_id/active_pet", api.SetActivePet)
 	group.PUT("/players/:account_id/notifications", api.SetPlayerNotifications)
 	group.DELETE("/players/:account_id/identities/:identity_id", api.DeleteIdentity)
@@ -303,6 +305,9 @@ func (api *EcosystemAPI) Players(c *gin.Context) {
 	if value := strings.TrimSpace(c.Query("community_id")); value != "" {
 		query = query.Where("EXISTS (SELECT 1 FROM community_members cm WHERE cm.account_id = pa.id AND cm.community_id = ?)", value)
 	}
+	if strings.TrimSpace(c.Query("banned")) == "1" {
+		query = query.Where("pa.banned_at IS NOT NULL AND (pa.ban_expires_at IS NULL OR pa.ban_expires_at > ?)", time.Now())
+	}
 	var total int64
 	if err := query.Distinct("pa.id").Count(&total).Error; err != nil {
 		Error(c, 5000, "玩家列表统计失败")
@@ -384,8 +389,10 @@ func (api *EcosystemAPI) PlayerDetail(c *gin.Context) {
 		masked = append(masked, gin.H{"id": identity.ID, "platform": identity.Platform, "scene_type": identity.SceneType, "app_id": maskIdentifier(identity.AppID), "scope_id": maskIdentifier(identity.ScopeID), "subject_id": maskIdentifier(identity.SubjectID), "created_at": identity.CreatedAt})
 	}
 	preference := models.NotificationPreference{AccountID: accountID, Enabled: true}
-	api.DB.First(&preference, "account_id = ?", accountID)
-	Success(c, gin.H{"account": account, "pet": pet, "pets": pets, "active_pet_id": account.ActivePetID, "pet_image": petImage, "inventory": inventory, "wallets": wallets, "adventure_inventory": inventory, "adventure_equipment": equipment, "adventure_blueprints": blueprints, "adventure_wallet": journeyWallet, "adventure_ledger": journeyLedger, "codex": codex, "identities": masked, "expeditions": expeditions, "communities": memberships, "notifications": preference})
+	// 偏好记录按需创建；不存在时保留默认值，不把正常的空结果记为 GORM 错误日志。
+	api.DB.Limit(1).Find(&preference, "account_id = ?", accountID)
+	banned := account.BannedAt != nil && (account.BanExpiresAt == nil || account.BanExpiresAt.After(time.Now()))
+	Success(c, gin.H{"account": account, "banned": banned, "pet": pet, "pets": pets, "active_pet_id": account.ActivePetID, "pet_image": petImage, "inventory": inventory, "wallets": wallets, "adventure_inventory": inventory, "adventure_equipment": equipment, "adventure_blueprints": blueprints, "adventure_wallet": journeyWallet, "adventure_ledger": journeyLedger, "codex": codex, "identities": masked, "expeditions": expeditions, "communities": memberships, "notifications": preference})
 }
 
 type communitySummary struct {

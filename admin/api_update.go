@@ -42,6 +42,22 @@ func installUpdate(c *gin.Context) {
 		Error(c, codeInternalError, "更新服务尚未初始化")
 		return
 	}
+	var request struct {
+		Reason       string `json:"reason"`
+		Confirmation string `json:"confirmation"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		Error(c, codeInvalidPayload, "请填写操作原因并输入确认词")
+		return
+	}
+	if _, err := requiredReason(request.Reason); err != nil {
+		Error(c, codeInvalidPayload, err.Error())
+		return
+	}
+	if strings.TrimSpace(request.Confirmation) != "安装更新" {
+		Error(c, codeInvalidPayload, "请输入「安装更新」以确认操作")
+		return
+	}
 	if err := UpdateService.StartInstall(); err != nil {
 		Error(c, 4090, err.Error())
 		return

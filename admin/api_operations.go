@@ -331,6 +331,71 @@ func (api *EcosystemAPI) SetActivePet(c *gin.Context) {
 	})
 }
 
+func (api *EcosystemAPI) BanPlayer(c *gin.Context) {
+	accountID := c.Param("account_id")
+	var request struct {
+		Reason        string `json:"reason"`
+		Confirmation  string `json:"confirmation"`
+		DurationHours int    `json:"duration_hours"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		Error(c, 4000, "请求格式错误")
+		return
+	}
+	if strings.TrimSpace(request.Confirmation) != "封禁" {
+		Error(c, 4000, "请输入「封禁」以确认操作")
+		return
+	}
+	if request.DurationHours < 0 || request.DurationHours > 8760 {
+		Error(c, 4000, "封禁时长必须在 0 到 8760 小时之间")
+		return
+	}
+	var account models.PlayerAccount
+	if err := api.DB.First(&account, "id = ?", accountID).Error; err != nil {
+		Error(c, 4040, "玩家不存在")
+		return
+	}
+	api.auditedMutation(c, "ban_player", "player", accountID, request.Reason, gin.H{"banned_at": account.BannedAt}, func(tx *gorm.DB) (interface{}, error) {
+		now := time.Now()
+		account.BannedAt = &now
+		account.BanReason = strings.TrimSpace(request.Reason)
+		if request.DurationHours > 0 {
+			expires := now.Add(time.Duration(request.DurationHours) * time.Hour)
+			account.BanExpiresAt = &expires
+		} else {
+			account.BanExpiresAt = nil
+		}
+		if err := tx.Save(&account).Error; err != nil {
+			return nil, err
+		}
+		return gin.H{"banned": true, "banned_at": account.BannedAt, "ban_expires_at": account.BanExpiresAt}, nil
+	})
+}
+
+func (api *EcosystemAPI) UnbanPlayer(c *gin.Context) {
+	accountID := c.Param("account_id")
+	var request confirmRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		Error(c, 4000, "请求格式错误")
+		return
+	}
+	if strings.TrimSpace(request.Confirmation) != "解封" {
+		Error(c, 4000, "请输入「解封」以确认操作")
+		return
+	}
+	var account models.PlayerAccount
+	if err := api.DB.First(&account, "id = ?", accountID).Error; err != nil {
+		Error(c, 4040, "玩家不存在")
+		return
+	}
+	api.auditedMutation(c, "unban_player", "player", accountID, request.Reason, gin.H{"banned_at": account.BannedAt}, func(tx *gorm.DB) (interface{}, error) {
+		if err := tx.Exec("UPDATE player_accounts SET banned_at = NULL, ban_expires_at = NULL, ban_reason = '' WHERE id = ?", accountID).Error; err != nil {
+			return nil, err
+		}
+		return gin.H{"banned": false}, nil
+	})
+}
+
 type reasonRequest struct {
 	Reason string `json:"reason"`
 }

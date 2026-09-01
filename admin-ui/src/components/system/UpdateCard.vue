@@ -7,6 +7,7 @@ import {
   type UpdateInfo,
   type UpdateStatus,
 } from '../../api/update'
+import UiModal from '../ui/UiModal.vue'
 
 const info = ref<UpdateInfo | null>(null)
 const status = ref<UpdateStatus | null>(null)
@@ -43,15 +44,39 @@ async function runCheck(force = false) {
   }
 }
 
-async function startInstall() {
+const installOpen = ref(false)
+const installBusy = ref(false)
+const installReason = ref('')
+const installConfirm = ref('')
+
+function openInstallDialog() {
   if (!info.value?.canAutoUpdate || busy.value) return
-  if (!window.confirm(`确认更新到 v${info.value.latestVersion}？更新完成后服务会自动重启。`)) return
+  installReason.value = ''
+  installConfirm.value = ''
+  error.value = ''
+  installOpen.value = true
+}
+
+async function confirmInstall() {
+  if (installBusy.value || !info.value?.canAutoUpdate) return
+  if (!installReason.value.trim()) {
+    error.value = '请填写操作原因'
+    return
+  }
+  if (installConfirm.value.trim() !== '安装更新') {
+    error.value = '请输入「安装更新」以确认操作'
+    return
+  }
+  installBusy.value = true
   error.value = ''
   try {
-    status.value = await installUpdate()
+    status.value = await installUpdate(installReason.value.trim(), installConfirm.value.trim())
+    installOpen.value = false
     schedulePoll()
   } catch (err) {
     error.value = err instanceof Error ? err.message : '启动更新失败'
+  } finally {
+    installBusy.value = false
   }
 }
 
@@ -132,7 +157,7 @@ onBeforeUnmount(() => {
         <button class="btn btn-ghost" type="button" :disabled="checking || busy" @click="runCheck(true)">
           {{ checking ? '检查中…' : '检查更新' }}
         </button>
-        <button v-if="info.available && info.canAutoUpdate" class="btn" type="button" :disabled="busy" @click="startInstall">
+        <button v-if="info.available && info.canAutoUpdate" class="btn" type="button" :disabled="busy" @click="openInstallDialog">
           {{ busy ? '更新处理中…' : '立即更新' }}
         </button>
         <a v-else-if="info.available" class="btn" :href="info.releaseUrl" target="_blank" rel="noreferrer">手动下载</a>
@@ -141,12 +166,25 @@ onBeforeUnmount(() => {
     <div v-else class="actions">
       <button class="btn" type="button" :disabled="checking" @click="runCheck(true)">重新检查</button>
     </div>
-    <p v-if="error" class="form-message is-error" role="alert">{{ error }}</p>
+    <p v-if="error && !installOpen" class="form-message is-error" role="alert">{{ error }}</p>
+    <UiModal :open="installOpen" title="确认安装更新" description="下载并替换当前程序后服务会自动重启。" :busy="installBusy" size="small" @close="installOpen=false">
+      <p class="card-hint">即将安装 v{{ info?.latestVersion }}。请填写原因并输入确认词。</p>
+      <label class="field"><span class="field-label">操作原因</span><textarea v-model="installReason" class="field-input" rows="3" :disabled="installBusy"/></label>
+      <label class="field"><span class="field-label">请输入「安装更新」</span><input v-model="installConfirm" class="field-input" :disabled="installBusy"/></label>
+      <p v-if="error" class="form-message is-error" role="alert">{{ error }}</p>
+      <template #footer>
+        <button type="button" class="btn btn-ghost" :disabled="installBusy" @click="installOpen=false">取消</button>
+        <button type="button" class="btn" :disabled="installBusy || !installReason.trim() || installConfirm.trim() !== '安装更新'" @click="confirmInstall">{{ installBusy ? '处理中…' : '确认安装' }}</button>
+      </template>
+    </UiModal>
   </div>
 </template>
 
 <style scoped>
 .card { display: flex; flex-direction: column; gap: 14px; padding: 20px; background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: var(--radius-card, 14px); box-shadow: var(--shadow-soft); }
+.field { display: grid; gap: 6px; margin-top: 12px; }
+.field-label { color: var(--text-muted); font-size: 12px; }
+.field-input { padding: 9px 11px; border: 1px solid var(--border-color); border-radius: 9px; background: var(--bg-base); color: var(--text-main); }
 .card-title { margin: 0; color: var(--text-main); font-size: 15px; font-weight: 600; }
 .card-hint { margin: 0; color: var(--text-muted); font-size: 13px; line-height: 1.55; }
 .form-message { margin: 0; padding: 8px 12px; border-radius: 8px; font-size: 13px; }

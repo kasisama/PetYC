@@ -10,7 +10,7 @@ async function mockAdminApi(page: Page) {
     const ok=(data:unknown)=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({code:0,msg:'success',data})})
     if(path==='/api/admin/auth/session') return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({authenticated:true,username:'admin'})})
     if(path==='/api/admin/upload') return ok({message:'图片上传成功',path:'上传/main-menu.webp',url:'/images/上传/main-menu.webp'})
-    if(path==='/api/admin/adventure/catalog') return ok({revision:1,catalog:{maps:[],zones:[]}})
+    if(path==='/api/admin/adventure/catalog') return ok({revision:1,catalog:{maps:[{key:'sunlit-steppe',name:'灿光原野',region:'晨光',description:'适合新手探索',image:'',recommended_level:1,enabled:true,sort_order:10}],zones:[],shop_items:[{key:'field-supply',name:'原野补给包',description:'探索补给',image:'',product_type:'item',product_key:'survey-log',quantity:1,price:10,limit_type:'daily',limit_quantity:1,enabled:true,sort_order:10}]}})
     if(path==='/api/admin/overview') return ok({range:'7d',players:12,pets:10,active_expeditions:4,completed_expeditions:18,active_communities:3,boss_participants:8,overdue_expeditions:1,command_success_rate:.98,command_total:800,generated_at:new Date().toISOString()})
     if(path==='/api/admin/players') return ok({items:[{account_id:'00000000-0000-0000-0000-000000123456',pet_name:'米塔',pet_type:'猫',role:'探索者',growth:120,bond_level:3,identity_count:2,community_count:1,expedition_id:'exp-1',expedition_status:'running',last_active_at:new Date().toISOString()}],total:1,page:1,limit:50})
     if(path.includes('/api/admin/players/')) return ok({account:{ID:'00000000-0000-0000-0000-000000123456'},pet:{Name:'米塔',Role:'探索者'},inventory:[{ID:1,ItemName:'调查记录',Quantity:20}],codex:[],identities:[{id:1,platform:'qq_group',scene_type:'group',subject_id:'***9876'}],expeditions:[],communities:[],notifications:{Enabled:true}})
@@ -27,7 +27,17 @@ async function mockAdminApi(page: Page) {
     if(path.startsWith('/api/admin/config/')&&path.endsWith('/meta')) return ok({schema:path.split('/').at(-2),consumers:['统一领域服务'],effective_revision:2,db_revision:2,pending_reload:false})
     if(path==='/api/admin/config/live_events') return ok([{id:1,key:'forest-week',name:'森林调查周',region:'森林',story_choices:'["记录线索","继续调查","呼叫支援"]',starts_at:'2026-08-12T00:00:00Z',ends_at:'2026-08-19T00:00:00Z',active:true}])
     if(path==='/api/admin/config/reward_tracks') return ok([{id:1,event_key:'forest-week',milestone:100,reward_type:'item',reward_key:'survey_log',reward_name:'调查记录',quantity:10,description:'基础调查奖励'}])
-    if(path==='/api/admin/config/pet_species') return ok([{Key:'lumisprout_base',Name:'光芽兽',FamilyKey:'lumisprout',Stage:'base',Adoptable:true,Archetype:'balanced',Image:'',FavoriteFood:'调查便当',FavoriteGift:'晴野明信片',Health:100,Wisdom:20,Strength:18,Defense:16,Hunger:100,Description:'均衡型调查伙伴'}])
+    if(path==='/api/admin/config/pet_species') return ok([
+      {Key:'lumisprout_base',Name:'光芽兽',FamilyKey:'lumisprout',Stage:'base',Adoptable:true,Archetype:'balanced',Image:'',FavoriteFood:'调查便当',FavoriteGift:'晴野明信片',Health:100,Wisdom:20,Strength:18,Defense:16,Hunger:100,Description:'均衡型调查伙伴'},
+      {Key:'lumisprout_evolved',Name:'耀光兽',FamilyKey:'lumisprout',Stage:'evolved',PreviousFormKey:'lumisprout_base',Adoptable:false,Archetype:'attacker',Image:'',Health:180,Wisdom:42,Strength:68,Defense:42,Description:'稳定进化形态'},
+      {Key:'lumisprout_awaken_sun',Name:'日耀巡守者',FamilyKey:'lumisprout',Stage:'awakened',PreviousFormKey:'lumisprout_evolved',Adoptable:false,Archetype:'attacker',Image:'',Health:260,Wisdom:80,Strength:128,Defense:78,Description:'日光觉醒路线'},
+      {Key:'lumisprout_awaken_moon',Name:'月辉巡守者',FamilyKey:'lumisprout',Stage:'awakened',PreviousFormKey:'lumisprout_evolved',Adoptable:false,Archetype:'support',Image:'',Health:220,Wisdom:112,Strength:84,Defense:92,Description:'月光觉醒路线'},
+    ])
+    if(path==='/api/admin/config/pet_evolution_rules') return ok([
+      {Key:'lumisprout_standard',FromFormKey:'lumisprout_base',ToFormKey:'lumisprout_evolved',RequiredGrowth:750,RequiredAffection:100,BranchLabel:'标准进化',Enabled:true,SortOrder:10},
+      {Key:'lumisprout_sun',FromFormKey:'lumisprout_evolved',ToFormKey:'lumisprout_awaken_sun',RequiredGrowth:4800,RequiredAffection:720,BranchLabel:'日耀路线',Enabled:true,SortOrder:10},
+      {Key:'lumisprout_moon',FromFormKey:'lumisprout_evolved',ToFormKey:'lumisprout_awaken_moon',RequiredGrowth:4800,RequiredAffection:720,BranchLabel:'月辉路线',Enabled:true,SortOrder:20},
+    ])
     if(path==='/api/admin/config/items') return ok([{Name:'调查记录',Status:'active',Type:'材料',Effect:'',Image:'',Description:'记录探索线索',SellPrice:0}])
     if(path==='/api/admin/config/shop_items') return ok([{ID:1,ShopType:'shop_normal',Name:'调查记录',Stock:20,RestockTarget:50,Price:10,Description:'基础调查用品'}])
     if(path==='/api/admin/config/images') return ok([{Name:'默认宠物图',Path:'pet.png'}])
@@ -42,6 +52,7 @@ async function mockAdminApi(page: Page) {
     if(path==='/api/admin/config/status') return ok({db_revision:2,loaded_revision:2,pending_reload:false,saved_at:null,loaded_at:null})
     if(path==='/api/admin/config/profiles') return ok({items:[{id:'official',name:'官方默认 v0.1.0',description:'内置安全默认配置',source:'official',schema_version:2,app_version:'0.1.0',builtin:true,active:true,dirty:false,summary:{schemas:18,rows:378},created_at:new Date().toISOString(),updated_at:new Date().toISOString()}],active_profile_id:'official',dirty:false})
     if(path.startsWith('/api/admin/seasons/') && path.endsWith('/reset')) return ok({ok:true})
+    if(path.startsWith('/api/admin/config/')) return ok([])
     if(path==='/api/admin/onboarding/status') return ok({setup_completed:true,tour_version_completed:1,current_tour_version:1})
     if(path==='/api/admin/audit-logs') return ok({items:[],total:0,page:1,limit:50})
     return ok(null)
@@ -79,9 +90,10 @@ test('成长零数据与内容配置均为完整产品页面',async({page},testI
   await page.getByRole('button',{name:'关闭',exact:true}).click()
 
   await page.getByRole('button',{name:'宠物与物品'}).click()
-  await page.locator('.pet-card').filter({hasText:'光芽兽'}).click()
-  await expect(page.getByRole('dialog',{name:'编辑宠物种类'})).toBeVisible()
-  await page.getByRole('button',{name:'关闭',exact:true}).click()
+  await expect(page.locator('.lineage-studio')).toBeVisible()
+  await expect(page.locator('.evolution-track')).toBeVisible()
+  await expect(page.locator('.property-panel')).toBeVisible()
+  await expect(page.getByRole('button',{name:'新增谱系'})).toBeVisible()
   await page.getByRole('button',{name:'物品',exact:true}).click()
   if(testInfo.project.name==='mobile') await page.locator('.mobile-list .summary-card').filter({hasText:'调查记录'}).click()
   else await page.locator('.desktop-table tr').filter({hasText:'调查记录'}).getByRole('button',{name:'编辑'}).click()
@@ -98,6 +110,43 @@ test('成长零数据与内容配置均为完整产品页面',async({page},testI
   await expect(page.getByRole('dialog',{name:'编辑命令'})).toBeVisible()
 })
 
+test('宠物谱系工作台桌面布局与密度切换可见',async({page},testInfo)=>{
+  await page.goto('content?tab=assets')
+  await expect(page.locator('.lineage-studio')).toBeVisible()
+  await expect(page.locator('.studio-grid')).toBeVisible()
+  await expect(page.locator('.evolution-track')).toBeVisible()
+  await expect(page.locator('.property-panel')).toBeVisible()
+
+  if(testInfo.project.name!=='mobile'){
+    const comfortable=await page.locator('.evolution-node').first().evaluate(element=>getComputedStyle(element).minHeight)
+    await page.getByRole('button',{name:'页面密度'}).click()
+    await page.getByRole('menuitemradio',{name:/紧凑/}).click()
+    const compact=await page.locator('.evolution-node').first().evaluate(element=>getComputedStyle(element).minHeight)
+    expect(compact).not.toBe(comfortable)
+  }
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(await page.evaluate(()=>window.innerWidth))
+  await page.screenshot({path:testInfo.outputPath('pet-lineage-workspace.png'),fullPage:true})
+})
+
+test('冒险地图和远征商品可编辑并在表单内直接上传图片', async ({ page }) => {
+  await page.goto('adventure')
+  await expect(page.getByRole('heading', { name: '冒险世界', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '编辑灿光原野' }).click()
+  const mapDrawer = page.getByRole('dialog', { name: '编辑灿光原野' })
+  await expect(mapDrawer.getByText('地图封面', { exact: true })).toBeVisible()
+  await expect(mapDrawer.getByText('选择图片资产')).toHaveCount(0)
+  await mapDrawer.locator('input[type="file"]').setInputFiles({ name: 'map.png', mimeType: 'image/png', buffer: tinyPng })
+  await expect(page.getByText('图片已上传，保存草稿后生效').last()).toBeVisible()
+  await mapDrawer.getByRole('button', { name: '关闭', exact: true }).click()
+
+  await page.getByRole('button', { name: '远征商店' }).click()
+  await page.getByRole('button', { name: '编辑原野补给包' }).click()
+  const shopDrawer = page.getByRole('dialog', { name: '编辑原野补给包' })
+  await expect(shopDrawer.getByText('商品图片')).toBeVisible()
+  await shopDrawer.locator('input[type="file"]').setInputFiles({ name: 'shop.png', mimeType: 'image/png', buffer: tinyPng })
+  await expect(page.getByText('图片已上传，保存草稿后生效').last()).toBeVisible()
+})
+
 test('菜单场景可预览并上传配图',async({page})=>{
   await page.goto('content?tab=text')
   await page.getByRole('button',{name:'菜单场景'}).click()
@@ -105,13 +154,12 @@ test('菜单场景可预览并上传配图',async({page})=>{
   await expect(card.getByRole('img',{name:'主菜单图片'})).toBeVisible()
   await card.getByRole('button',{name:'编辑'}).click()
   const dialog=page.getByRole('dialog',{name:'编辑菜单场景'})
-  await expect(dialog.getByText('菜单配图')).toBeVisible()
+  await expect(dialog.getByText('配图仅可在上方直接上传')).toBeVisible()
   const dropzone=dialog.getByLabel('图片上传与预览')
   const qqPreview=dialog.locator('.qq-preview')
   await expect(dropzone.getByRole('img',{name:'主菜单图片'})).toBeVisible()
   await expect(qqPreview.getByRole('img',{name:'主菜单图片'})).toBeVisible()
   await dialog.locator('input[type="file"]').setInputFiles({name:'menu.png',mimeType:'image/png',buffer:tinyPng})
-  await expect(dialog.getByPlaceholder(/上传后自动填写/)).toHaveValue('上传/main-menu.webp')
   await expect(dropzone.getByRole('img',{name:'主菜单图片'})).toBeVisible()
   await expect(qqPreview.getByRole('img',{name:'主菜单图片'})).toBeVisible()
   await dialog.getByRole('button',{name:'应用到列表'}).click()
@@ -131,7 +179,6 @@ test('菜单场景可清除配图并保存',async({page})=>{
   const qqPreview=dialog.locator('.qq-preview')
   await expect(dropzone.getByRole('img',{name:'主菜单图片'})).toBeVisible()
   await dialog.getByRole('button',{name:'移除当前图片'}).click()
-  await expect(dialog.getByPlaceholder(/上传后自动填写/)).toHaveValue('')
   await expect(dropzone.getByRole('img',{name:'主菜单暂无可用图片'})).toBeVisible()
   await expect(qqPreview.getByRole('img',{name:'主菜单图片'})).toHaveCount(0)
   await expect(qqPreview).toContainText('状态｜今日｜远征')

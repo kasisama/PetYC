@@ -23,7 +23,7 @@ func newEcosystemTestRouter(t *testing.T) (*gin.Engine, *gorm.DB) {
 	if err = db.AutoMigrate(&models.PlayerAccount{}, &models.PlayerIdentity{}, &models.PetProfile{}, &models.GlobalInventoryItem{}, &models.PlayerWallet{}, &models.WalletLedger{}, &models.CompanionActionDaily{}, &models.ActivityRun{}, &models.ItemUseRecord{}, &models.ExpeditionRun{}, &models.EventProgress{}, &models.EventProgressGrant{}, &models.EventRewardClaim{}, &models.LiveEventConfig{}, &models.ChanceDailyState{}, &models.ChancePlayerState{}, &models.ChanceOutcome{}, &models.FishingRun{}, &models.BattleRecord{}, &models.TradeOffer{}, &models.TradeAudit{}, &models.CodexEntry{}, &models.Community{}, &models.CommunityMember{}, &models.ExpeditionSquad{}, &models.SquadMember{}, &models.IdentityBindToken{}, &models.NotificationPreference{}, &models.NotificationJob{}, &models.CommunityBoss{}, &models.BossContribution{}, &models.CommunityFacility{}, &models.SeasonVote{}, &models.CommunityHelpRequest{}, &models.HelpGiftLog{}, &models.HelpGiftDailyQuota{}, &models.PetBehaviorProfile{}, &models.GameplayMetric{}, &models.AdminAuditLog{}, &models.AdminOperationKey{}, &models.GrowthRoleConfig{}, &models.GrowthStanceConfig{}, &models.PersonalityRuleConfig{}, &models.CodexCatalogConfig{}, &models.ItemConfig{}, &models.PetSpeciesConfig{}); err != nil {
 		t.Fatal(err)
 	}
-	if err = db.AutoMigrate(&models.AdminConfigState{}, &models.AdventureMapConfig{}, &models.AdventureZoneConfig{}, &models.AdventureZonePrerequisiteConfig{}, &models.AdventureObjectiveConfig{}, &models.AdventureMonsterConfig{}, &models.AdventureSkillConfig{}, &models.AdventureMonsterSkillConfig{}, &models.AdventureEncounterConfig{}, &models.AdventureLootPoolConfig{}, &models.AdventureLootEntryConfig{}, &models.CurrencyConfig{}, &models.ItemConfig{}, &models.AdventureShopItemConfig{}, &models.AdventureExpeditionConfig{}, &models.AdventureBossConfig{}, &models.AdventureBossRewardTierConfig{}, &models.EquipmentTemplateConfig{}, &models.EquipmentAffixConfig{}, &models.EquipmentRecipeConfig{}, &models.EquipmentRecipeMaterialConfig{}, &models.AdventureShopPurchase{}, &models.PlayerAdventureProgress{}, &models.PlayerZoneProgress{}, &models.PlayerObjectiveProgress{}, &models.AdventureExplorationSession{}, &models.AdventureCombatSession{}, &models.AdventureCombatTurn{}, &models.PlayerEquipment{}, &models.PlayerBlueprintProgress{}, &models.AdventureExpeditionRun{}, &models.AdventureBossInstance{}, &models.AdventureBossContribution{}, &models.AdventureBossRewardClaim{}, &models.EquipmentCraftRecord{}); err != nil {
+	if err = db.AutoMigrate(&models.AdminConfigState{}, &models.AdventureMapConfig{}, &models.AdventureZoneConfig{}, &models.AdventureZonePrerequisiteConfig{}, &models.AdventureObjectiveConfig{}, &models.AdventureExplorationStageConfig{}, &models.AdventureStoryEventConfig{}, &models.AdventureStoryEventChoiceConfig{}, &models.AdventureMonsterConfig{}, &models.AdventureSkillConfig{}, &models.AdventureMonsterSkillConfig{}, &models.AdventureEncounterConfig{}, &models.AdventureLootPoolConfig{}, &models.AdventureLootEntryConfig{}, &models.CurrencyConfig{}, &models.ItemConfig{}, &models.AdventureShopItemConfig{}, &models.AdventureExpeditionConfig{}, &models.AdventureBossConfig{}, &models.AdventureBossRewardTierConfig{}, &models.EquipmentTemplateConfig{}, &models.EquipmentAffixConfig{}, &models.EquipmentRecipeConfig{}, &models.EquipmentRecipeMaterialConfig{}, &models.AdventureShopPurchase{}, &models.PlayerAdventureProgress{}, &models.PlayerZoneProgress{}, &models.PlayerObjectiveProgress{}, &models.PlayerAdventureNodeProgress{}, &models.PlayerAdventureEventState{}, &models.AdventureExplorationSession{}, &models.AdventureCombatSession{}, &models.AdventureCombatTurn{}, &models.PlayerEquipment{}, &models.PlayerBlueprintProgress{}, &models.AdventureExpeditionRun{}, &models.AdventureBossInstance{}, &models.AdventureBossContribution{}, &models.AdventureBossRewardClaim{}, &models.EquipmentCraftRecord{}); err != nil {
 		t.Fatal(err)
 	}
 	router := gin.New()
@@ -123,6 +123,38 @@ func TestGrantItemRejectsUnavailableConfiguredItem(t *testing.T) {
 	db.Model(&models.GlobalInventoryItem{}).Where("account_id = ? AND item_name = ?", accountID, "故障物品").Count(&count)
 	if count != 0 {
 		t.Fatalf("disabled item must not be granted, got %d inventory rows", count)
+	}
+}
+
+func TestBanPlayerRequiresConfirmationAndBlocksUntilUnban(t *testing.T) {
+	router, db := newEcosystemTestRouter(t)
+	accountID := "00000000-0000-0000-0000-000000123470"
+	if err := db.Create(&models.PlayerAccount{ID: accountID}).Error; err != nil {
+		t.Fatal(err)
+	}
+	response := doConfigRequest(t, router, http.MethodPost, "/api/admin/players/"+accountID+"/ban", []byte(`{"reason":"刷奖","confirmation":"错词"}`))
+	if response.Code != 4000 {
+		t.Fatalf("错确认词应拒绝，code=%d msg=%s", response.Code, response.Msg)
+	}
+	response = doConfigRequest(t, router, http.MethodPost, "/api/admin/players/"+accountID+"/ban", []byte(`{"reason":"刷奖","confirmation":"封禁"}`))
+	if response.Code != 0 {
+		t.Fatalf("封禁失败: %s", response.Msg)
+	}
+	var account models.PlayerAccount
+	if err := db.First(&account, "id = ?", accountID).Error; err != nil || account.BannedAt == nil {
+		t.Fatalf("封禁未写入: %+v %v", account, err)
+	}
+	detail := doConfigRequest(t, router, http.MethodGet, "/api/admin/players/"+accountID, nil)
+	if detail.Code != 0 || !strings.Contains(string(detail.Data), `"banned":true`) {
+		t.Fatalf("详情应标记 banned: %s", detail.Data)
+	}
+	response = doConfigRequest(t, router, http.MethodPost, "/api/admin/players/"+accountID+"/unban", []byte(`{"reason":"误封","confirmation":"解封"}`))
+	if response.Code != 0 {
+		t.Fatalf("解封失败: %s", response.Msg)
+	}
+	var after models.PlayerAccount
+	if err := db.First(&after, "id = ?", accountID).Error; err != nil || after.BannedAt != nil {
+		t.Fatalf("解封后 BannedAt 应清空: %+v %v", after, err)
 	}
 }
 
@@ -255,6 +287,9 @@ func TestEmptyPlayerCollectionsAreJSONArrays(t *testing.T) {
 		if !strings.Contains(string(detailResponse.Data), `"`+field+`":[]`) {
 			t.Fatalf("empty %s must return [], got %s", field, detailResponse.Data)
 		}
+	}
+	if !strings.Contains(string(detailResponse.Data), `"notifications":{"AccountID":"`+accountID+`","Enabled":true`) {
+		t.Fatalf("missing notification preference should expose the enabled default, got %s", detailResponse.Data)
 	}
 }
 

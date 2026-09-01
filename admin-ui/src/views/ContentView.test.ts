@@ -33,7 +33,17 @@ function installApiMock() {
       { id: 1, event_key: 'forest-week', milestone: 100, reward_type: 'item', reward_key: 'wood', reward_name: '木材', quantity: 2, description: '基础补给' },
       { id: 2, event_key: 'forest-week', milestone: 100, reward_type: 'item', reward_key: 'bandage', reward_name: '绷带', quantity: 1, description: '基础补给' },
     ],
-	pet_species: [{ Name: '团子', Image: '宠物图片\\团子.png', Description: '活泼的初始宠物' }],
+	pet_species: [
+	  { Key: 'tuanzhi-base', FamilyKey: 'tuanzhi', Stage: 'base', Name: '团子', Image: '宠物图片\\团子.png', Description: '活泼的初始宠物' },
+	  { Key: 'tuanzhi-evolved', FamilyKey: 'tuanzhi', Stage: 'evolved', PreviousFormKey: 'tuanzhi-base', Name: '团子进化', Description: '成长后的形态' },
+	  { Key: 'tuanzhi-awaken-moon', FamilyKey: 'tuanzhi', Stage: 'awakened', PreviousFormKey: 'tuanzhi-evolved', Name: '团子觉醒月', Description: '月光路线' },
+	  { Key: 'tuanzhi-awaken-sun', FamilyKey: 'tuanzhi', Stage: 'awakened', PreviousFormKey: 'tuanzhi-evolved', Name: '团子觉醒日', Description: '日光路线' },
+	],
+	pet_evolution_rules: [
+	  { Key: 'tuanzhi-standard', FromFormKey: 'tuanzhi-base', ToFormKey: 'tuanzhi-evolved', RequiredGrowth: 10, RequiredAffection: 5, BranchLabel: '标准进化', Enabled: true, SortOrder: 10 },
+	  { Key: 'tuanzhi-moon', FromFormKey: 'tuanzhi-evolved', ToFormKey: 'tuanzhi-awaken-moon', RequiredGrowth: 20, RequiredAffection: 10, BranchLabel: '月光路线', Enabled: true, SortOrder: 30 },
+	  { Key: 'tuanzhi-sun', FromFormKey: 'tuanzhi-evolved', ToFormKey: 'tuanzhi-awaken-sun', RequiredGrowth: 20, RequiredAffection: 10, BranchLabel: '日光路线', Enabled: true, SortOrder: 20 },
+	],
 	items: [
 		{ Name: '木材', Status: 'active', Type: '材料', Image: '物品图片\\木材.png', Description: '森林采集材料' },
 		{ Name: '绷带', Status: 'limited', Type: '消耗品', Image: '物品图片\\绷带.png', Description: '恢复状态' },
@@ -236,11 +246,9 @@ describe('ContentView 内容工作台', () => {
     expect(wrapper.get('.menu-card img[alt="主菜单图片"]').attributes('src')).toBe('/images/上传/main.webp')
     expect(wrapper.text()).toContain('已配置 Markdown')
     await clickByText(wrapper, '编辑')
-    expect(document.body.textContent).toContain('菜单配图')
+    expect(document.body.textContent).toContain('配图仅可在上方直接上传')
     expect(document.body.textContent).toContain('Markdown 回复（可选）')
     expect(document.body.textContent).toContain('文本、Markdown 和图片立即对玩家生效')
-    const pathInput = document.body.querySelector('input[placeholder*="上传后自动填写"]') as HTMLInputElement
-    expect(pathInput.value).toBe('上传/main.webp')
     const dropzoneRoot = document.body.querySelector('[aria-label="图片上传与预览"]') as HTMLElement
     const qqPreview = document.body.querySelector('.qq-preview.large') as HTMLElement
     expect(dropzoneRoot.querySelector('img[alt="主菜单图片"]')?.getAttribute('src')).toBe('/images/上传/main.webp')
@@ -258,7 +266,6 @@ describe('ContentView 内容工作台', () => {
     dropzone.dispatchEvent(drop)
     await flushPromises()
 
-    expect(pathInput.value).toBe('上传/new-pet.png')
     expect(dropzoneRoot.querySelector('img[alt="主菜单图片"]')?.getAttribute('src')).toBe('/images/上传/new-pet.png')
     expect(qqPreview.querySelector('img[alt="主菜单图片"]')?.getAttribute('src')).toBe('/images/上传/new-pet.png')
 
@@ -271,8 +278,6 @@ describe('ContentView 内容工作台', () => {
 
     await clickByText(wrapper, '编辑')
     await clickDocumentButton('移除当前图片')
-    const clearedInput = document.body.querySelector('input[placeholder*="上传后自动填写"]') as HTMLInputElement
-    expect(clearedInput.value).toBe('')
     const clearedDropzone = document.body.querySelector('[aria-label="图片上传与预览"]') as HTMLElement
     const clearedPreview = document.body.querySelector('.qq-preview.large') as HTMLElement
     expect(clearedDropzone.querySelector('img')).toBeNull()
@@ -362,12 +367,11 @@ describe('ContentView 内容工作台', () => {
     wrapper.unmount()
   })
 
-	it('宠物编辑器可预览并通过拖拽上传替换图片', async () => {
+	it('宠物工作台可预览并通过拖拽上传替换当前形态图片', async () => {
 		const wrapper = await mountView()
 		await clickByText(wrapper, '宠物与物品')
 		expect(wrapper.get('img[alt="团子图片"]').attributes('src')).toBe('/images/宠物图片/团子.png')
 
-		await wrapper.get('.pet-card').trigger('click')
 		expect(document.body.textContent).toContain('点击选择或拖拽图片到这里')
 		const dropzone = document.body.querySelector('.image-dropzone') as HTMLElement
 		const file = new File([new Uint8Array([137, 80, 78, 71])], 'new-pet.png', { type: 'image/png' })
@@ -379,6 +383,31 @@ describe('ContentView 内容工作台', () => {
 		const preview = document.body.querySelector('.image-editor img[alt="团子图片"]') as HTMLImageElement
 		expect(preview.getAttribute('src')).toBe('/images/上传/new-pet.png')
 		expect(vi.mocked(fetch).mock.calls.some(([path]) => String(path) === '/api/admin/upload')).toBe(true)
+		wrapper.unmount()
+	})
+
+	it('宠物工作台按谱系展示进化链，分支按规则顺序排列且搜索保留上下文', async () => {
+		const wrapper = await mountView()
+		await clickByText(wrapper, '宠物与物品')
+
+		expect(wrapper.findAll('.lineage-studio')).toHaveLength(1)
+		expect(wrapper.text()).toContain('团子4 个形态')
+		expect(wrapper.find('.evolution-track').exists()).toBe(true)
+		expect(wrapper.findAll('.track-connector')).toHaveLength(2)
+		expect(wrapper.findAll('.stage-awakened .evolution-node')).toHaveLength(2)
+		const nodeTexts = wrapper.findAll('.evolution-node').map((node) => node.text())
+		expect(nodeTexts.join(' ')).toContain('基础形态团子')
+		expect(nodeTexts.join(' ')).toContain('标准进化团子进化')
+		expect(nodeTexts.join(' ')).toContain('觉醒形态团子觉醒日')
+		expect(nodeTexts.join(' ')).toContain('觉醒形态团子觉醒月')
+		expect(nodeTexts.findIndex((text) => text.includes('团子觉醒日')))
+			.toBeLessThan(nodeTexts.findIndex((text) => text.includes('团子觉醒月')))
+		expect(wrapper.find('[aria-label="团子进化暂无可用图片"]').exists()).toBe(true)
+
+		await wrapper.get('.toolbar .searchbox input').setValue('团子觉醒月')
+		expect(wrapper.findAll('.catalog-item')).toHaveLength(1)
+		expect(wrapper.findAll('.evolution-node')).toHaveLength(4)
+		expect(wrapper.text()).toContain('团子进化')
 		wrapper.unmount()
 	})
 

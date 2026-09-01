@@ -3,6 +3,7 @@ package gameplay
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -93,6 +94,42 @@ func findAccount(db *gorm.DB, event core.InboundEvent) (*models.PlayerAccount, e
 		return nil, err
 	}
 	return &account, nil
+}
+
+func AccountBanned(account models.PlayerAccount, now time.Time) bool {
+	if account.BannedAt == nil {
+		return false
+	}
+	if account.BanExpiresAt != nil && !account.BanExpiresAt.After(now) {
+		return false
+	}
+	return true
+}
+
+func RejectBanned(ctx context.Context, db *gorm.DB, event core.InboundEvent, now time.Time) (core.OutboundMessage, bool, error) {
+	if db == nil {
+		return core.OutboundMessage{}, false, nil
+	}
+	account, err := findAccount(db.WithContext(ctx), event)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return core.OutboundMessage{}, false, nil
+	}
+	if err != nil {
+		return core.OutboundMessage{}, false, err
+	}
+	if !AccountBanned(*account, now) {
+		return core.OutboundMessage{}, false, nil
+	}
+	return core.OutboundMessage{
+		Text:           "当前账号暂时无法使用游戏命令。\n如需帮助请联系管理员。",
+		BusinessResult: "banned",
+	}, true, nil
+}
+
+func BanGuard(db *gorm.DB) func(context.Context, core.InboundEvent) (core.OutboundMessage, bool, error) {
+	return func(ctx context.Context, event core.InboundEvent) (core.OutboundMessage, bool, error) {
+		return RejectBanned(ctx, db, event, time.Now())
+	}
 }
 
 func identityFor(event core.InboundEvent, accountID string) models.PlayerIdentity {

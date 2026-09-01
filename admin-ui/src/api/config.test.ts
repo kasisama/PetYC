@@ -6,8 +6,11 @@ import {
   normalizeItem,
   normalizeMenu,
   normalizeShopItem,
+	 normalizePetEvolutionRule,
 	imagePreviewUrl,
   reloadConfigs,
+  resetConfigs,
+  savePetLineage,
 } from './config'
 
 afterEach(() => vi.unstubAllGlobals())
@@ -37,6 +40,21 @@ describe('fetchConfigStatus', () => {
     expect(status.pending_reload).toBe(true)
     expect(status.db_revision).toBe(7)
     expect(fetchMock).toHaveBeenCalledWith('/api/admin/config/status', expect.any(Object))
+  })
+
+  it('恢复出厂配置会提交原因和确认词', async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ code: 0, msg: '已切换', data: null }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    await resetConfigs('管理员从系统页恢复官方默认配置', '恢复出厂')
+    expect(fetchMock).toHaveBeenCalledWith('/api/admin/config/reset', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ reason: '管理员从系统页恢复官方默认配置', confirmation: '恢复出厂' }),
+    }))
   })
 
   it('热重载成功后广播配置状态变化', async () => {
@@ -98,6 +116,14 @@ describe('内容工作台数据兼容', () => {
     ).toMatchObject({ DisplayName: '每日签到', Enabled: true, SortOrder: 3 })
   })
 
+  it('兼容进化规则的蛇形和大驼峰命名', () => {
+    expect(normalizePetEvolutionRule({
+      key: 'lumi-sun', from_form_key: 'lumi-evolved', to_form_key: 'lumi-awaken-sun', required_growth: 20, required_affection: 10, branch_label: '曦光路线', enabled: false, sort_order: 30,
+    })).toEqual({
+      Key: 'lumi-sun', FromFormKey: 'lumi-evolved', ToFormKey: 'lumi-awaken-sun', RequiredGrowth: 20, RequiredAffection: 10, BranchLabel: '曦光路线', Enabled: false, SortOrder: 30,
+    })
+  })
+
   it('补齐物品状态和商店目标库存', () => {
     expect(normalizeItem({ name: '绷带', status: 'limited' })).toMatchObject({
       Name: '绷带',
@@ -129,6 +155,29 @@ describe('内容工作台数据兼容', () => {
 })
 
 describe('内容工作台专用接口', () => {
+  it('宠物谱系用单个 PUT 请求原子保存形态和进化规则', async () => {
+    const payload = {
+      pets: [{ Key: 'ember-base', FamilyKey: 'ember', Stage: 'base', Name: '烬爪兽' }],
+      rules: [],
+    }
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ code: 0, msg: 'success', data: payload }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(savePetLineage('ember', payload as unknown as Parameters<typeof savePetLineage>[1])).resolves.toMatchObject({
+      pets: [{ Key: 'ember-base', FamilyKey: 'ember', Stage: 'base', Name: '烬爪兽' }],
+      rules: [],
+    })
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/admin/content/pet-lineages/ember',
+      expect.objectContaining({ method: 'PUT', body: JSON.stringify(payload) }),
+    )
+  })
+
   it('活动和奖励通过一个 PUT 请求保存', async () => {
     const fetchMock = vi.fn(async () =>
       new Response(JSON.stringify({ code: 0, msg: 'success', data: {} }), {

@@ -142,6 +142,68 @@ export interface CommandConfigRow {
   SortOrder: number
 }
 
+export interface ChanceGameConfigRow {
+  game_key: string
+  name: string
+  enabled: boolean
+  cost_currency: number
+  cost_item: string
+  cost_quantity: number
+  daily_limit: number
+  pity_threshold: number
+  pity_reward_key: string
+  duration_second: number
+  rules: string
+}
+
+export interface ChanceRewardConfigRow {
+  id?: number
+  game_key: string
+  reward_key: string
+  name: string
+  weight: number
+  item_name: string
+  quantity: number
+  currency: number
+  rare: boolean
+  enabled: boolean
+  sort_order: number
+}
+
+export function normalizeChanceGame(raw: unknown): ChanceGameConfigRow {
+  const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
+  return {
+    game_key: asString(pick(o, 'game_key', 'GameKey')),
+    name: asString(pick(o, 'name', 'Name')),
+    enabled: asBoolean(pick(o, 'enabled', 'Enabled'), true),
+    cost_currency: asNumber(pick(o, 'cost_currency', 'CostCurrency')),
+    cost_item: asString(pick(o, 'cost_item', 'CostItem')),
+    cost_quantity: asNumber(pick(o, 'cost_quantity', 'CostQuantity')),
+    daily_limit: asNumber(pick(o, 'daily_limit', 'DailyLimit')),
+    pity_threshold: asNumber(pick(o, 'pity_threshold', 'PityThreshold')),
+    pity_reward_key: asString(pick(o, 'pity_reward_key', 'PityRewardKey')),
+    duration_second: asNumber(pick(o, 'duration_second', 'DurationSecond')),
+    rules: asString(pick(o, 'rules', 'Rules')),
+  }
+}
+
+export function normalizeChanceReward(raw: unknown): ChanceRewardConfigRow {
+  const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
+  return {
+    id: asNumber(pick(o, 'id', 'ID')) || undefined,
+    game_key: asString(pick(o, 'game_key', 'GameKey')),
+    reward_key: asString(pick(o, 'reward_key', 'RewardKey')),
+    name: asString(pick(o, 'name', 'Name')),
+    weight: asNumber(pick(o, 'weight', 'Weight')),
+    item_name: asString(pick(o, 'item_name', 'ItemName')),
+    quantity: asNumber(pick(o, 'quantity', 'Quantity')),
+    currency: asNumber(pick(o, 'currency', 'Currency')),
+    rare: asBoolean(pick(o, 'rare', 'Rare')),
+    enabled: asBoolean(pick(o, 'enabled', 'Enabled'), true),
+    sort_order: asNumber(pick(o, 'sort_order', 'SortOrder')),
+  }
+}
+
 export type ItemStatus = 'active' | 'limited' | 'hidden' | 'disabled'
 
 export interface PetSpeciesConfigRow {
@@ -188,6 +250,22 @@ export interface PetSpeciesConfigRow {
   GrowthBonus: number
   AttributeBonus: number
   CurrencyBonus: number
+}
+
+export interface PetEvolutionRuleConfigRow {
+  Key: string
+  FromFormKey: string
+  ToFormKey: string
+  RequiredGrowth: number
+  RequiredAffection: number
+  BranchLabel: string
+  Enabled: boolean
+  SortOrder: number
+}
+
+export interface PetLineagePayload {
+  pets: PetSpeciesConfigRow[]
+  rules: PetEvolutionRuleConfigRow[]
 }
 
 export interface ItemConfigRow {
@@ -441,6 +519,20 @@ export function normalizePetSpecies(raw: unknown): PetSpeciesConfigRow {
   }
 }
 
+export function normalizePetEvolutionRule(raw: unknown): PetEvolutionRuleConfigRow {
+  const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
+  return {
+    Key: asString(pick(o, 'Key', 'key')),
+    FromFormKey: asString(pick(o, 'FromFormKey', 'from_form_key')),
+    ToFormKey: asString(pick(o, 'ToFormKey', 'to_form_key')),
+    RequiredGrowth: asNumber(pick(o, 'RequiredGrowth', 'required_growth')),
+    RequiredAffection: asNumber(pick(o, 'RequiredAffection', 'required_affection')),
+    BranchLabel: asString(pick(o, 'BranchLabel', 'branch_label')),
+    Enabled: asBoolean(pick(o, 'Enabled', 'enabled'), true),
+    SortOrder: asNumber(pick(o, 'SortOrder', 'sort_order')),
+  }
+}
+
 export function normalizeItem(raw: unknown): ItemConfigRow {
   const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
   const rawStatus = asString(pick(o, 'Status', 'status'), 'active').toLowerCase()
@@ -579,6 +671,15 @@ export async function saveConfig(schema: ConfigSchema, rows: unknown[]): Promise
   await api.put(`/api/admin/config/${schema}`, rows)
 }
 
+/** 原子保存单条宠物谱系，避免形态与进化规则分两次提交。 */
+export async function savePetLineage(familyKey: string, payload: PetLineagePayload): Promise<PetLineagePayload> {
+  const result = await api.put<{ pets?: unknown; rules?: unknown }>(`/api/admin/content/pet-lineages/${encodeURIComponent(familyKey)}`, payload)
+  return {
+    pets: asArray(result.pets).map(normalizePetSpecies),
+    rules: asArray(result.rules).map(normalizePetEvolutionRule),
+  }
+}
+
 /** PUT /api/admin/content/events/:key — 活动与里程碑奖励事务保存 */
 export function saveEventBundle(
   key: string,
@@ -641,8 +742,8 @@ export async function reloadConfigs(): Promise<string> {
 }
 
 /** POST /api/admin/config/reset — 恢复出厂配置并自动重载 */
-export async function resetConfigs(): Promise<string> {
-	const res = await api.post<unknown>('/api/admin/config/reset')
+export async function resetConfigs(reason: string, confirmation: string): Promise<string> {
+	const res = await api.post<unknown>('/api/admin/config/reset', { reason, confirmation })
   notifyConfigStatusChanged()
   return messageFrom(res, '配置数据已重置为系统默认出厂配置并重载成功')
 }

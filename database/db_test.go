@@ -18,6 +18,8 @@ func TestMigrationModelsIncludeModernGameTables(t *testing.T) {
 		&models.PlayerAccount{}, &models.PlayerIdentity{}, &models.PetProfile{},
 		&models.PlayerWallet{}, &models.WalletLedger{}, &models.ActivityRun{}, &models.ItemUseRecord{}, &models.ExpeditionTemplateConfig{}, &models.ExpeditionRun{}, &models.EventProgress{}, &models.EventProgressGrant{}, &models.EventRewardClaim{}, &models.ChanceGameConfig{}, &models.ChanceRewardConfig{}, &models.ChanceDailyState{}, &models.ChancePlayerState{}, &models.ChanceOutcome{}, &models.FishingRun{}, &models.BattleRecord{}, &models.TradeOffer{}, &models.TradeAudit{}, &models.Community{}, &models.ExpeditionSquad{},
 		&models.IdentityBindToken{},
+		&models.AdventureExplorationStageConfig{}, &models.AdventureStoryEventConfig{}, &models.AdventureStoryEventChoiceConfig{},
+		&models.PlayerAdventureNodeProgress{}, &models.PlayerAdventureEventState{},
 	} {
 		if !types[reflect.TypeOf(required)] {
 			t.Fatalf("migration is missing %T", required)

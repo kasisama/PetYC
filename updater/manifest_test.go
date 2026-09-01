@@ -50,7 +50,7 @@ func TestParseAndVerifyManifest(t *testing.T) {
 
 func TestArtifactAcceptsOptionalHTTPSMirrors(t *testing.T) {
 	artifact := Artifact{
-		URL:     "https://gitee.com/example/petyc.exe",
+		URL:     "https://downloads.example.com/petyc.exe",
 		Mirrors: []string{"https://github.com/example/petyc.exe"},
 		SHA256:  strings.Repeat("a", 64), Size: 42,
 	}

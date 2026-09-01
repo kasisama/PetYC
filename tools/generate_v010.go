@@ -30,6 +30,8 @@ func main() {
 
 	setSystem(&s, "Core.CoinName", "星砂")
 	setSystem(&s, "Core.InitialCoin", "240")
+	setSystem(&s, "Adventure.CombatVictoryCurrencyMin", "3")
+	setSystem(&s, "Adventure.CombatVictoryCurrencyMax", "8")
 	setSystem(&s, "Core.InitialPets", "光芽兽#苔须灵#烬爪兽#岩甲犀#风耳狐")
 	setSystem(&s, "Core.MaxPetSlots", "1")
 	setSystem(&s, "Core.MaxConcurrentRuns", "1")
@@ -84,7 +86,7 @@ func buildItems(s *config.ConfigSnapshot) {
 				typeName, effect = "饱食", "18"
 			}
 			if group.category == "gift" {
-				typeName = "礼物"
+				typeName, effect = "礼物", "8"
 			}
 			if group.category == "training" {
 				typeName, effect = "成长", "6"
@@ -237,21 +239,25 @@ func buildSkillsAndBosses(s *config.ConfigSnapshot, maps []struct {
 	effects := []string{"", "heal", "shield", "attack_up", "defense_down"}
 	skillNames := []string{
 		"芽光连击", "晨叶回响", "原野守势", "日轮共鸣", "曦冠复苏", "月荫破绽",
-		"苔语问诊", "孢光屏障", "根脉安抚", "森语合唱", "古痕解析", "回声封锁",
+		"苔刺突袭", "孢光屏障", "根脉安抚", "森语合唱", "古痕解析", "回声封锁",
 		"烬爪突袭", "炎纹追猎", "热流蓄势", "炽阳爆燃", "余烬刻印", "灰烬回旋",
 		"岩角推进", "层甲承压", "地脉固守", "山岳同调", "晶壳折返", "磐心庇护",
-		"风耳预警", "逐风切入", "气流标记", "天际俯冲", "岚影换位", "追迹终结",
+		"疾风突袭", "逐风切入", "气流标记", "天际俯冲", "岚影换位", "追迹终结",
 	}
 	skillDescriptions := []string{
 		"以双叶引导连续打击，稳定积累调查优势。", "释放晨光治疗受损伙伴。", "展开叶脉护层降低正面冲击。", "均衡强化全队攻防节奏。", "曦光路线的强力群体复苏。", "月影路线标记敌方防御缺口。",
-		"读取伤势并进行精准治疗。", "以孢光形成可持续护盾。", "安抚地脉，恢复并稳定队伍。", "森语路线强化群体续航。", "解析古代纹路提高队伍输出。", "回响路线压制敌方关键能力。",
+		"驱动苔刺破土，对目标发动精准突袭。", "以孢光形成可持续护盾。", "安抚地脉，恢复并稳定队伍。", "森语路线强化群体续航。", "解析古代纹路提高队伍输出。", "回响路线压制敌方关键能力。",
 		"用炽热前爪发动快速强攻。", "追踪热痕，提高后续攻击威力。", "压缩热流为下一击蓄势。", "炽阳路线释放高额爆发。", "余烬路线留下持续伤害印记。", "在长战中反复扩大灼烧优势。",
 		"以岩角稳步推进并打断敌势。", "层叠背甲吸收大量伤害。", "连接地脉提高全队防御。", "山岳路线承担并分散伤害。", "晶壳路线反射部分能量冲击。", "在濒危时形成坚固群体屏障。",
-		"提前捕捉气流，提升行动准确。", "沿风线抢占先手位置。", "记录目标轨迹并降低其防御。", "天际路线发动高暴击俯冲。", "岚影路线规避攻击并重新定位。", "对已标记目标完成精准收割。",
+		"借疾风快速逼近目标，发动先手突袭。", "沿风线抢占先手位置。", "记录目标轨迹并降低其防御。", "天际路线发动高暴击俯冲。", "岚影路线规避攻击并重新定位。", "对已标记目标完成精准收割。",
 	}
 	for i := 1; i <= 30; i++ {
 		key := fmt.Sprintf("pet_skill_%02d", i)
-		s.AdventureSkills = append(s.AdventureSkills, models.AdventureSkillConfig{Key: key, Name: skillNames[i-1], Description: skillDescriptions[i-1], PowerPermille: 850 + (i%7)*90, WisdomPermille: (i % 4) * 100, AccuracyPermille: 900 + (i%3)*40, CooldownTurns: i % 4, EffectType: effects[i%len(effects)], EffectValue: 5 + i%10, Enabled: true})
+		skill := models.AdventureSkillConfig{Key: key, Name: skillNames[i-1], Description: skillDescriptions[i-1], PowerPermille: 850 + (i%7)*90, WisdomPermille: (i % 4) * 100, AccuracyPermille: 900 + (i%3)*40, CooldownTurns: i % 4, EffectType: effects[i%len(effects)], EffectValue: 5 + i%10, Enabled: true}
+		if key == "pet_skill_07" {
+			skill.PowerPermille, skill.WisdomPermille, skill.CooldownTurns = 1150, 250, 1
+		}
+		s.AdventureSkills = append(s.AdventureSkills, skill)
 	}
 	for i := 0; i < 30; i++ {
 		monsterKey := fmt.Sprintf("normal_%02d", i%24+1)
@@ -334,6 +340,22 @@ func buildEquipment(s *config.ConfigSnapshot) {
 			// Epic and legendary templates (19-30) are crafting-only; normal pools stop at 18.
 			template := s.EquipmentTemplates[min(i*2+sidx, 17)]
 			s.AdventureLootEntries = append(s.AdventureLootEntries, models.AdventureLootEntryConfig{PoolKey: zone.Key + "_loot", RewardType: "equipment", RewardKey: template.Key, MinQuantity: 1, MaxQuantity: 1, Weight: equipmentWeight, SortOrder: 30 + sidx})
+		}
+	}
+	minWear := map[string]int{}
+	for _, zone := range s.AdventureZones {
+		for _, entry := range s.AdventureLootEntries {
+			if entry.PoolKey != zone.Key+"_loot" || entry.RewardType != "equipment" {
+				continue
+			}
+			if current, ok := minWear[entry.RewardKey]; !ok || zone.RecommendedLevel < current {
+				minWear[entry.RewardKey] = zone.RecommendedLevel
+			}
+		}
+	}
+	for i := range s.EquipmentTemplates {
+		if level, ok := minWear[s.EquipmentTemplates[i].Key]; ok {
+			s.EquipmentTemplates[i].RequiredLevel = level
 		}
 	}
 	blueprintPools := []string{"tide_ruins_z3_loot", "tide_ruins_z4_loot", "mist_crown_forest_z1_loot", "mist_crown_forest_z2_loot", "mist_crown_forest_z3_loot", "mist_crown_forest_z4_loot"}

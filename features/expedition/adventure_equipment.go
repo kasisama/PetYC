@@ -14,11 +14,21 @@ import (
 )
 
 var (
-	ErrEquipmentNotFound = errors.New("没有找到这件装备")
-	ErrEquipmentLocked   = errors.New("装备已锁定")
-	ErrRecipeLocked      = errors.New("装备蓝图尚未解锁")
-	ErrInvalidLootPool   = errors.New("奖励池配置无效")
+	ErrEquipmentNotFound  = errors.New("没有找到这件装备")
+	ErrEquipmentLocked    = errors.New("装备已锁定")
+	ErrEquipmentEquipped  = errors.New("请先卸下装备再分解")
+	ErrRecipeLocked       = errors.New("装备蓝图尚未解锁")
+	ErrInvalidLootPool    = errors.New("奖励池配置无效")
 )
+
+type EquipmentLevelTooLowError struct {
+	RequiredLevel int
+	CurrentLevel  int
+}
+
+func (err *EquipmentLevelTooLowError) Error() string {
+	return fmt.Sprintf("需要冒险等级 %d 才能穿戴，当前等级 %d", err.RequiredLevel, err.CurrentLevel)
+}
 
 type EquipmentAffixRoll struct {
 	Key       string `json:"key"`
@@ -250,7 +260,7 @@ func (service *Service) Equip(ctx context.Context, accountID, equipmentID string
 			return err
 		}
 		if progress.Level < template.RequiredLevel {
-			return fmt.Errorf("需要冒险等级 %d 才能穿戴", template.RequiredLevel)
+			return &EquipmentLevelTooLowError{RequiredLevel: template.RequiredLevel, CurrentLevel: progress.Level}
 		}
 		if err := tx.Model(&models.PlayerEquipment{}).Where("account_id = ? AND equipped_pet_id = ? AND equipped_slot = ?", accountID, pet.ID, template.Slot).Updates(map[string]any{"equipped_slot": "", "equipped_pet_id": "", "updated_at": service.Now()}).Error; err != nil {
 			return err
@@ -284,7 +294,7 @@ func (service *Service) SalvageEquipment(ctx context.Context, accountID, equipme
 			return ErrEquipmentLocked
 		}
 		if equipment.EquippedSlot != "" {
-			return errors.New("请先卸下装备再分解")
+			return ErrEquipmentEquipped
 		}
 		var template models.EquipmentTemplateConfig
 		if err := tx.First(&template, "key = ?", equipment.TemplateKey).Error; err != nil {

@@ -39,7 +39,7 @@ func TestEnsureModernMenusCreatesCurrentDefaultsWithoutDeletingExistingMenus(t *
 	}
 	var migrated models.MenuConfig
 	db.First(&migrated, "name = ?", "主菜单")
-	for _, command := range []string{"宠物菜单", "我的宠物", "签到", "我的背包", "商店", "学习", "打工", "进化", "远征"} {
+	for _, command := range []string{"宠物菜单", "我的宠物", "签到", "今日待办", "我的背包", "商店", "学习", "打工", "进化", "远征"} {
 		if !strings.Contains(migrated.Reply, command) {
 			t.Fatalf("主菜单应展示熟悉入口 %q，实际 %q", command, migrated.Reply)
 		}
@@ -82,8 +82,32 @@ func TestEnsureModernMenusMigratesLegacyOfficialTemplateWithoutPrompt(t *testing
 	if err = db.First(&menu, "name = ?", "主菜单").Error; err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(menu.Reply, "商店") || strings.Contains(menu.Reply, "普攻") {
+	if !strings.Contains(menu.Reply, "商店") || !strings.Contains(menu.Reply, "今日待办") || strings.Contains(menu.Reply, "普攻") {
 		t.Fatalf("旧官方主菜单应自动迁移，实际 %q", menu.Reply)
+	}
+}
+
+func TestEnsureModernMenusMigratesPreviousOfficialMainMenu(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.AutoMigrate(&models.MenuConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	previous := additionalLegacyOfficialReplies["主菜单"][0]
+	if err = db.Create(&models.MenuConfig{Name: "主菜单", Reply: previous}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err = EnsureModernMenus(db); err != nil {
+		t.Fatal(err)
+	}
+	var menu models.MenuConfig
+	if err = db.First(&menu, "name = ?", "主菜单").Error; err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(menu.Reply, "今日待办") {
+		t.Fatalf("上一版官方主菜单应自动写入今日待办: %q", menu.Reply)
 	}
 }
 

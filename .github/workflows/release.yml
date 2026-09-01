@@ -41,46 +41,6 @@ jobs:
           grep -F "## v$VERSION（" CHANGELOG.md | grep -v '开发中'
           grep -F "当前已发布版本：\`v$VERSION\`" README.md
 
-      - name: Prepare Gitee update target
-        env:
-          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
-          GITEE_OWNER: ${{ secrets.GITEE_OWNER }}
-          GITEE_REPO: ${{ secrets.GITEE_REPO }}
-        run: |
-          set -euo pipefail
-          test -n "$GITEE_TOKEN"
-          test -n "$GITEE_OWNER"
-          test -n "$GITEE_REPO"
-          REPOSITORY=$(curl --silent --show-error --fail-with-body \
-            --get --data-urlencode "access_token=$GITEE_TOKEN" \
-            "https://gitee.com/api/v5/repos/$GITEE_OWNER/$GITEE_REPO")
-          BRANCH=$(jq -r '.default_branch // empty' <<<"$REPOSITORY")
-          if [ -z "$BRANCH" ]; then
-            TEMP_REPOSITORY=$(mktemp -d)
-            AUTHORIZATION=$(printf '%s:%s' "$GITEE_OWNER" "$GITEE_TOKEN" | base64 --wrap=0)
-            echo "::add-mask::$AUTHORIZATION"
-            git -C "$TEMP_REPOSITORY" init --initial-branch=main
-            git -C "$TEMP_REPOSITORY" config user.name "PetYC Release Bot"
-            git -C "$TEMP_REPOSITORY" config user.email "actions@users.noreply.github.com"
-            printf '%s\n' '# PetYC Update Repository' '' 'PetYC release binaries and signed stable update manifests.' \
-              > "$TEMP_REPOSITORY/README.md"
-            git -C "$TEMP_REPOSITORY" add README.md
-            git -C "$TEMP_REPOSITORY" commit -m "chore: initialize update repository"
-            git -C "$TEMP_REPOSITORY" \
-              -c http.extraHeader="Authorization: Basic $AUTHORIZATION" \
-              push "https://gitee.com/$GITEE_OWNER/$GITEE_REPO.git" HEAD:refs/heads/main
-            REPOSITORY=$(curl --silent --show-error --fail-with-body \
-              --get --data-urlencode "access_token=$GITEE_TOKEN" \
-              "https://gitee.com/api/v5/repos/$GITEE_OWNER/$GITEE_REPO")
-            BRANCH=$(jq -r '.default_branch // empty' <<<"$REPOSITORY")
-          fi
-          test -n "$BRANCH"
-          {
-            echo "GITEE_BRANCH=$BRANCH"
-            echo "GITEE_MANIFEST_URL=https://gitee.com/$GITEE_OWNER/$GITEE_REPO/raw/$BRANCH/stable/update-manifest.json"
-            echo "GITEE_RELEASE_URL=https://gitee.com/$GITEE_OWNER/$GITEE_REPO/releases"
-          } >> "$GITHUB_ENV"
-
       - name: Build and test admin UI
         working-directory: admin-ui
         run: |
@@ -100,7 +60,7 @@ jobs:
           VERSION="${RELEASE_TAG#v}"
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           mkdir -p dist
-          LDFLAGS="-s -w -X main.version=$VERSION -X qq-pet-saas/updater.defaultGiteeManifestURL=$GITEE_MANIFEST_URL -X qq-pet-saas/updater.defaultGiteeReleaseURL=$GITEE_RELEASE_URL"
+          LDFLAGS="-s -w -X main.version=$VERSION"
           GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="$LDFLAGS" -o "dist/petyc_${VERSION}_windows_amd64.exe" .
           GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="$LDFLAGS" -o "dist/petyc_${VERSION}_linux_amd64" .
 
@@ -110,120 +70,6 @@ jobs:
           ! strings "dist/petyc_${VERSION}_linux_amd64" | grep -F '初始数据/'
           ! grep -E -i 'app_secret|onebot.*token|masterqq|notifyqq|player_account|wallet_ledger' config/defaults/config_v0.1.0.json
           "./dist/petyc_${VERSION}_linux_amd64" --version | grep -Fx "$VERSION"
-
-      - name: Publish GitHub binaries
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          VERSION="${RELEASE_TAG#v}"
-          WINDOWS="dist/petyc_${VERSION}_windows_amd64.exe"
-          LINUX="dist/petyc_${VERSION}_linux_amd64"
-          if gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" "$WINDOWS" "$LINUX" --clobber
-          else
-            gh release create "$RELEASE_TAG" "$WINDOWS" "$LINUX" \
-              --verify-tag \
-              --generate-notes \
-              --title "$RELEASE_TAG" \
-              --latest
-          fi
-
-      - name: Publish binaries to Gitee prerelease
-        env:
-          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
-          GITEE_OWNER: ${{ secrets.GITEE_OWNER }}
-          GITEE_REPO: ${{ secrets.GITEE_REPO }}
-        run: |
-          set -euo pipefail
-          test -n "$GITEE_TOKEN"
-          API="https://gitee.com/api/v5/repos/$GITEE_OWNER/$GITEE_REPO"
-          TAG="$RELEASE_TAG"
-          VERSION="${TAG#v}"
-          WINDOWS="petyc_${VERSION}_windows_amd64.exe"
-          LINUX="petyc_${VERSION}_linux_amd64"
-
-          STATUS=$(curl --silent --show-error --output /tmp/gitee-release.json \
-            --get --data-urlencode "access_token=$GITEE_TOKEN" \
-            --write-out '%{http_code}' "$API/releases/tags/$TAG")
-          if [ "$STATUS" != 200 ] && [ "$STATUS" != 404 ]; then
-            cat /tmp/gitee-release.json
-            exit 1
-          fi
-          RELEASE_ID=$(jq -r '.id // empty' /tmp/gitee-release.json)
-          # Gitee currently returns HTTP 200 with a JSON null body when a tag
-          # has no release, so an empty id must be treated like a 404.
-          if [ -z "$RELEASE_ID" ]; then
-            curl --silent --show-error --fail-with-body \
-              --form "access_token=$GITEE_TOKEN" \
-              --form "tag_name=$TAG" \
-              --form "name=$TAG" \
-              --form "body=PetYC $TAG 自动更新发行版" \
-              --form "target_commitish=$GITEE_BRANCH" \
-              --form "prerelease=true" \
-              "$API/releases" > /tmp/gitee-release.json
-            RELEASE_ID=$(jq -r '.id // empty' /tmp/gitee-release.json)
-          fi
-          if [ -z "$RELEASE_ID" ]; then
-            echo "Gitee release response did not include an id" >&2
-            jq '{message, error}' /tmp/gitee-release.json >&2 || true
-            exit 1
-          fi
-
-          curl --silent --show-error --fail-with-body \
-            --get --data-urlencode "access_token=$GITEE_TOKEN" \
-            "$API/releases/$RELEASE_ID/attach_files" > /tmp/gitee-attachments.json
-
-          remove_existing() {
-            local name="$1"
-            jq -r --arg name "$name" '.[] | select(.name == $name) | .id' \
-              /tmp/gitee-attachments.json | while read -r attachment_id; do
-                curl --silent --show-error --fail-with-body \
-                  --request DELETE \
-                  --get \
-                  --data-urlencode "access_token=$GITEE_TOKEN" \
-                  "$API/releases/$RELEASE_ID/attach_files/$attachment_id" > /dev/null
-              done
-          }
-
-          upload_attachment() {
-            local path="$1"
-            local output="$2"
-            local name
-            local expected_size
-            local existing_size
-            name=$(basename "$path")
-            expected_size=$(stat -c %s "$path")
-            existing_size=$(jq -r --arg name "$name" \
-              '.[] | select(.name == $name) | .size' \
-              /tmp/gitee-attachments.json | head -n 1)
-            if [ "$existing_size" = "$expected_size" ]; then
-              jq --arg name "$name" \
-                '.[] | select(.name == $name)' \
-                /tmp/gitee-attachments.json > "$output"
-              return
-            fi
-            remove_existing "$name"
-            curl --silent --show-error --fail-with-body \
-              --connect-timeout 20 --max-time 600 \
-              --form "access_token=$GITEE_TOKEN" \
-              --form "file=@$path" \
-              "$API/releases/$RELEASE_ID/attach_files" > "$output"
-          }
-
-          upload_attachment "dist/$WINDOWS" /tmp/gitee-windows.json
-          upload_attachment "dist/$LINUX" /tmp/gitee-linux.json
-          # Gitee's attachment upload response does not consistently include a
-          # download URL. Its public release asset route is stable, so build the
-          # URLs from the already validated repository, tag, and asset names.
-          GITEE_DOWNLOAD_BASE="https://gitee.com/$GITEE_OWNER/$GITEE_REPO/releases/download/$TAG"
-          WINDOWS_URL="$GITEE_DOWNLOAD_BASE/$WINDOWS"
-          LINUX_URL="$GITEE_DOWNLOAD_BASE/$LINUX"
-          {
-            echo "GITEE_RELEASE_ID=$RELEASE_ID"
-            echo "GITEE_WINDOWS_URL=$WINDOWS_URL"
-            echo "GITEE_LINUX_URL=$LINUX_URL"
-          } >> "$GITHUB_ENV"
 
       - name: Build and sign update manifest
         env:
@@ -243,12 +89,10 @@ jobs:
             --arg version "$VERSION" \
             --arg publishedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --arg notes "PetYC $TAG，完整更新说明请查看 GitHub Release。" \
-            --arg windowsUrl "$GITEE_WINDOWS_URL" \
-            --arg windowsMirror "$GITHUB_BASE_URL/$WINDOWS" \
+            --arg windowsUrl "$GITHUB_BASE_URL/$WINDOWS" \
             --arg windowsSha "$WINDOWS_SHA" \
             --argjson windowsSize "$WINDOWS_SIZE" \
-            --arg linuxUrl "$GITEE_LINUX_URL" \
-            --arg linuxMirror "$GITHUB_BASE_URL/$LINUX" \
+            --arg linuxUrl "$GITHUB_BASE_URL/$LINUX" \
             --arg linuxSha "$LINUX_SHA" \
             --argjson linuxSize "$LINUX_SIZE" \
             '{
@@ -258,237 +102,25 @@ jobs:
               publishedAt: $publishedAt,
               notes: $notes,
               platforms: {
-                "windows-amd64": {url: $windowsUrl, mirrors: [$windowsMirror], sha256: $windowsSha, size: $windowsSize},
-                "linux-amd64": {url: $linuxUrl, mirrors: [$linuxMirror], sha256: $linuxSha, size: $linuxSize}
+                "windows-amd64": {url: $windowsUrl, sha256: $windowsSha, size: $windowsSize},
+                "linux-amd64": {url: $linuxUrl, sha256: $linuxSha, size: $linuxSize}
               }
             }' > dist/update-manifest.json
           go run ./cmd/signmanifest -manifest dist/update-manifest.json -output dist/update-manifest.json.sig
           go run ./cmd/verifymanifest dist/update-manifest.json dist/update-manifest.json.sig
 
-      - name: Upload signed manifest to Gitee release
-        env:
-          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
-          GITEE_OWNER: ${{ secrets.GITEE_OWNER }}
-          GITEE_REPO: ${{ secrets.GITEE_REPO }}
-        run: |
-          set -euo pipefail
-          API="https://gitee.com/api/v5/repos/$GITEE_OWNER/$GITEE_REPO"
-          ATTACHMENTS="$API/releases/$GITEE_RELEASE_ID/attach_files"
-          curl --silent --show-error --fail-with-body \
-            --get --data-urlencode "access_token=$GITEE_TOKEN" \
-            "$ATTACHMENTS" > /tmp/gitee-attachments.json
-          for path in dist/update-manifest.json dist/update-manifest.json.sig; do
-            name=$(basename "$path")
-            jq -r --arg name "$name" '.[] | select(.name == $name) | .id' \
-              /tmp/gitee-attachments.json | while read -r attachment_id; do
-                curl --silent --show-error --fail-with-body \
-                  --request DELETE \
-                  --get \
-                  --data-urlencode "access_token=$GITEE_TOKEN" \
-                  "$ATTACHMENTS/$attachment_id" > /dev/null
-              done
-            curl --silent --show-error --fail-with-body \
-              --form "access_token=$GITEE_TOKEN" \
-              --form "file=@$path" "$ATTACHMENTS" > /dev/null
-          done
-
-      - name: Prepare GitHub release assets
+      - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           if gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" dist/* --clobber
+            gh release edit "$RELEASE_TAG" --latest
           else
             gh release create "$RELEASE_TAG" dist/* \
               --verify-tag \
               --generate-notes \
               --title "$RELEASE_TAG" \
-              --draft
+              --latest
           fi
-
-      - name: Publish stable manifest to Gitee
-        env:
-          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
-          GITEE_OWNER: ${{ secrets.GITEE_OWNER }}
-          GITEE_REPO: ${{ secrets.GITEE_REPO }}
-        run: |
-          set -Eeuo pipefail
-          API="https://gitee.com/api/v5/repos/$GITEE_OWNER/$GITEE_REPO"
-
-          read_stable_file() {
-            local path="$1"
-            local state="$2"
-            local status
-            status=$(curl --silent --show-error --output "/tmp/$state.json" \
-              --get \
-              --data-urlencode "ref=$GITEE_BRANCH" \
-              --data-urlencode "access_token=$GITEE_TOKEN" \
-              --write-out '%{http_code}' \
-              "$API/contents/$path")
-            if [ "$status" = 200 ] && jq -e 'type == "array"' "/tmp/$state.json" > /dev/null; then
-              status=404
-            fi
-            printf '%s' "$status" > "/tmp/$state.status"
-            if [ "$status" = 200 ]; then
-              jq -r '.content' "/tmp/$state.json" | tr -d '\n' | base64 --decode > "/tmp/$state.original"
-            elif [ "$status" = 404 ]; then
-              : > "/tmp/$state.original"
-            else
-              cat "/tmp/$state.json"
-              return 1
-            fi
-          }
-
-          publish_stable_file() {
-            local path="$1"
-            local source="$2"
-            local encoded
-            local status
-            local sha
-            encoded=$(base64 --wrap=0 "$source")
-            status=$(curl --silent --show-error --output /tmp/gitee-content.json \
-              --get \
-              --data-urlencode "ref=$GITEE_BRANCH" \
-              --data-urlencode "access_token=$GITEE_TOKEN" \
-              --write-out '%{http_code}' \
-              "$API/contents/$path")
-            if [ "$status" = 200 ] && jq -e 'type == "array"' /tmp/gitee-content.json > /dev/null; then
-              status=404
-            fi
-            if [ "$status" = 200 ]; then
-              sha=$(jq -r '.sha' /tmp/gitee-content.json)
-              curl --silent --show-error --fail-with-body \
-                --request PUT \
-                --form "access_token=$GITEE_TOKEN" \
-                --form "content=$encoded" \
-                --form "sha=$sha" \
-                --form "message=release: update $path for $RELEASE_TAG" \
-                --form "branch=$GITEE_BRANCH" \
-                "$API/contents/$path" > /dev/null
-            elif [ "$status" = 404 ]; then
-              curl --silent --show-error --fail-with-body \
-                --request POST \
-                --form "access_token=$GITEE_TOKEN" \
-                --form "content=$encoded" \
-                --form "message=release: create $path for $RELEASE_TAG" \
-                --form "branch=$GITEE_BRANCH" \
-                "$API/contents/$path" > /dev/null
-            else
-              cat /tmp/gitee-content.json
-              return 1
-            fi
-          }
-
-          restore_stable_file() {
-            local path="$1"
-            local state="$2"
-            local previous_status
-            local current_status
-            local current_sha
-            local encoded
-            previous_status=$(cat "/tmp/$state.status")
-            current_status=$(curl --silent --show-error --output "/tmp/$state-current.json" \
-              --get \
-              --data-urlencode "ref=$GITEE_BRANCH" \
-              --data-urlencode "access_token=$GITEE_TOKEN" \
-              --write-out '%{http_code}' \
-              "$API/contents/$path")
-            if [ "$current_status" = 200 ] && jq -e 'type == "array"' "/tmp/$state-current.json" > /dev/null; then
-              current_status=404
-            fi
-            if [ "$previous_status" = 200 ]; then
-              encoded=$(base64 --wrap=0 "/tmp/$state.original")
-              if [ "$current_status" = 200 ]; then
-                current_sha=$(jq -r '.sha' "/tmp/$state-current.json")
-                curl --silent --show-error --fail-with-body \
-                  --request PUT \
-                  --form "access_token=$GITEE_TOKEN" \
-                  --form "content=$encoded" \
-                  --form "sha=$current_sha" \
-                  --form "message=release: roll back $path after failed $RELEASE_TAG publish" \
-                  --form "branch=$GITEE_BRANCH" \
-                  "$API/contents/$path" > /dev/null
-              elif [ "$current_status" = 404 ]; then
-                curl --silent --show-error --fail-with-body \
-                  --request POST \
-                  --form "access_token=$GITEE_TOKEN" \
-                  --form "content=$encoded" \
-                  --form "message=release: restore $path after failed $RELEASE_TAG publish" \
-                  --form "branch=$GITEE_BRANCH" \
-                  "$API/contents/$path" > /dev/null
-              else
-                cat "/tmp/$state-current.json"
-                return 1
-              fi
-            elif [ "$previous_status" = 404 ] && [ "$current_status" = 200 ]; then
-              current_sha=$(jq -r '.sha' "/tmp/$state-current.json")
-              curl --silent --show-error --fail-with-body \
-                --request DELETE \
-                --form "access_token=$GITEE_TOKEN" \
-                --form "sha=$current_sha" \
-                --form "message=release: remove $path after failed $RELEASE_TAG publish" \
-                --form "branch=$GITEE_BRANCH" \
-                "$API/contents/$path" > /dev/null
-            elif [ "$previous_status" != 404 ] || [ "$current_status" != 404 ]; then
-              cat "/tmp/$state-current.json"
-              return 1
-            fi
-          }
-
-          verify_stable_file() {
-            local path="$1"
-            local source="$2"
-            curl --silent --show-error --fail-with-body \
-              --get \
-              --data-urlencode "ref=$GITEE_BRANCH" \
-              --data-urlencode "access_token=$GITEE_TOKEN" \
-              "$API/contents/$path" \
-              | jq -r '.content' \
-              | tr -d '\n' \
-              | base64 --decode > /tmp/gitee-published-content
-            cmp --silent "$source" /tmp/gitee-published-content
-          }
-
-          read_stable_file "stable/update-manifest.json" "stable-manifest"
-          read_stable_file "stable/update-manifest.json.sig" "stable-signature"
-          rollback_required=true
-          rollback_stable_pair() {
-            if [ "$rollback_required" = true ]; then
-              set +e
-              restore_stable_file "stable/update-manifest.json.sig" "stable-signature"
-              restore_stable_file "stable/update-manifest.json" "stable-manifest"
-              set -e
-            fi
-          }
-          trap rollback_stable_pair ERR
-
-          # The pair cannot be replaced in one Contents API request. If either write
-          # or verification fails, restore both previous files before the job exits.
-          publish_stable_file "stable/update-manifest.json" "dist/update-manifest.json"
-          publish_stable_file "stable/update-manifest.json.sig" "dist/update-manifest.json.sig"
-          verify_stable_file "stable/update-manifest.json" "dist/update-manifest.json"
-          verify_stable_file "stable/update-manifest.json.sig" "dist/update-manifest.json.sig"
-          rollback_required=false
-          trap - ERR
-
-      - name: Publish GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release edit "$RELEASE_TAG" --draft=false
-
-      - name: Activate Gitee release
-        env:
-          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
-          GITEE_OWNER: ${{ secrets.GITEE_OWNER }}
-          GITEE_REPO: ${{ secrets.GITEE_REPO }}
-        run: |
-          set -euo pipefail
-          API="https://gitee.com/api/v5/repos/$GITEE_OWNER/$GITEE_REPO"
-          curl --silent --show-error --fail-with-body \
-            --request PATCH \
-            --form "access_token=$GITEE_TOKEN" \
-            --form "tag_name=$RELEASE_TAG" \
-            --form "name=$RELEASE_TAG" \
-            --form "prerelease=false" \
-            "$API/releases/$GITEE_RELEASE_ID" > /dev/null

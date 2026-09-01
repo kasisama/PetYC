@@ -590,7 +590,7 @@ func LoadAllConfigsFromDB(db *gorm.DB) error {
 		InitialCoin:         readInt64("Core.InitialCoin", 240),
 		RenameCost:          readInt64("Core.RenameCost", 120),
 		RenameBlocklist:     SplitConfigList(readStr("Core.RenameBlocklist", "")),
-		TreatCost:           readInt64("Core.TreatCost", 80),
+		TreatCost:           readInt64("Core.TreatCost", 100),
 		DyingSaveTime:       readInt64("Core.DyingSaveTime", 2000),
 		DyingProtectTime:    readInt64("Core.DyingProtectTime", 60),
 		EscapeFindTime:      readInt64("Core.EscapeFindTime", 2000),
