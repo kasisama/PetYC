@@ -28,3 +28,8 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.new
+
+# Excluded data, assets and legacy code
+初始数据/
+图片/
+易语言代码转文本/

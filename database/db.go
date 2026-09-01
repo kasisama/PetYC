@@ -142,6 +142,8 @@ func migrationModels() []interface{} {
 		&models.GroupSwitch{},
 		&models.AdminConfigState{},
 		&models.ConfigProfile{},
+		&models.ConfigProfileSave{},
+		&models.ConfigProfileSaveBackup{},
 		&models.PlayerAccount{},
 		&models.PlayerIdentity{},
 		&models.PetProfile{},

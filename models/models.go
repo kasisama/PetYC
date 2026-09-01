@@ -251,3 +251,29 @@ type ConfigProfile struct {
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }
+
+// ConfigProfileSave stores the complete, isolated player world for a
+// configuration profile. Payload is a versioned compressed snapshot and is
+// deliberately never included in profile import/export packages.
+type ConfigProfileSave struct {
+	ProfileID     string    `gorm:"primaryKey;size:36" json:"profile_id"`
+	SchemaVersion int       `gorm:"not null" json:"schema_version"`
+	Payload       []byte    `gorm:"type:blob;not null" json:"-"`
+	PlayerCount   int64     `gorm:"not null;default:0" json:"player_count"`
+	PetCount      int64     `gorm:"not null;default:0" json:"pet_count"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+// ConfigProfileSaveBackup keeps the latest pre-clear player world for a
+// profile. Replacing it on every clear bounds storage and supports recovery
+// from an accidental reset.
+type ConfigProfileSaveBackup struct {
+	ProfileID     string    `gorm:"primaryKey;size:36" json:"profile_id"`
+	SchemaVersion int       `gorm:"not null" json:"schema_version"`
+	Payload       []byte    `gorm:"type:blob;not null" json:"-"`
+	PlayerCount   int64     `gorm:"not null;default:0" json:"player_count"`
+	PetCount      int64     `gorm:"not null;default:0" json:"pet_count"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
