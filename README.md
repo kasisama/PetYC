@@ -52,7 +52,7 @@ QQ 官方群通常需要先 `@机器人` 再发送命令；频道或私聊一般
 | 实时通信 | Gorilla WebSocket、OneBot v11 |
 | 管理后台 | Vue 3、TypeScript、Vue Router、Vite |
 | 测试 | Go test、Vitest、Playwright |
-| 发布 | GitHub Actions，Windows/Linux amd64 交叉编译 |
+| 发布 | GitHub Actions，Windows/Linux amd64 交叉编译，GHCR 镜像 |
 
 ## 管理员使用教程
 
@@ -175,16 +175,60 @@ sudo systemctl start petyc
 
 systemd 环境会在后台更新页面中自动降级为“手动更新”。升级时先备份并停止服务，替换二进制，修改 `ExecStart` 中的文件名，再执行 `daemon-reload` 和 `restart`。
 
-### Docker Compose：开箱即用部署
+### Docker：拉取镜像或本地构建
 
-已安装 Docker 和 Docker Compose 的机器可以直接在仓库根目录执行：
+正式版本会同时发布 linux/amd64 容器镜像：
+
+```text
+ghcr.io/kasisama/petyc:0.1.4
+ghcr.io/kasisama/petyc:latest
+```
+
+当前与 GitHub Release 一样只提供 **linux/amd64**。仓库镜像第一次推送后，需要在 GitHub Packages 将 `petyc` 包可见性改为 Public，之后即可直接 `docker pull`。
+
+#### 推荐：直接拉取已发布镜像
+
+不需要 clone 源码。可以先拉镜像，再下载只含运行参数的 Compose 文件：
+
+```bash
+docker pull ghcr.io/kasisama/petyc:0.1.4
+curl -fsSL https://raw.githubusercontent.com/kasisama/PetYC/main/compose.release.yml -o compose.yml
+PETYC_VERSION=0.1.4 docker compose up -d
+docker compose ps
+```
+
+如果已经把 `compose.release.yml` 放到当前目录，也可以让 Compose 自己 pull：
+
+```bash
+PETYC_VERSION=0.1.4 docker compose -f compose.release.yml up -d
+```
+
+容器健康后打开 `http://127.0.0.1:8080/admin`。首次访问会要求设置管理员账号和密码，随后可在浏览器向导中选择 OneBot、QQ 官方机器人或暂时跳过。Compose 默认只把端口发布到宿主机回环地址，不允许局域网或公网直接访问首次初始化页面。
+
+升级已发布镜像：
+
+```bash
+# 跟随 latest
+docker compose pull
+docker compose up -d
+
+# 或钉死版本
+PETYC_VERSION=0.1.4 docker compose pull
+PETYC_VERSION=0.1.4 docker compose up -d
+```
+
+推送 `v*` 发布标签后，GitHub Actions 会更新对应版本 tag 以及 `latest`。钉死 `0.1.4` 的部署不会在发布 `v0.1.5` 时自动跳版本。
+
+#### 从源码构建
+
+已 clone 仓库、需要改代码，或还没有可用的仓库镜像时，在仓库根目录执行：
 
 ```bash
 docker compose up -d --build
 docker compose ps
 ```
 
-容器健康后打开 `http://127.0.0.1:8080/admin`。首次访问会要求设置管理员账号和密码，随后可在浏览器向导中选择 OneBot、QQ 官方机器人或暂时跳过。Compose 默认只把端口发布到宿主机回环地址，不允许局域网或公网直接访问首次初始化页面。
+`compose.yml` 同时保留 `build` 和 GHCR 镜像名：不加 `--build` 时会尝试 pull，加 `--build` 则用当前源码本地构建。
 
 常用命令：
 
@@ -194,10 +238,6 @@ docker compose logs -f petyc
 
 # 停止并移除容器，保留数据库、图片和配置
 docker compose down
-
-# 拉取代码后重新构建并升级
-git pull
-docker compose up -d --build
 ```
 
 OneBot/NapCat 不包含在 Compose 中。运行在宿主机上的 NapCat 使用下面的反向 WebSocket 地址：
@@ -222,7 +262,7 @@ docker compose start
 docker compose down -v
 ```
 
-这会删除两个命名卷，无法通过 Docker Compose 自动恢复。容器升级应重新构建和替换镜像，Docker 环境不会使用程序内自动替换。
+这会删除两个命名卷，无法通过 Docker Compose 自动恢复。容器升级应拉取或重新构建并替换镜像，Docker 环境不会使用程序内自动替换。
 
 > 当前数据层是 SQLite 和本地图片目录，只支持单个 PetYC 容器实例。不要让多个副本挂载同一运行卷。若修改端口发布规则或使用反向代理，首次设密完成前不要把管理后台暴露到不可信网络。
 
@@ -236,7 +276,7 @@ docker compose down -v
 ws://127.0.0.1:8080/v1/ws
 ```
 
-连接需要使用 PetYC 生成的 OneBot Token。监听地址、端口和 Token 可在首次配置或后台的“平台/运行配置”中管理。不要把 Token 提交到仓库或粘贴到公开日志中。
+连接需要使用 PetYC 生成的 OneBot Token。监听c地址、端口和 Token 可在首次配置或后台的“平台/运行配置”中管理。不要把 Token 提交到仓库或粘贴到公开日志中。
 
 ### QQ 官方机器人
 
@@ -336,16 +376,16 @@ v0.1.2 起，“系统设置”会显示程序更新卡片。Windows amd64 便�
 1. 停止旧机器上的 PetYC。
 2. 复制整个程序工作目录，包括数据库、侧文件和图片。
 3. 复制原系统用户配置目录，或在新机器重新完成机器人凭据与管理员配置。
-4. 检查新机器的监听地址、端口、防火墙和反向代理。
+4. 检查新机器的监听c地址、端口、防火墙和反向代理。
 5. 先用测试群验收，再停止旧机器对外服务，避免两个实例同时连接同一个机器人。
 
 ## 运行配置
 
-下列机器人和监听环境变量用于**首次生成** `runtime.json`；配置文件创建后，以已保存的运行配置为准。`QQPET_DATA_DIR` 和 `QQPET_WEB_SETUP` 属于进程启动行为，每次启动都会读取。
+下列机器人和监听c环境变量用于**首次生成** `runtime.json`；配置文件创建后，以已保存的运行配置为准。`QQPET_DATA_DIR` 和 `QQPET_WEB_SETUP` 属于进程启动行为，每次启动都会读取。
 
 | 环境变量 | 默认值 | 说明 |
 |---|---:|---|
-| `LISTEN_ADDRESS` | `127.0.0.1` | HTTP 与 WebSocket 监听地址 |
+| `LISTEN_ADDRESS` | `127.0.0.1` | HTTP 与 WebSocket 监听c地址 |
 | `PORT` | `8080` | 服务端口，范围 `1–65535` |
 | `QQPET_WS_TOKEN` | 自动生成 | OneBot WebSocket Token |
 | `QQPET_DATA_DIR` | 系统用户配置目录 | 覆盖运行配置与凭据保存目录 |
@@ -366,7 +406,7 @@ v0.1.2 起，“系统设置”会显示程序更新卡片。Windows amd64 便�
 
 - Windows 配置目录位于 `%AppData%\qq-pet-saas`。
 - Linux 配置目录通常位于 `~/.config/qq-pet-saas`。
-- `runtime.json` 保存监听端点与机器人运行配置。
+- `runtime.json` 保存监听c端点与机器人运行配置。
 - `credentials.json` 保存管理员密码哈希和 OneBot Token，请勿公开或提交。
 - `pet_game.db` 和运行时图片目录位于程序当前工作目录；部署时请固定工作目录并定期备份。
 
