@@ -276,7 +276,7 @@ docker compose down -v
 ws://127.0.0.1:8080/v1/ws
 ```
 
-连接需要使用 PetYC 生成的 OneBot Token。监听c地址、端口和 Token 可在首次配置或后台的“平台/运行配置”中管理。不要把 Token 提交到仓库或粘贴到公开日志中。
+连接需要使用 PetYC 生成的 OneBot Token。监听地址、端口和 Token 可在首次配置或后台的“平台/运行配置”中管理。不要把 Token 提交到仓库或粘贴到公开日志中。
 
 ### QQ 官方机器人
 
@@ -376,16 +376,16 @@ v0.1.2 起，“系统设置”会显示程序更新卡片。Windows amd64 便�
 1. 停止旧机器上的 PetYC。
 2. 复制整个程序工作目录，包括数据库、侧文件和图片。
 3. 复制原系统用户配置目录，或在新机器重新完成机器人凭据与管理员配置。
-4. 检查新机器的监听c地址、端口、防火墙和反向代理。
+4. 检查新机器的监听地址、端口、防火墙和反向代理。
 5. 先用测试群验收，再停止旧机器对外服务，避免两个实例同时连接同一个机器人。
 
 ## 运行配置
 
-下列机器人和监听c环境变量用于**首次生成** `runtime.json`；配置文件创建后，以已保存的运行配置为准。`QQPET_DATA_DIR` 和 `QQPET_WEB_SETUP` 属于进程启动行为，每次启动都会读取。
+下列机器人和监听环境变量用于**首次生成** `runtime.json`；配置文件创建后，以已保存的运行配置为准。`QQPET_DATA_DIR` 和 `QQPET_WEB_SETUP` 属于进程启动行为，每次启动都会读取。
 
 | 环境变量 | 默认值 | 说明 |
 |---|---:|---|
-| `LISTEN_ADDRESS` | `127.0.0.1` | HTTP 与 WebSocket 监听c地址 |
+| `LISTEN_ADDRESS` | `127.0.0.1` | HTTP 与 WebSocket 监听地址 |
 | `PORT` | `8080` | 服务端口，范围 `1–65535` |
 | `QQPET_WS_TOKEN` | 自动生成 | OneBot WebSocket Token |
 | `QQPET_DATA_DIR` | 系统用户配置目录 | 覆盖运行配置与凭据保存目录 |
@@ -406,7 +406,7 @@ v0.1.2 起，“系统设置”会显示程序更新卡片。Windows amd64 便�
 
 - Windows 配置目录位于 `%AppData%\qq-pet-saas`。
 - Linux 配置目录通常位于 `~/.config/qq-pet-saas`。
-- `runtime.json` 保存监听c端点与机器人运行配置。
+- `runtime.json` 保存监听端点与机器人运行配置。
 - `credentials.json` 保存管理员密码哈希和 OneBot Token，请勿公开或提交。
 - `pet_game.db` 和运行时图片目录位于程序当前工作目录；部署时请固定工作目录并定期备份。
 
